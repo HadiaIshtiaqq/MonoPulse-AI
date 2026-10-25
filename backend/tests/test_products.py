@@ -121,7 +121,10 @@ def test_slots_feature_varied_products_and_carousels_with_all_platforms():
                                 weekly_themes=["Launch"])
     slots = strategist.plan_slots(strategy, [], list(Platform), 12, 1, products=_catalogue())
     assert all(s.product for s in slots)
-    assert [s.product.name for s in slots[:3]] == ["3-Piece Set", "Kurta", "Dupatta"]
+    first_version = [s for s in slots if s.platform is Platform.INSTAGRAM]
+    assert [s.product.name for s in first_version[:3]] == ["3-Piece Set", "Kurta", "Dupatta"]
+    for g in {s.group for s in slots}:  # every platform version features the same product
+        assert len({s.product.url for s in slots if s.group == g}) == 1
     carousels = [s for s in slots if s.format == "carousel"]
     assert carousels and all(s.platform in strategist.CAROUSEL_PLATFORMS and len(s.slide_products) == 3 for s in carousels)
     copies = asyncio.run(strategist.write_all(BrandKit(source_input="x", name="Shop", industry="Fashion & Apparel"), strategy, slots))

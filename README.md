@@ -12,7 +12,8 @@ Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** 
 - **Real products and photos**: Finds the site's actual products (name, price as displayed, collection, link and full-size photo) from schema.org data, store product tiles, Shopify's product feed or generic product cards, plus the site's own photos. Posts feature these real products, prices and photos instead of generic graphics.
 - **Live trend awareness**: Searches the last 14 days of industry news with Tavily so posts reference what is actually happening, and keeps each source link on the post.
 - **Nemotron-planned strategy**: Nemotron 3 Ultra writes positioning, four content pillars and weekly themes before a single caption is written.
-- **Parallel copywriting**: Captions and carousel slides are generated in concurrent batches, so a 30-day, multi-platform campaign takes minutes.
+- **Every post, made for every platform**: Each post idea gets its own version for Instagram (4:5 image, hook-first caption, "link in bio"), Facebook (square, conversational, asks a question), LinkedIn (square, more professional) and X (16:9, one short line with the link). All versions share the idea, product, photo and image headline, and each is posted at that platform's best hour. A carousel idea is a carousel on Instagram and LinkedIn and a single image elsewhere.
+- **Parallel copywriting**: Captions and carousel slides are generated in concurrent batches. A post's platform versions always go in the same batch so they stay consistent, and a 30-day, four-platform campaign (120 versions) takes minutes.
 - **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
 - **Branded design**: Renders single images and 1080×1350 carousels (cover, one page per product, CTA) with the brand's logo at the top, its colours, and the product's price. It uses the brand's own photos first, then licensed stock or uploads. No watermarks.
 - **Scheduling and direct posting**: Drag-and-drop calendar, one-click approval, and automatic publishing at each post's time through the official Instagram Graph, Facebook Pages, LinkedIn and X v2 APIs.
@@ -218,7 +219,7 @@ Key design points:
 │   │   │   └── memory.py           # Research library
 │   │   ├── scraper/                # Brand reader (logo, palette, products, prices)
 │   │   └── social/                 # Instagram, Facebook, LinkedIn, X clients
-│   ├── tests/                      # 82 tests, network mocked
+│   ├── tests/                      # 86 tests, network mocked
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/                       # Next.js web app
@@ -432,7 +433,7 @@ Fill in the `META_*`, `INSTAGRAM_ACCOUNT_ID`, `LINKEDIN_*` and `X_USER_ACCESS_TO
 cd backend && .venv/bin/python -m pytest -q
 ```
 
-There are 82 tests, with every external API mocked. They cover:
+There are 86 tests, with every external API mocked. They cover:
 
 - the pipeline and model router
 - scraping and the humanizer's fact guard

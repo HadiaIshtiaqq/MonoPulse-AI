@@ -481,7 +481,9 @@ def heuristic_kit(site: ScrapedSite, kit: BrandKit) -> BrandKit:
         kit.value_props = lines or [h for h in site.headings[1:6]] or [p[:120] for p in site.paragraphs[:3]]
     if not kit.keywords:
         words = re.findall(r"[a-zA-Z]{5,}", blob.lower())
-        stop = {"about", "their", "there", "which", "would", "these", "other", "every", "where", "while", "cookies"}
+        stop = {"about", "their", "there", "which", "would", "these", "other", "every", "where", "while", "cookies",
+                "product", "products", "price", "prices", "piece", "pieces", "table", "ready", "items", "select", "sizes",
+                "added", "account", "shipping", "login", "search", "close", "cart", "checkout", "wishlist", "filter", "sort"}
         kit.keywords = [w for w, _ in Counter(w for w in words if w not in stop).most_common(8)]
     kit.brand_voice_prompt = kit.brand_voice_prompt or (
         f"Friendly, confident and specific. Talks like a local {kit.industry.lower()} owner who knows their customers by name."

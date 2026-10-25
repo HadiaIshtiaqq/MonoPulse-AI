@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { Layers } from "lucide-react";
-import { localDayKey, media, type SocialPost } from "@/lib/api";
-import { PlatformIcon } from "@/components/PlatformIcon";
+import { groupKey, groupPosts, groupStatus, localDayKey, media, type SocialPost } from "@/lib/api";
+import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const STATUS_RING: Record<string, string> = {
@@ -46,16 +46,16 @@ export function CalendarView({
 
   const { cells, byDay, rangeEnd, rangeStart } = useMemo(() => {
     let start = localMidnight(startDate);
-    const byDay = new Map<string, SocialPost[]>();
+    // One card per post idea, holding its versions for every platform.
+    const byDay = new Map<string, SocialPost[][]>();
     let last = addDays(start, days - 1);
-    for (const p of posts) {
-      const d = dayOf(p.publish_at);
+    for (const g of groupPosts(posts)) {
+      const d = dayOf(g.reduce((m, p) => (p.publish_at < m ? p.publish_at : m), g[0].publish_at));
       const k = dateKey(d);
-      byDay.set(k, [...(byDay.get(k) || []), p]);
+      byDay.set(k, [...(byDay.get(k) || []), g]);
       if (d > last) last = d;
       if (d < start) start = d;
     }
-    for (const list of byDay.values()) list.sort((a, b) => a.publish_at.localeCompare(b.publish_at));
     const gridStart = addDays(start, -((start.getDay() + 6) % 7));
     const gridEnd = addDays(last, 6 - ((last.getDay() + 6) % 7));
     const cells: Date[] = [];
@@ -108,37 +108,52 @@ export function CalendarView({
                 </span>
               </div>
               <div className="space-y-1.5">
-                {list.map((p) => (
-                  <button
-                    key={p.id}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/post-id", p.id);
-                      e.dataTransfer.effectAllowed = "move";
-                    }}
-                    onClick={() => onOpen(p)}
-                    className={`group block w-full cursor-grab overflow-hidden rounded-lg bg-white text-left ring-2 transition hover:shadow-pop active:cursor-grabbing ${STATUS_RING[p.status]}`}
-                  >
-                    {p.image_url && (
-                      <span className="relative block">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={media(p.image_url)} alt={p.alt_text} className="aspect-square w-full bg-slate-100 object-contain" draggable={false} />
-                        {p.format === "carousel" && (
-                          <span className="absolute right-1 top-1 flex items-center gap-0.5 rounded-md bg-black/60 px-1 py-0.5 text-[9px] font-semibold text-white">
-                            <Layers size={9} /> {p.image_urls.length}
-                          </span>
-                        )}
-                        {p.status === "PUBLISHED" && (
-                          <span className="absolute left-1 top-1 rounded-md bg-brand px-1 py-0.5 text-[9px] font-semibold text-white">posted</span>
-                        )}
-                      </span>
-                    )}
-                    <div className="flex items-center gap-1 px-1.5 py-1">
-                      <PlatformIcon platform={p.platform} size={11} />
-                      <span className="truncate text-[11px] text-slate-600">{p.headline}</span>
+                {list.map((g) => {
+                  const p = g.find((v) => v.image_url) ?? g[0];
+                  const posted = g.filter((v) => v.status === "PUBLISHED").length;
+                  return (
+                    <div
+                      key={groupKey(p)}
+                      role="button"
+                      tabIndex={0}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/post-id", p.id);
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      onClick={() => onOpen(p)}
+                      onKeyDown={(e) => { if (e.key === "Enter") onOpen(p); }}
+                      className={`group block w-full cursor-grab overflow-hidden rounded-lg bg-white text-left ring-2 transition hover:shadow-pop active:cursor-grabbing ${STATUS_RING[groupStatus(g)]}`}
+                    >
+                      {p.image_url && (
+                        <span className="relative block">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={media(p.image_url)} alt={p.alt_text} className="aspect-square w-full bg-slate-100 object-contain" draggable={false} />
+                          {g.some((v) => v.format === "carousel") && (
+                            <span className="absolute right-1 top-1 flex items-center gap-0.5 rounded-md bg-black/60 px-1 py-0.5 text-[9px] font-semibold text-white">
+                              <Layers size={9} /> {Math.max(...g.map((v) => v.image_urls.length))}
+                            </span>
+                          )}
+                          {posted > 0 && (
+                            <span className="absolute left-1 top-1 rounded-md bg-brand px-1 py-0.5 text-[9px] font-semibold text-white">
+                              posted{posted < g.length ? ` ${posted}/${g.length}` : ""}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      <p className="truncate px-1.5 pt-1 text-[11px] text-slate-600">{p.headline}</p>
+                      <div className="flex items-center gap-0.5 px-1 pb-1">
+                        {g.map((v) => (
+                          <button key={v.id} type="button" onClick={(e) => { e.stopPropagation(); onOpen(v); }}
+                            title={`Open the ${PLATFORM_META[v.platform].label} version`}
+                            className={`grid h-5 w-5 place-items-center rounded-md transition hover:bg-slate-100 ${v.status === "DRAFT" ? "opacity-60" : ""}`}>
+                            <PlatformIcon platform={v.platform} size={11} />
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );

@@ -29,7 +29,7 @@ const POSITIONS: { id: TextPosition; label: string }[] = [
 const TONES = ["casual", "professional", "playful", "urgent", "storytelling"];
 const MODES: { id: HumanizeMode; label: string; hint: string }[] = [
   { id: "light", label: "Light", hint: "Instant rule pass: stock phrases, dashes, stiff grammar." },
-  { id: "standard", label: "Standard", hint: "Rules, then a Nemotron rewrite guided by 26 AI-writing patterns." },
+  { id: "standard", label: "Standard", hint: "Rules, then a Nemotron rewrite guided by Wikipedia's \"Signs of AI writing\" patterns." },
   { id: "deep", label: "Deep", hint: "Translation chain (EN→ZH→JA→EN) on Nemotron, then the standard pass. Slowest, biggest change." },
 ];
 
@@ -49,6 +49,8 @@ export function PostEditor({
   onChange,
   onPrev,
   onNext,
+  versions = [],
+  onSwitch,
 }: {
   post: SocialPost;
   brand: BrandKit | null;
@@ -57,6 +59,8 @@ export function PostEditor({
   onChange: (p: SocialPost) => void;
   onPrev?: () => void;
   onNext?: () => void;
+  versions?: SocialPost[];
+  onSwitch?: (id: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>("design");
   const [headline, setHeadline] = useState(post.headline);
@@ -137,7 +141,22 @@ export function PostEditor({
             <button onClick={onPrev} disabled={!onPrev} className="rounded-lg p-1.5 hover:bg-slate-100 disabled:opacity-30" aria-label="Previous post"><ChevronLeft size={18} /></button>
             <button onClick={onNext} disabled={!onNext} className="rounded-lg p-1.5 hover:bg-slate-100 disabled:opacity-30" aria-label="Next post"><ChevronRight size={18} /></button>
           </div>
-          <span className={`chip ${PLATFORM_META[post.platform].bg}`}><PlatformIcon platform={post.platform} size={12} /> {PLATFORM_META[post.platform].label}</span>
+          {versions.length > 1 && onSwitch ? (
+            <div className="flex items-center gap-0.5 rounded-xl bg-slate-100 p-0.5" role="tablist" aria-label="Platform version">
+              {versions.map((v) => (
+                <button key={v.id} role="tab" aria-selected={v.id === post.id} onClick={() => onSwitch(v.id)}
+                  title={`${PLATFORM_META[v.platform].label} version · ${v.status.toLowerCase()}`}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                    v.id === post.id ? "bg-white text-ink shadow-sm" : "text-slate-500 hover:text-ink"}`}>
+                  <PlatformIcon platform={v.platform} size={12} />
+                  <span className="hidden lg:inline">{PLATFORM_META[v.platform].label}</span>
+                  {v.status !== "DRAFT" && <Check size={11} className="text-emerald-600" />}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span className={`chip ${PLATFORM_META[post.platform].bg}`}><PlatformIcon platform={post.platform} size={12} /> {PLATFORM_META[post.platform].label}</span>
+          )}
           {post.format === "carousel" && <span className="chip bg-brand-soft text-brand-700">Carousel · {images.length} slides</span>}
           <span className="hidden text-sm text-slate-500 sm:inline">
             {fmtDay(when_.toISOString())} · {fmtTime(when_.toISOString())}

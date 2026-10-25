@@ -12,6 +12,7 @@ import re
 
 from ..llm import LLMError, router
 from ..schemas import BrandKit, Platform, SocialPost
+from .strategist import short_name
 
 log = logging.getLogger(__name__)
 
@@ -31,17 +32,34 @@ def _tag(s: str) -> str:
     return f"#{s}" if s else ""
 
 
+INDUSTRY_TAGS = {
+    "fashion": ["#NewCollection", "#StyleInspo", "#OOTD", "#FashionStyle"],
+    "food": ["#Foodie", "#FreshDaily", "#EatLocal"],
+    "beauty": ["#BeautyTips", "#SelfCare"],
+    "fitness": ["#FitnessMotivation", "#HealthyLiving"],
+    "software": ["#Productivity", "#SaaS", "#Tech"],
+    "real estate": ["#RealEstate", "#HomeSweetHome"],
+}
+
+
 def fallback_meta(kit: BrandKit, post: SocialPost) -> dict:
-    base = [_tag(kit.name), _tag(kit.industry)] + [_tag(k) for k in kit.keywords]
+    """Hashtags and alt text without a model: from the post's own product first, then the brand."""
+    industry = kit.industry.lower()
+    base = [_tag(kit.name)]
+    if post.product:
+        base += [_tag(post.product.category), _tag(short_name(post.product.name, 4))]
     if kit.location:
-        base.insert(1, _tag(kit.location.split(",")[0]))
-    base += ["#SmallBusiness", "#ShopLocal", "#SupportSmallBusiness"]
-    tags = list(dict.fromkeys(t for t in base if len(t) > 2))
-    return {
-        "hashtags": tags,
-        "alt_text": f"{kit.name} branded graphic: {post.headline}"[:120],
-        "seo_keywords": kit.keywords[:3],
-    }
+        base.append(_tag(kit.location.split(",")[0]))
+    base += next((tags for key, tags in INDUSTRY_TAGS.items() if key in industry), [])
+    base += [_tag(kit.industry)] + [_tag(k) for k in kit.keywords]
+    if not post.product:
+        base += ["#SmallBusiness", "#ShopLocal"]
+    tags = list(dict.fromkeys(t for t in base if 2 < len(t) <= 30))
+    if post.product:
+        alt = f"{post.product.name} from {kit.name}" + (f", {post.product.price}" if post.product.price else "")
+    else:
+        alt = f"{kit.name} post: {post.headline}"
+    return {"hashtags": tags, "alt_text": alt[:120], "seo_keywords": kit.keywords[:3]}
 
 
 async def _format_batch(kit: BrandKit, posts: list[SocialPost]) -> dict[str, dict]:

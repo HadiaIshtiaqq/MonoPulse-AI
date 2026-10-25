@@ -17,20 +17,20 @@ const STEPS = [
   { icon: Globe, title: "Reads your brand", body: "Logo, colours, products and tone pulled from your site. Fix anything in the brand kit." },
   { icon: Newspaper, title: "Checks today's news", body: "Tavily finds live industry stories and local events worth posting about." },
   { icon: PenLine, title: "Writes like you", body: "Nemotron drafts every caption, then the humanizer strips the AI tells." },
-  { icon: Images, title: "Designs every post", body: "Branded graphics, photo posts and swipeable carousels for each platform." },
+  { icon: Images, title: "Designs every post", body: "Your real products and photos, sized and written for Instagram, Facebook, LinkedIn and X." },
 ];
 
 const PROMISES = [
   "No watermark, on every plan",
-  "Captions checked against 26 AI-writing patterns",
+  "Every post written for each platform",
   "Carousels included",
-  "Your photos or licensed stock",
+  "Your products, your photos",
 ];
 
 export default function CreatePage() {
   const router = useRouter();
   const [input, setInput] = useState("");
-  const [platforms, setPlatforms] = useState<Platform[]>(["instagram", "linkedin", "x"]);
+  const [platforms, setPlatforms] = useState<Platform[]>(["instagram", "facebook", "linkedin", "x"]);
   const [days, setDays] = useState(30);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -110,6 +110,11 @@ export default function CreatePage() {
                   <button type="button" key={d} data-active={days === d} onClick={() => setDays(d)}>{d} days</button>
                 ))}
               </div>
+              {platforms.length > 0 && (
+                <span className="text-xs text-slate-500">
+                  {days} posts{platforms.length > 1 ? `, each made for ${platforms.length} platforms` : ""}
+                </span>
+              )}
             </div>
             {research.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-2 pb-1 pt-3">

@@ -117,9 +117,10 @@ def test_full_campaign_flow_over_mcp(client):
     assert started["structuredContent"]["platforms"] == ["instagram", "x"]  # "twitter" alias accepted
     wait_ready(cid)
     status = call(client, sid, "get_campaign_status", {"campaign_id": cid})["structuredContent"]
-    assert status["status"] == "DRAFT" and status["posts"] == 7 and status["approved"] == 0 and status["next_post"]
+    # 7 days, each post in an Instagram and an X version.
+    assert status["status"] == "DRAFT" and status["posts"] == 14 and status["approved"] == 0 and status["next_post"]
     approved = call(client, sid, "approve_posts", {"campaign_id": cid})["structuredContent"]
-    assert approved["approved_now"] == 7 and approved["approved_total"] == 7
+    assert approved["approved_now"] == 14 and approved["approved_total"] == 14
     brand = call(client, sid, "get_brand_profile", {"campaign_id": cid})["structuredContent"]
     assert brand["name"] == "Bluebird Bakery" and brand["colors"]["primary"] == "#E4572E"
     up = call(client, sid, "list_upcoming_posts", {"days": 10})["structuredContent"]

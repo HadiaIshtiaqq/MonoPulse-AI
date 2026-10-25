@@ -11,7 +11,7 @@ import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
 
 from .. import config
-from ..schemas import Campaign, CampaignStatus, Job, JobStep, Slide, SocialPost
+from ..schemas import Campaign, CampaignStatus, Job, JobStep, Slide, SocialPost, new_id
 from ..netguard import UnsafeURL
 from ..scraper.ingestor import SiteUnavailable, ingest
 from ..store import store
@@ -63,7 +63,10 @@ async def attach_stock_photos(kit, posts: list[SocialPost]) -> int:
     """
     if not config.PEXELS_API_KEY:
         return 0
-    targets = [p for i, p in enumerate(posts) if p.format == "single" and i % 3 == 1]
+    groups: dict[str, list[SocialPost]] = {}
+    for p in posts:
+        groups.setdefault(p.group_id or p.id, []).append(p)
+    targets = [g for i, g in enumerate(groups.values()) if i % 3 == 1]
     if not targets:
         return 0
     query = " ".join(filter(None, [kit.industry, (kit.keywords or [""])[0]])) or kit.name
@@ -72,13 +75,14 @@ async def attach_stock_photos(kit, posts: list[SocialPost]) -> int:
     except Exception:  # noqa: BLE001 - photos are decoration; never fail the campaign
         return 0
     attached = 0
-    for post, photo in zip(targets, found):
+    for group, photo in zip(targets, found):
         try:
-            post.background = await photos.to_background(photo.id)
-            post.layout = "photo"
-            attached += 1
+            bg = await photos.to_background(photo.id)
         except Exception:  # noqa: BLE001
             continue
+        for post in group:  # one photo for every platform version of the post
+            post.background, post.layout = bg.model_copy(), "photo"
+            attached += 1
     return attached
 
 
@@ -92,13 +96,18 @@ async def attach_site_photos(kit, posts: list[SocialPost], slide_products: dict[
     wanted: list[tuple[object, str, str]] = []  # (post or slide, image url, credit url)
     spare = [u for u in kit.images if u not in {p.image_url for p in kit.products}] or list(kit.images)
     uses: dict[str, int] = {}
+    by_group: dict[str, str] = {}  # every platform version of a post gets the same photo
     for post in posts:
         url, credit_url = "", ""
         if post.product and post.product.image_url:
             url, credit_url = post.product.image_url, post.product.url
+        elif post.group_id and post.group_id in by_group:
+            url = by_group[post.group_id]
         else:
             url = next((u for u in spare if uses.get(u, 0) < SITE_PHOTO_REUSE), "")
             uses[url] = uses.get(url, 0) + 1
+            if post.group_id:
+                by_group[post.group_id] = url
         if url:
             wanted.append((post, url, credit_url))
         for slide, product in zip(post.slides, slide_products.get(post.id, [])):
@@ -185,13 +194,15 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                                           products=kit.products)
             copies = await strategist.write_all(kit, campaign.strategy, slots, findings)
             posts = []
-            slide_products.clear()
-            for i, (slot, copy) in enumerate(zip(slots, copies)):
+            group_ids: dict[int, str] = {}
+            for slot, copy in zip(slots, copies):
                 day = campaign.start_date + timedelta(days=slot.day)
-                hour = POST_HOUR.get(slot.platform.value, 12) + (i % posts_per_day) * 3
+                # Each platform posts at its own best hour; a second idea that day goes 3 hours later.
+                hour = POST_HOUR.get(slot.platform.value, 12) + (slot.group % posts_per_day) * 3
                 posts.append(
                     SocialPost(
                         campaign_id=campaign.id,
+                        group_id=group_ids.setdefault(slot.group, new_id()),
                         day=slot.day,
                         platform=slot.platform,
                         pillar=slot.pillar,
@@ -201,7 +212,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                         trend_title=slot.trend.title if slot.trend else None,
                         trend_url=slot.trend.url if slot.trend else None,
                         product=slot.product,
-                        layout=GRAPHIC_LAYOUTS[i % len(GRAPHIC_LAYOUTS)],
+                        layout=GRAPHIC_LAYOUTS[slot.group % len(GRAPHIC_LAYOUTS)],
                         format=slot.format,
                         slides=[Slide(**s) for s in copy.get("slides", [])] if slot.format == "carousel" else [],
                         publish_at=datetime.combine(day, dtime(hour=min(hour, 21)), tzinfo=timezone.utc),
@@ -211,7 +222,8 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                     slide_products[posts[-1].id] = list(slot.slide_products)
             campaign.posts = posts
             carousels = sum(p.format == "carousel" for p in posts)
-            st.step.detail = f"{len(posts)} drafts" + (f" · {carousels} carousels" if carousels else "")
+            st.step.detail = (f"{len(group_ids)} posts × {len(campaign.platforms)} platforms = {len(posts)} versions"
+                              + (f" · {carousels} carousels" if carousels else ""))
 
         with StepTimer(job, campaign, "humanize") as st:
             results = await asyncio.gather(

@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, CalendarClock, CalendarDays, CheckCheck, Download, Grid3x3, Layers, Lightbulb, List, Loader2, Palette, Send } from "lucide-react";
-import { api, fmtDay, fmtTime, media, type Campaign, type Job, type PublishingStatus, type SocialPost } from "@/lib/api";
+import { api, fmtDay, fmtTime, groupKey, groupPosts, media, type Campaign, type Job, type PublishingStatus, type SocialPost } from "@/lib/api";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { CalendarView } from "@/components/CalendarView";
 import { QueueList } from "@/components/QueueList";
@@ -65,12 +65,15 @@ function CampaignPage() {
   const replacePost = (p: SocialPost) => setCampaign((c) => (c ? { ...c, posts: c.posts.map((x) => (x.id === p.id ? p : x)) } : c));
 
   async function move(p: SocialPost, newDate: string) {
-    // Keep the post's local time of day, move it to the new local date.
-    const old = new Date(p.publish_at);
+    // Move every platform version of the post, each keeping its own local time of day.
     const [y, m, d] = newDate.split("-").map(Number);
-    const publish_at = new Date(y, m - 1, d, old.getHours(), old.getMinutes()).toISOString();
-    replacePost({ ...p, publish_at });
-    try { replacePost(await api.updatePost(p.id, { publish_at })); } catch (e) { replacePost(p); setError((e as Error).message); }
+    const versions = (campaign?.posts ?? []).filter((v) => groupKey(v) === groupKey(p));
+    await Promise.all(versions.map(async (v) => {
+      const old = new Date(v.publish_at);
+      const publish_at = new Date(y, m - 1, d, old.getHours(), old.getMinutes()).toISOString();
+      replacePost({ ...v, publish_at });
+      try { replacePost(await api.updatePost(v.id, { publish_at })); } catch (e) { replacePost(v); setError((e as Error).message); }
+    }));
   }
 
   async function approve(p: SocialPost) {
@@ -109,10 +112,12 @@ function CampaignPage() {
   const b = campaign.brand;
   const approved = campaign.posts.filter((p) => p.status !== "DRAFT").length;
   const published = campaign.posts.filter((p) => p.status === "PUBLISHED").length;
-  const carousels = campaign.posts.filter((p) => p.format === "carousel").length;
   const next = ordered.find((p) => p.status !== "PUBLISHED" && new Date(p.publish_at).getTime() > Date.now());
-  const idx = ordered.findIndex((p) => p.id === openId);
-  const open = idx >= 0 ? ordered[idx] : null;
+  const groups = groupPosts(campaign.posts);
+  const open = campaign.posts.find((p) => p.id === openId) ?? null;
+  const gi = open ? groups.findIndex((g) => g.some((v) => v.id === open.id)) : -1;
+  // Previous / next move between posts, staying on the same platform when that post has it.
+  const sibling = (g: SocialPost[]) => (g.find((v) => v.platform === open?.platform) ?? g[0]).id;
   const anyConnected = !!pub && (Object.values(pub.connected).some(Boolean) || pub.webhook);
 
   return (
@@ -160,7 +165,10 @@ function CampaignPage() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
-          { label: "Posts", value: campaign.posts.length, sub: carousels ? `incl. ${carousels} carousels` : `over ${campaign.days} days`, icon: Layers },
+          {
+            label: "Posts", value: groups.length, icon: Layers,
+            sub: campaign.platforms.length > 1 ? `× ${campaign.platforms.length} platforms = ${campaign.posts.length} versions` : `over ${campaign.days} days`,
+          },
           { label: "Approved", value: `${approved}/${campaign.posts.length}`, sub: approved === campaign.posts.length ? "all set" : `${campaign.posts.length - approved} to review`, icon: CheckCheck },
           { label: "Posted", value: published, sub: published ? "live on your channels" : "nothing posted yet", icon: Send },
           {
@@ -205,7 +213,7 @@ function CampaignPage() {
         <>
           <div className="sm:hidden"><QueueList posts={campaign.posts} onOpen={(p) => setOpenId(p.id)} onApprove={approve} /></div>
           <div className="hidden sm:block">
-            <p className="mb-3 text-xs text-slate-500">Click a post to design, edit and post it. Drag a post to another day to reschedule.</p>
+            <p className="mb-3 text-xs text-slate-500">Each post has a version for every platform; click a platform icon to open that version. Drag a post to another day to move every version.</p>
             <CalendarView posts={campaign.posts} startDate={campaign.start_date} days={campaign.days} onOpen={(p) => setOpenId(p.id)} onMove={move} />
           </div>
         </>
@@ -221,8 +229,10 @@ function CampaignPage() {
           connected={pub?.connected[open.platform] || !!pub?.webhook}
           onClose={() => setOpenId(null)}
           onChange={replacePost}
-          onPrev={idx > 0 ? () => setOpenId(ordered[idx - 1].id) : undefined}
-          onNext={idx < ordered.length - 1 ? () => setOpenId(ordered[idx + 1].id) : undefined}
+          versions={gi >= 0 ? groups[gi] : [open]}
+          onSwitch={setOpenId}
+          onPrev={gi > 0 ? () => setOpenId(sibling(groups[gi - 1])) : undefined}
+          onNext={gi >= 0 && gi < groups.length - 1 ? () => setOpenId(sibling(groups[gi + 1])) : undefined}
         />
       )}
     </div>

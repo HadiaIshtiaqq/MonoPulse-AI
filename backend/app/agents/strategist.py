@@ -38,6 +38,7 @@ class Slot:
     format: str = "single"
     product: Product | None = None  # the real product this post features
     slide_products: tuple[Product, ...] = ()  # carousel pages, one product each
+    group: int = 0  # the post idea; every platform's version of it shares this
 
 
 def product_brief(p: Product) -> dict:
@@ -145,28 +146,29 @@ def varied(products: list[Product]) -> list[Product]:
 
 def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: list[Platform], days: int, per_day: int,
                products: list[Product] | None = None) -> list[Slot]:
+    """One post idea per day (or per_day of them), each in a version for every platform.
+
+    The versions share the idea, product, pillar and trend; copy, image size and format are
+    made for each platform (a carousel idea is a carousel on Instagram and LinkedIn, a single
+    image on X and Facebook)."""
     pillars = [p.name for p in strategy.pillars] or ["General"]
     catalogue = varied([p for p in (products or []) if p.image_url] or list(products or []))
+    platforms = list(dict.fromkeys(platforms))
     slots: list[Slot] = []
-    per_platform: dict[Platform, int] = {}
     i = 0
     for day in range(days):
-        for k in range(per_day):
-            platform = platforms[(day * per_day + k) % len(platforms)]
+        for _ in range(per_day):
             theme = strategy.weekly_themes[min(day // 7, len(strategy.weekly_themes) - 1)] if strategy.weekly_themes else ""
-            # Roughly every third post rides a live trend.
+            # Roughly every third idea rides a live trend.
             trend = trends[(i // 3) % len(trends)] if trends and i % 3 == 0 else None
-            # Carousels get the most saves and shares on Instagram and LinkedIn; every third post there.
-            nth = per_platform.get(platform, 0)
-            per_platform[platform] = nth + 1
-            fmt = "carousel" if platform in CAROUSEL_PLATFORMS and nth % 3 == 1 else "single"
-            slot = Slot(day=day, platform=platform, pillar=pillars[i % len(pillars)], theme=theme, trend=trend, format=fmt)
-            if catalogue:
-                # Every post features a real product; carousels walk through a few more of them.
-                slot.product = catalogue[i % len(catalogue)]
-                if fmt == "carousel" and len(catalogue) > 1:
-                    slot.slide_products = tuple(catalogue[(i + j) % len(catalogue)] for j in range(1, min(4, len(catalogue))))
-            slots.append(slot)
+            # Carousels get the most saves and shares on Instagram and LinkedIn; every third idea.
+            carousel_idea = i % 3 == 1
+            product = catalogue[i % len(catalogue)] if catalogue else None
+            extra = tuple(catalogue[(i + j) % len(catalogue)] for j in range(1, min(4, len(catalogue)))) if len(catalogue) > 1 else ()
+            for platform in platforms:
+                fmt = "carousel" if carousel_idea and platform in CAROUSEL_PLATFORMS else "single"
+                slots.append(Slot(day=day, platform=platform, pillar=pillars[i % len(pillars)], theme=theme, trend=trend,
+                                  format=fmt, product=product, slide_products=extra if fmt == "carousel" else (), group=i))
             i += 1
     return slots
 
@@ -179,6 +181,10 @@ Each post must fit its platform rules. When a slot includes a trend, connect it 
 (don't force it, and never misstate the news).
 Slots with "format": "carousel" are swipeable multi-image posts: also return "slides", 3 to 5 pages that each teach
 one concrete step, tip or fact (headline <= 8 words, body <= 35 words). The caption then introduces the carousel.
+Slots that share a "group" are the same post published on different platforms: keep the same idea, product and image
+headline (use an identical "headline" across the group), but write each caption natively for its platform, never
+copy-pasted: Instagram opens with a hook and ends with "link in bio"; Facebook is conversational and asks a question;
+LinkedIn is professional, a little longer and about the craft, quality or business; X is one short, sharp line.
 When a slot has a "product", the post features that exact product, shown in the photo: use its real name, and its price
 exactly as given. When a carousel slot has "slide_products", write exactly one slide per listed product, in order.
 Never invent products, prices, discounts or claims that aren't in the brief.
@@ -191,7 +197,8 @@ Return a JSON array, one object per slot, in the same order:
 async def write_batch(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slot], offset: int, research: str = "") -> list[dict]:
     slot_desc = []
     for j, s in enumerate(slots):
-        entry = {"slot": offset + j, "platform": s.platform.value, "format": s.format, "pillar": s.pillar, "weekly_theme": s.theme}
+        entry = {"slot": offset + j, "group": s.group, "platform": s.platform.value, "format": s.format, "pillar": s.pillar,
+                 "weekly_theme": s.theme}
         if s.trend:
             entry["trend"] = f"{s.trend.title} - {s.trend.snippet[:200]}"
         if s.product:
@@ -212,12 +219,30 @@ async def write_batch(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slo
     return [d for d in data if isinstance(d, dict)]
 
 
+def group_batches(slots: list[Slot], size: int) -> list[tuple[int, list[Slot]]]:
+    """Split slots into batches of about `size`, never splitting a post's platform versions,
+    so the model writes all versions of one idea together and keeps them consistent."""
+    batches: list[tuple[int, list[Slot]]] = []
+    start = 0
+    while start < len(slots):
+        end = start
+        while end < len(slots):
+            group_end = end
+            while group_end < len(slots) and slots[group_end].group == slots[end].group:
+                group_end += 1
+            if end > start and group_end - start > size:
+                break
+            end = group_end
+        batches.append((start, slots[start:end]))
+        start = end
+    return batches
+
+
 async def write_all(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slot], research: str = "") -> list[dict]:
     """Return one copy dict per slot (headline, caption, cta)."""
     results: list[dict | None] = [None] * len(slots)
     if router.enabled:
-        size = max(1, config.COPY_BATCH_SIZE)
-        batches = [(i, slots[i : i + size]) for i in range(0, len(slots), size)]
+        batches = group_batches(slots, max(1, config.COPY_BATCH_SIZE))
         outs = await asyncio.gather(*(write_batch(kit, strategy, b, off, research) for off, b in batches), return_exceptions=True)
         for (off, batch), out in zip(batches, outs):
             if isinstance(out, BaseException):
@@ -239,6 +264,14 @@ async def write_all(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slot]
                 slides = slides[: len(slot.slide_products)] if len(slides) >= len(slot.slide_products) else product_slides(slot.slide_products)
             copy["slides"] = slides if len(slides) >= 2 else fallback_slides(kit)
         out.append(copy)
+    # One idea, one image headline: every version of the same format shows the same words on
+    # the image (a carousel cover and a single image of the same idea can differ).
+    shared: dict[tuple[int, str], str] = {}
+    for slot, copy in zip(slots, out):
+        if copy.get("headline"):
+            shared.setdefault((slot.group, slot.format), copy["headline"])
+    for slot, copy in zip(slots, out):
+        copy["headline"] = shared.get((slot.group, slot.format), copy.get("headline", ""))
     return out
 
 
@@ -281,37 +314,58 @@ def short_name(name: str, max_words: int = 6) -> str:
     return " ".join(words[:max_words]) if len(words) > max_words else base
 
 
-def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
-    """Template copy for a post that features one real product from the site."""
+def product_angle(kit: BrandKit, slot: Slot, p: Product) -> tuple[str, str]:
+    """(image headline, the idea in one sentence): what every platform version of a post shares."""
     name, brand = short_name(p.name), kit.name
     coll = f" from our {p.category} collection" if p.category else ""
-    price = f" {p.price}." if p.price else ""
+    fashion = "fashion" in kit.industry.lower()
     pillar = slot.pillar.lower()
     if slot.format == "carousel":
         n = len(slot.slide_products) + 1
-        headline = f"{n} pieces worth a closer look" if "fashion" in kit.industry.lower() else f"{n} favourites from {brand}"
-        caption = (f"Swipe through a few favourites from {brand}, starting with the {name}{coll}.{price} "
-                   "Which one would you pick?")
-    elif "behind" in pillar:
-        headline = f"The making of the {name}"
-        caption = f"A closer look at the {name}{coll}. Every detail you see in this photo was chosen on purpose.{price}"
-    elif "customer" in pillar:
-        headline = "Everyone's asking about this one"
-        caption = f"The {name}{coll} is the one people keep messaging us about. See why in person.{price}"
-    elif "tip" in pillar:
-        headline = f"How to wear the {name}" if "fashion" in kit.industry.lower() else f"Getting the most from the {name}"
-        caption = f"One idea for the {name}{coll}: keep everything else simple and let it lead.{price}"
-    else:
-        headline = f"New in: {name}"
-        caption = f"New at {brand}: the {name}{coll}.{price} Limited pieces, so don't wait too long."
+        return (f"{n} pieces worth a closer look" if fashion else f"{n} favourites from {brand}",
+                f"A few favourites from {brand}, starting with the {name}{coll}")
+    if "behind" in pillar:
+        return f"The making of the {name}", f"Every detail of the {name}{coll} was chosen on purpose"
+    if "customer" in pillar:
+        return "Everyone's asking about this one", f"The {name}{coll} is the piece people keep asking us about"
+    if "tip" in pillar:
+        return (f"How to wear the {name}" if fashion else f"Getting the most from the {name}",
+                f"Keep everything else simple and let the {name}{coll} lead")
+    return f"New in: {name}", f"The {name}{coll} is new at {brand}"
+
+
+def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
+    """Template copy for a post that features one real product, written for its platform."""
+    headline, idea = product_angle(kit, slot, p)
+    price = f" {p.price}." if p.price else ""
     link = shop_link(kit, p)
+    carousel = slot.format == "carousel"
     if slot.platform is Platform.INSTAGRAM:
-        cta = "Shop via the link in bio"
+        close = "Swipe to see them all, then tell us your favourite." if carousel else "Save this post for later."
+        caption, cta = f"{idea}.{price}\n\n{close}", "Shop via the link in bio"
+    elif slot.platform is Platform.FACEBOOK:
+        close = "Which one would you pick?" if carousel else "Have you seen it in person yet? Tell us in the comments."
+        caption, cta = f"{idea}.{price} {close}", (f"Shop it here: {link}" if link else f"Shop {kit.name} online")
+    elif slot.platform is Platform.LINKEDIN:
+        close = ("We put a few favourites from the collection together. Swipe through and tell us which you'd choose."
+                 if carousel else "We'd love to hear what you think of it.")
+        caption = f"What's new at {kit.name}: {idea[0].lower()}{idea[1:]}.{price}\n\n{close}"
+        cta = f"See the collection: {link}" if link else f"Find {kit.name} online"
     else:
-        cta = f"Shop it: {link}" if link else f"Shop {brand} online"
-    if slot.platform is Platform.X:
-        caption = caption.split(". ")[0].rstrip(".") + "." + price
+        caption, cta = f"{idea}.{price}", link or kit.name
     return {"headline": headline[:60], "caption": caption, "cta": cta}
+
+
+def adapt_to_platform(kit: BrandKit, platform: Platform, caption: str) -> tuple[str, str]:
+    """Give generic (non-product) copy each platform's own shape and call to action."""
+    site = (kit.website_url or "").split("//")[-1].strip("/")
+    if platform is Platform.X:
+        return caption.split(". ")[0].rstrip(".") + ".", site or kit.name
+    if platform is Platform.LINKEDIN:
+        return f"From the {kit.name} team: {caption}\n\nWe'd love to hear how you approach this.", (f"Learn more: {site}" if site else "")
+    if platform is Platform.FACEBOOK:
+        return f"{caption} What do you think? Tell us in the comments.", ("Visit us today" if kit.location else f"Visit {site}" if site else "")
+    return f"{caption}\n\nSave this for later.", ("Visit us today" if kit.location else "Learn more at the link in bio")
 
 
 def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
@@ -367,6 +421,5 @@ def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
     if slot.format == "carousel":
         headline = f"{min(4, len(props)) + 1} things to know about {name}"[:60]
         caption = f"Swipe through for a few things we wish more people knew about {industry}. {caption}"
-    if slot.platform is Platform.X:
-        caption = caption.split(". ")[0].rstrip(".") + "."
-    return {"headline": headline, "caption": caption, "cta": "Visit us today" if kit.location else "Learn more at the link in bio"}
+    caption, cta = adapt_to_platform(kit, slot.platform, caption)
+    return {"headline": headline, "caption": caption, "cta": cta}

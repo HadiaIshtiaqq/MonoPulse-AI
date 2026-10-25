@@ -61,6 +61,7 @@ export interface Background {
 export interface SocialPost {
   id: string;
   campaign_id: string;
+  group_id: string;
   day: number;
   platform: Platform;
   pillar: string;
@@ -354,6 +355,27 @@ export async function streamEvents(path: string, onEvent: (ev: any) => void, sig
 }
 
 export const media = (path: string | null | undefined) => (path ? `${API_URL}${path}` : "");
+
+export const PLATFORM_ORDER: Platform[] = ["instagram", "facebook", "linkedin", "x"];
+export const groupKey = (p: SocialPost) => p.group_id || p.id;
+
+/** Posts grouped into ideas: each group holds one post's versions for every platform,
+ *  groups ordered by their first posting time, versions in a fixed platform order. */
+export function groupPosts(posts: SocialPost[]): SocialPost[][] {
+  const groups = new Map<string, SocialPost[]>();
+  for (const p of posts) groups.set(groupKey(p), [...(groups.get(groupKey(p)) ?? []), p]);
+  const firstAt = (g: SocialPost[]) => g.reduce((m, p) => (p.publish_at < m ? p.publish_at : m), g[0].publish_at);
+  return [...groups.values()]
+    .map((g) => g.sort((a, b) => PLATFORM_ORDER.indexOf(a.platform) - PLATFORM_ORDER.indexOf(b.platform)))
+    .sort((a, b) => firstAt(a).localeCompare(firstAt(b)));
+}
+
+/** A group's overall state: all approved, partly posted, and so on. */
+export function groupStatus(g: SocialPost[]): "DRAFT" | "APPROVED" | "PUBLISHED" {
+  if (g.every((p) => p.status === "PUBLISHED")) return "PUBLISHED";
+  if (g.every((p) => p.status !== "DRAFT")) return "APPROVED";
+  return "DRAFT";
+}
 
 // ---- Local time: posts are stored in UTC but always shown and edited in the viewer's time zone.
 

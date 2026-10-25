@@ -111,6 +111,7 @@ class Slide(BaseModel):
 class SocialPost(BaseModel):
     id: str = Field(default_factory=new_id)
     campaign_id: str
+    group_id: str = ""  # versions of the same post for different platforms share this
     day: int
     platform: Platform
     pillar: str = ""

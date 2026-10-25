@@ -120,7 +120,8 @@ def test_full_30_day_campaign_under_30s(monkeypatch):
     asyncio.run(pipeline.run_campaign(job, camp, "bluebird.example", posts_per_day=1))
     elapsed = time.perf_counter() - t0
     assert job.status == "done", job.error
-    assert len(camp.posts) == 30
+    assert len(camp.posts) == 90  # 30 posts, each on 3 platforms
+    assert len({p.group_id for p in camp.posts}) == 30
     assert {p.platform for p in camp.posts} == {Platform.INSTAGRAM, Platform.LINKEDIN, Platform.X}
     assert all(p.image_url and p.is_humanized and p.hashtags for p in camp.posts)
     assert elapsed < 30
@@ -128,8 +129,40 @@ def test_full_30_day_campaign_under_30s(monkeypatch):
         (config.MEDIA_DIR / f"{camp.id}_{p.id}.png").unlink(missing_ok=True)
 
 
-def test_slots_rotate_platforms_and_pillars():
+def test_every_post_has_a_version_per_platform_and_pillars_rotate():
     strat = strategist.fallback_strategy(_kit(), [], 2)
     slots = strategist.plan_slots(strat, [], [Platform.X, Platform.LINKEDIN], 10, 1)
-    assert [s.platform for s in slots[:4]] == [Platform.X, Platform.LINKEDIN, Platform.X, Platform.LINKEDIN]
+    assert len(slots) == 20
+    assert [(s.day, s.platform) for s in slots[:4]] == [(0, Platform.X), (0, Platform.LINKEDIN), (1, Platform.X), (1, Platform.LINKEDIN)]
+    for g in {s.group for s in slots}:
+        versions = [s for s in slots if s.group == g]
+        assert len({s.pillar for s in versions}) == 1 and len({s.day for s in versions}) == 1
     assert len({s.pillar for s in slots}) == 4
+    # A carousel idea is a carousel where the platform supports it, a single image elsewhere.
+    carousel_group = [s for s in slots if s.group == 1]
+    assert {s.platform: s.format for s in carousel_group} == {Platform.X: "single", Platform.LINKEDIN: "carousel"}
+
+
+def test_platform_versions_are_written_for_each_platform():
+    kit = _kit()
+    strat = strategist.fallback_strategy(kit, [], 1)
+    platforms = list(Platform)
+    slots = strategist.plan_slots(strat, [], platforms, 1, 1)
+    copies = asyncio.run(strategist.write_all(kit, strat, slots))
+    by_platform = {s.platform: c for s, c in zip(slots, copies)}
+    assert len({c["headline"] for c in copies}) == 1  # the same image headline everywhere
+    assert len({c["caption"] for c in copies}) == 4  # but each caption is written for its platform
+    assert "Save this" in by_platform[Platform.INSTAGRAM]["caption"]
+    assert "comments" in by_platform[Platform.FACEBOOK]["caption"]
+    assert by_platform[Platform.LINKEDIN]["caption"].startswith("From the Bluebird Bakery team")
+    assert len(by_platform[Platform.X]["caption"]) < len(by_platform[Platform.INSTAGRAM]["caption"])
+
+
+def test_batches_keep_a_posts_versions_together():
+    strat = strategist.fallback_strategy(_kit(), [], 2)
+    slots = strategist.plan_slots(strat, [], list(Platform), 5, 1)
+    batches = strategist.group_batches(slots, 6)
+    assert sum(len(b) for _, b in batches) == len(slots)
+    for _, batch in batches:
+        groups = {s.group for s in batch}
+        assert all(sum(1 for s in slots if s.group == g) == sum(1 for s in batch if s.group == g) for g in groups)
