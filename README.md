@@ -19,6 +19,11 @@ Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** 
 
   Weekly themes are planned around that country's seasonal moments, such as 11.11, Black Friday / White Friday, wedding season, Ramadan and Eid, Diwali and Christmas. Only news that's actually about the brand or what it sells is used; corporate and generic market reports are dropped. Without a key, an industry playbook (footwear, fashion, food, beauty, fitness, software, real estate and more) is filled in with the same facts.
 - **Every post, made for every platform**: Each post idea gets its own version for Instagram (4:5 image, hook-first caption, "link in bio"), Facebook (square, conversational, asks a question), LinkedIn (square, more professional) and X (16:9, one short line with the link). All versions share the idea, product, photo and image headline, and each is posted at that platform's best hour. A carousel idea is a carousel on Instagram and LinkedIn and a single image elsewhere.
+- **No monotonous feed**: a variety engine ([variety.py](backend/app/agents/variety.py)) keeps a month of posts from feeling like one post 30 times.
+  - **Post types:** a campaign mixes product spotlights, "this or that" duos (two products, vote A or B), sale posts with a % badge, styling tips, brand-quote graphics, seasonal-moment posts, questions and carousels. The same type never runs twice in a row, and never features the same product twice in a row.
+  - **Wording:** every angle has several headline, idea, ending and call-to-action variants, rotated so phrasing doesn't come back until all are used.
+  - **Looks:** layouts rotate between photo with text at the bottom, photo with text at the top, framed photo, duo and graphic, so neighbouring posts never look alike.
+  - **Repetition check:** a final check replaces any repeated headline, including ones a model wrote. The Strategy tab shows the content mix.
 - **Parallel copywriting**: Captions and carousel slides are generated in concurrent batches. A post's platform versions always go in the same batch so they stay consistent, and a 30-day, four-platform campaign (120 versions) takes minutes.
 - **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
 - **Branded design**: Renders single images and 1080×1350 carousels (cover, one page per product, CTA) with the brand's logo at the top, its colours, and the product's price. It uses the brand's own photos first, then licensed stock or uploads. No watermarks.
@@ -225,7 +230,7 @@ Key design points:
 │   │   │   └── memory.py           # Research library
 │   │   ├── scraper/                # Brand reader (logo, palette, products, prices)
 │   │   └── social/                 # Instagram, Facebook, LinkedIn, X clients
-│   ├── tests/                      # 93 tests, network mocked
+│   ├── tests/                      # 105 tests, network mocked
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/                       # Next.js web app
@@ -439,7 +444,7 @@ Fill in the `META_*`, `INSTAGRAM_ACCOUNT_ID`, `LINKEDIN_*` and `X_USER_ACCESS_TO
 cd backend && .venv/bin/python -m pytest -q
 ```
 
-There are 93 tests, with every external API mocked. They cover:
+There are 105 tests, with every external API mocked. They cover:
 
 - the pipeline and model router
 - scraping and the humanizer's fact guard

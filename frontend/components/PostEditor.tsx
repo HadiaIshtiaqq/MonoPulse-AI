@@ -6,7 +6,7 @@ import {
   RefreshCw, Rocket, Send, Trash2, Wand2, X,
 } from "lucide-react";
 import {
-  api, fmtDay, fmtTime, fromLocalInput, media, toLocalInput, type BrandKit, type HumanizeMode, type Layout, type Pattern, type PostUpdate, type Slide, type SocialPost, type TextPosition,
+  api, fmtDay, fmtTime, fromLocalInput, KIND_LABELS, media, toLocalInput, type BrandKit, type HumanizeMode, type Layout, type Pattern, type PostUpdate, type Slide, type SocialPost, type TextPosition,
 } from "@/lib/api";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 import { PostPreview } from "@/components/PostPreview";
@@ -44,6 +44,8 @@ const LAYOUTS: { id: Layout; label: string }[] = [
   { id: "split", label: "Split" },
   { id: "quote", label: "Quote" },
   { id: "photo", label: "Photo" },
+  { id: "frame", label: "Frame" },
+  { id: "duo", label: "Duo" },
 ];
 const POSITIONS: { id: TextPosition; label: string }[] = [
   { id: "auto", label: "Auto" },
@@ -217,7 +219,11 @@ export function PostEditor({
           ) : (
             <span className={`chip ${PLATFORM_META[post.platform].bg}`}><PlatformIcon platform={post.platform} size={12} /> {PLATFORM_META[post.platform].label}</span>
           )}
-          {post.format === "carousel" && <span className="chip bg-brand-soft text-brand-700">Carousel · {images.length} slides</span>}
+          {post.format === "carousel" ? (
+            <span className="chip bg-brand-soft text-brand-700">Carousel · {images.length} slides</span>
+          ) : post.kind && post.kind !== "spotlight" && post.kind !== "carousel" ? (
+            <span className="chip bg-amber-50 text-amber-800">{KIND_LABELS[post.kind]}</span>
+          ) : null}
           <span className="hidden text-sm text-slate-500 sm:inline">
             {fmtDay(when_.toISOString())} · {fmtTime(when_.toISOString())}
           </span>
@@ -262,10 +268,10 @@ export function PostEditor({
                 <>
                   <section>
                     <p className="label mb-2">Template</p>
-                    <div className="grid grid-cols-4 gap-2">
-                      {LAYOUTS.map((l) => (
-                        <button key={l.id} disabled={busy !== null || (l.id === "photo" && !post.background)}
-                          title={l.id === "photo" && !post.background ? "Pick a photo below first" : ""}
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                      {LAYOUTS.filter((l) => l.id !== "duo" || post.gallery?.length).map((l) => (
+                        <button key={l.id} disabled={busy !== null || ((l.id === "photo" || l.id === "frame") && !post.background)}
+                          title={(l.id === "photo" || l.id === "frame") && !post.background ? "Pick a photo below first" : ""}
                           onClick={() => update({ layout: l.id }, undefined, "layout")}
                           className={`rounded-xl border px-2 py-2 text-xs font-medium transition disabled:opacity-40 ${post.layout === l.id ? "border-brand bg-brand-soft text-brand-700" : "border-slate-200 hover:border-slate-300"}`}>
                           {l.label}

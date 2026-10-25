@@ -309,8 +309,10 @@ async def update_post(post_id: str, req: UpdatePostRequest) -> SocialPost:
     if req.headline is not None and req.headline != post.headline:
         post.headline, rerender = req.headline[:90], True
     if req.layout is not None and req.layout in renderer.LAYOUTS and req.layout != post.layout:
-        if req.layout == "photo" and not post.background:
+        if req.layout in renderer.PHOTO_LAYOUTS and not post.background:
             raise HTTPException(422, "Pick a background photo first.")
+        if req.layout == "duo" and not post.gallery:
+            raise HTTPException(422, "The duo layout needs a second product photo; it's set up for \"this or that\" posts.")
         post.layout, rerender = req.layout, True
     if req.text_position is not None and req.text_position in renderer.POSITIONS:
         post.text_position, rerender = req.text_position, True

@@ -128,10 +128,13 @@ class SocialPost(BaseModel):
     trend_title: str | None = None
     trend_url: str | None = None
     product: Product | None = None
+    compare: Product | None = None  # the second product in a "this or that" post
+    kind: str = "spotlight"  # spotlight | carousel | duo | tip | quote | sale | moment | question
     layout: str = "bold"  # bold | split | quote | photo
     format: str = "single"  # single | carousel
     slides: list[Slide] = []  # carousel pages after the cover
     background: Background | None = None
+    gallery: list[Background] = []  # extra photos (the second product of a duo)
     text_position: str = "auto"  # auto | top | center | bottom
     text_scale: float = 1.0
     image_url: str | None = None
@@ -163,6 +166,7 @@ class Campaign(BaseModel):
     mode: str = "live"  # live | demo (no API keys -> deterministic fallbacks)
     timings: dict[str, float] = {}
     research_ids: list[str] = []
+    content_mix: dict = {}  # post types, layouts and repeated headlines (see variety.variety_report)
     created_at: datetime = Field(default_factory=now_utc)
 
 

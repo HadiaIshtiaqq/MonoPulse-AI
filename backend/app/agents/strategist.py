@@ -9,14 +9,15 @@ import asyncio
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from collections import Counter
 from datetime import date, timedelta
 
 from .. import config
 from ..llm import LLMError, router
 from ..schemas import BrandKit, CampaignStrategy, ContentPillar, Platform, Product, TrendItem
-from . import calendar
+from . import calendar, variety
 from .calendar import COUNTRY_NAMES
 from .playbooks import TERMS, WHO, amount, brand_facts, join_words, playbook_for, playbook_key, tidy_price
 
@@ -44,6 +45,9 @@ class Slot:
     product: Product | None = None  # the real product this post features
     slide_products: tuple[Product, ...] = ()  # carousel pages, one product each
     group: int = 0  # the post idea; every platform's version of it shares this
+    kind: str = "spotlight"  # the post type (see variety.KIND_LABELS)
+    compare: Product | None = None  # second product of a "this or that" duo
+    nth: int = 0  # how many earlier ideas had this type: picks the wording variant
 
 
 def product_brief(p: Product) -> dict:
@@ -243,31 +247,51 @@ def varied(products: list[Product]) -> list[Product]:
 
 
 def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: list[Platform], days: int, per_day: int,
-               products: list[Product] | None = None) -> list[Slot]:
+               products: list[Product] | None = None, claims: int = 0) -> list[Slot]:
     """One post idea per day (or per_day of them), each in a version for every platform.
 
-    The versions share the idea, product, pillar and trend; copy, image size and format are
-    made for each platform (a carousel idea is a carousel on Instagram and LinkedIn, a single
-    image on X and Facebook)."""
+    Ideas cycle through post types (spotlight, carousel, this-or-that duo, tip, quote, sale,
+    seasonal moment) so the feed doesn't repeat itself. The versions of an idea share its
+    type, product, pillar and trend; copy, image size and format are made for each platform
+    (a carousel idea is a carousel on Instagram and LinkedIn, a single image elsewhere)."""
     pillars = [p.name for p in strategy.pillars] or ["General"]
     catalogue = varied([p for p in (products or []) if p.image_url] or list(products or []))
+    on_sale = [p for p in catalogue if sale_percent(p)]
     platforms = list(dict.fromkeys(platforms))
+    themes = [strategy.weekly_themes[min(day // 7, len(strategy.weekly_themes) - 1)] if strategy.weekly_themes else ""
+              for day in range(days) for _ in range(per_day)]
+    kinds = variety.plan_kinds(len(themes), products=len(catalogue), on_sale=len(on_sale), claims=claims,
+                               moments=[theme_moment(t) for t in themes])
+    seen: Counter = Counter()
+    next_product = next_sale = 0
+    last_by_kind: dict[str, str] = {}  # the product each post type featured last time
     slots: list[Slot] = []
-    i = 0
-    for day in range(days):
-        for _ in range(per_day):
-            theme = strategy.weekly_themes[min(day // 7, len(strategy.weekly_themes) - 1)] if strategy.weekly_themes else ""
-            # Roughly every third idea rides a live trend.
-            trend = trends[(i // 3) % len(trends)] if trends and i % 3 == 0 else None
-            # Carousels get the most saves and shares on Instagram and LinkedIn; every third idea.
-            carousel_idea = i % 3 == 1
-            product = catalogue[i % len(catalogue)] if catalogue else None
-            extra = tuple(catalogue[(i + j) % len(catalogue)] for j in range(1, min(4, len(catalogue)))) if len(catalogue) > 1 else ()
-            for platform in platforms:
-                fmt = "carousel" if carousel_idea and platform in CAROUSEL_PLATFORMS else "single"
-                slots.append(Slot(day=day, platform=platform, pillar=pillars[i % len(pillars)], theme=theme, trend=trend,
-                                  format=fmt, product=product, slide_products=extra if fmt == "carousel" else (), group=i))
-            i += 1
+    for i, (theme, kind) in enumerate(zip(themes, kinds)):
+        day = i // per_day
+        pillar = pillars[i % len(pillars)]
+        # Roughly every third idea rides a live trend.
+        trend = trends[(i // 3) % len(trends)] if trends and i % 3 == 0 else None
+        product = compare = None
+        extra: tuple[Product, ...] = ()
+        if catalogue and kind != "quote":
+            if kind == "sale":
+                product, next_sale = on_sale[next_sale % len(on_sale)], next_sale + 1
+            else:
+                if len(catalogue) > 1 and catalogue[next_product % len(catalogue)].url == last_by_kind.get(kind):
+                    next_product += 1  # the same type twice shouldn't feature the same product
+                product, next_product = catalogue[next_product % len(catalogue)], next_product + 1
+            last_by_kind[kind] = product.url
+            if kind == "duo":
+                compare, next_product = catalogue[next_product % len(catalogue)], next_product + 1
+            if kind == "carousel" and len(catalogue) > 1:
+                extra = tuple(catalogue[(next_product + j) % len(catalogue)] for j in range(min(3, len(catalogue) - 1)))
+        # The n-th post of the same type (and, for spotlights, pillar) uses the n-th wording variant.
+        key = (kind, pillar if kind == "spotlight" else "")
+        nth, seen[key] = seen[key], seen[key] + 1
+        for platform in platforms:
+            fmt = "carousel" if kind == "carousel" and platform in CAROUSEL_PLATFORMS else "single"
+            slots.append(Slot(day=day, platform=platform, pillar=pillar, theme=theme, trend=trend, format=fmt, product=product,
+                              slide_products=extra if fmt == "carousel" else (), group=i, kind=kind, compare=compare, nth=nth))
     return slots
 
 
@@ -286,6 +310,11 @@ LinkedIn is professional, a little longer and about the craft, quality or busine
 When a slot has a "product", the post features that exact product, shown in the photo: use its real name, and its price
 exactly as given. When a carousel slot has "slide_products", write exactly one slide per listed product, in order.
 Never invent products, prices, discounts or claims that aren't in the brief.
+Follow each slot's "post_type": a "This or that" post asks people to choose between "product" and "compare_with"; a
+"Sale" post leads with the saving; a "Brand quote" is one short line from the brand's own claims; a "Styling tip" gives
+one concrete tip; a "Seasonal moment" ties the product to the weekly theme's date.
+No two posts may feel the same: never reuse a headline, never open two captions the same way, and vary the shape
+(a question, a number, a short statement, a mini story) and the length from post to post.
 Return a JSON array, one object per slot, in the same order:
 [{"slot": <slot index>, "headline": "<= 7 words for the image overlay", "caption": "...", "cta": "short call to action",
   "slides": [{"headline": "...", "body": "..."}]  // carousel slots only
@@ -296,7 +325,9 @@ async def write_batch(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slo
     slot_desc = []
     for j, s in enumerate(slots):
         entry = {"slot": offset + j, "group": s.group, "platform": s.platform.value, "format": s.format, "pillar": s.pillar,
-                 "weekly_theme": s.theme}
+                 "post_type": variety.KIND_LABELS.get(effective_kind(s), s.kind), "weekly_theme": s.theme}
+        if s.compare:
+            entry["compare_with"] = product_brief(s.compare)
         if s.trend:
             entry["trend"] = f"{s.trend.title} - {s.trend.snippet[:200]}"
         if s.product:
@@ -370,7 +401,29 @@ async def write_all(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slot]
             shared.setdefault((slot.group, slot.format), copy["headline"])
     for slot, copy in zip(slots, out):
         copy["headline"] = shared.get((slot.group, slot.format), copy.get("headline", ""))
+    dedupe_headlines(kit, slots, out)
     return out
+
+
+def dedupe_headlines(kit: BrandKit, slots: list[Slot], copies: list[dict]) -> int:
+    """No two posts share an image headline. A repeat (from a model or a template) is replaced
+    by the next unused wording variant for that post; returns how many were replaced."""
+    used: set[str] = set()
+    replaced = 0
+    done: dict[tuple[int, str], str] = {}
+    for slot, copy in zip(slots, copies):
+        key = (slot.group, slot.format)
+        if key in done:  # this idea's other platform versions share the decided headline
+            copy["headline"] = done[key]
+            continue
+        head = copy.get("headline", "")
+        if variety.normalize(head) in used:
+            alt = next((h for h in headline_options(kit, slot) if variety.normalize(h) not in used), "")
+            if alt:
+                head, replaced = alt, replaced + 1
+        copy["headline"] = done[key] = head
+        used.add(variety.normalize(head))
+    return replaced
 
 
 def product_slides(products) -> list[dict]:
@@ -412,6 +465,8 @@ def short_name(name: str, max_words: int = 6) -> str:
     """A product name short enough for an image headline, cut at a natural break rather
     than mid-word ("3 Piece Printed Cotton Linen Suit with Dupatta" -> "...Linen Suit").
     Line-and-audience names read naturally: "Power - Men" -> "Power for men"."""
+    if name.isupper():  # "DUPATTA" -> "Dupatta": don't shout
+        name = name.title()
     m = AUDIENCE_SUFFIX.match(name)
     if m:
         return f"{m.group(1).strip()} for {m.group(2).lower()}"
@@ -420,32 +475,62 @@ def short_name(name: str, max_words: int = 6) -> str:
     return " ".join(words[:max_words]) if len(words) > max_words else base
 
 
+def pillar_angle(pillar: str) -> str:
+    """Which angle a spotlight takes, from its content pillar's name."""
+    p = pillar.lower()
+    if any(w in p for w in ("behind", "craft", "making", "inside", "kitchen", "made")):
+        return "craft"
+    if any(w in p for w in ("comfort", "fit")):
+        return "comfort"
+    if any(w in p for w in ("customer", "review", "regular", "result", "stor", "win", "member")):
+        return "customer"
+    if any(w in p for w in ("tip", "style", "how", "routine", "guide", "idea")):
+        return "tip"
+    return "new"
+
+
+def is_wearable(kit: BrandKit) -> bool:
+    return any(w in kit.industry.lower() for w in ("fashion", "footwear", "jewel", "apparel"))
+
+
+def effective_kind(slot: Slot) -> str:
+    # A carousel idea's single-image versions (X, Facebook) are spotlights of its first product.
+    return "spotlight" if slot.kind == "carousel" and slot.format != "carousel" else slot.kind
+
+
+def headline_fields(kit: BrandKit, slot: Slot, p: Product) -> dict:
+    return {
+        "name": short_name(p.name), "coll": f" from our {p.category} collection" if p.category else "", "brand": kit.name,
+        "pct": sale_percent(p), "price": tidy_price(p.price), "moment": theme_moment(slot.theme) or "the season",
+        "n": len(slot.slide_products) + 1, "a": short_name(p.name), "b": short_name(slot.compare.name) if slot.compare else "",
+    }
+
+
+def headline_options(kit: BrandKit, slot: Slot) -> list[str]:
+    """Every headline this post could use, best first: its own wording family from its variant
+    onwards, then other families that name its product. Used to replace a repeated headline."""
+    out: list[str] = []
+    for bump in range(1, 8):
+        out.append(fallback_copy(kit, replace(slot, nth=slot.nth + bump))["headline"])
+    p = slot.product
+    if p:
+        fields = headline_fields(kit, slot, p)
+        for family in ("new", "craft", "customer", "tip" if is_wearable(kit) else "tip_other", "comfort"):
+            out += [h.format(**fields) for h in variety.PRODUCT_HEADLINES[family] if "{name}" in h]
+    return [h[:60] for h in dict.fromkeys(out)]
+
+
 def product_angle(kit: BrandKit, slot: Slot, p: Product) -> tuple[str, str]:
-    """(image headline, the idea in one sentence): what every platform version of a post shares."""
-    name, brand = short_name(p.name), kit.name
-    coll = f" from our {p.category} collection" if p.category else ""
-    industry = kit.industry.lower()
-    wearable = any(w in industry for w in ("fashion", "footwear", "jewel", "apparel"))
-    pillar = slot.pillar.lower()
-    sale = sale_percent(p)
-    if slot.format == "carousel":
-        n = len(slot.slide_products) + 1
-        return (f"{n} picks worth a closer look" if wearable else f"{n} favourites from {brand}",
-                f"A few favourites from {brand}, starting with the {name}{coll}")
-    if sale and any(w in pillar for w in ("offer", "sale", "occasion", "special", "launch")):
-        return f"{sale}% off: {name}", f"The {name}{coll} is {sale}% off right now"
-    if any(w in pillar for w in ("behind", "craft", "making", "inside", "kitchen", "made")):
-        return f"The making of the {name}", f"Every detail of the {name}{coll} was chosen on purpose"
-    if any(w in pillar for w in ("comfort", "fit")):
-        return f"Made to be worn all day: {name}", f"The {name}{coll} is built for comfort from the first wear"
-    if any(w in pillar for w in ("customer", "review", "regular", "result", "stor", "win")):
-        return "Everyone's asking about this one", f"The {name}{coll} is the one people keep asking us about"
-    if any(w in pillar for w in ("tip", "style", "how", "routine", "guide", "idea")):
-        return (f"How to wear the {name}" if wearable else f"Getting the most from the {name}",
-                f"Keep everything else simple and let the {name}{coll} lead")
-    if sale:
-        return f"{sale}% off: {name}", f"The {name}{coll} is {sale}% off right now"
-    return f"New in: {name}", f"The {name}{coll} is new at {brand}"
+    """(image headline, the idea in one sentence): what every platform version of a post shares.
+    The n-th post of a type uses the n-th wording variant, so phrasing doesn't repeat."""
+    kind = effective_kind(slot)
+    angle = pillar_angle(slot.pillar)
+    family = variety.headline_family(kind, angle, is_wearable(kit))
+    fields = headline_fields(kit, slot, p)
+    idea_family = family if family in variety.PRODUCT_IDEAS else "tip"
+    headline = variety.pick(variety.PRODUCT_HEADLINES[family], slot.nth).format(**fields)
+    idea = variety.pick(variety.PRODUCT_IDEAS[idea_family], slot.nth).format(**fields)
+    return headline, idea
 
 
 def sale_percent(p: Product) -> int:
@@ -461,38 +546,48 @@ def price_line(p: Product) -> str:
     return f" {tidy_price(p.price)}."
 
 
+def closer(slot: Slot, kind: str, category: str) -> str:
+    platform = slot.platform.value
+    options = (variety.CLOSERS.get(f"{platform}_{kind}") or (variety.CLOSERS.get(f"{platform}_carousel") if slot.format == "carousel" else None)
+               or variety.CLOSERS.get(platform, [""]))
+    # Rotate by idea, so consecutive posts on a platform end differently.
+    return variety.pick(options, slot.group).format(category=category)
+
+
 def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
     """Template copy for a post that features one real product, written for its platform."""
     headline, idea = product_angle(kit, slot, p)
-    price = price_line(p)
+    kind = effective_kind(slot)
+    if kind == "duo" and slot.compare:
+        price = "".join(f" {short_name(x.name)}: {tidy_price(x.price)}." for x in (p, slot.compare) if x.price)
+    else:
+        price = price_line(p)
     link = shop_link(kit, p)
-    carousel = slot.format == "carousel"
+    close = closer(slot, kind, playbook_for(kit.industry).category)
+    cta_family = "instagram" if slot.platform is Platform.INSTAGRAM else "linkedin" if slot.platform is Platform.LINKEDIN else "linked"
+    cta = variety.pick(variety.CTAS[cta_family], slot.group).format(link=link) if (link or cta_family == "instagram") else f"Shop {kit.name} online"
     if slot.platform is Platform.INSTAGRAM:
-        close = "Swipe to see them all, then tell us your favourite." if carousel else "Save this post for later."
-        caption, cta = f"{idea}.{price}\n\n{close}", "Shop via the link in bio"
+        caption = f"{idea}.{price}\n\n{close}"
     elif slot.platform is Platform.FACEBOOK:
-        close = "Which one would you pick?" if carousel else "Have you seen it in person yet? Tell us in the comments."
-        caption, cta = f"{idea}.{price} {close}", (f"Shop it here: {link}" if link else f"Shop {kit.name} online")
+        caption = f"{idea}.{price} {close}"
     elif slot.platform is Platform.LINKEDIN:
-        close = ("We put a few favourites from the collection together. Swipe through and tell us which you'd choose."
-                 if carousel else "We'd love to hear what you think of it.")
         caption = f"What's new at {kit.name}: {idea[0].lower()}{idea[1:]}.{price}\n\n{close}"
-        cta = f"See the collection: {link}" if link else f"Find {kit.name} online"
     else:
         caption, cta = f"{idea}.{price}", link or kit.name
     return {"headline": headline[:60], "caption": caption, "cta": cta}
 
 
-def adapt_to_platform(kit: BrandKit, platform: Platform, caption: str) -> tuple[str, str]:
-    """Give generic (non-product) copy each platform's own shape and call to action."""
+def adapt_to_platform(kit: BrandKit, slot: Slot, caption: str, kind: str = "") -> tuple[str, str]:
+    """Give generic (non-product) copy each platform's own shape, ending and call to action."""
     site = (kit.website_url or "").split("//")[-1].strip("/")
-    if platform is Platform.X:
+    close = closer(slot, kind, playbook_for(kit.industry).category)
+    if slot.platform is Platform.X:
         return caption.split(". ")[0].rstrip(".") + ".", site or kit.name
-    if platform is Platform.LINKEDIN:
-        return f"From the {kit.name} team: {caption}\n\nWe'd love to hear what you think.", (f"Learn more: {site}" if site else "")
-    if platform is Platform.FACEBOOK:
-        return f"{caption} What do you think? Tell us in the comments.", ("Visit us today" if kit.location else f"Visit {site}" if site else "")
-    return f"{caption}\n\nSave this for later.", ("Visit us today" if kit.location else "Learn more at the link in bio")
+    if slot.platform is Platform.LINKEDIN:
+        return f"From the {kit.name} team: {caption}\n\n{close}", (f"Learn more: {site}" if site else "")
+    if slot.platform is Platform.FACEBOOK:
+        return f"{caption} {close}", ("Visit us today" if kit.location else f"Visit {site}" if site else "")
+    return f"{caption}\n\n{close}", ("Visit us today" if kit.location else "Learn more at the link in bio")
 
 
 def in_sentence(phrase: str) -> str:
@@ -510,34 +605,73 @@ def theme_moment(theme: str) -> str:
     return m.group(1) if m else ""
 
 
+TRAILING_SMALL_WORDS = {"on", "at", "the", "for", "and", "with", "of", "to", "in", "a", "an", "our", "your", "by", "from", "featuring"}
+
+
+def short_claim(text: str, max_words: int = 9) -> str:
+    """A brand claim short enough for a quote graphic, cut at a comma or a full word, never
+    ending on a dangling "on" / "the" / "and"."""
+    words = text.rstrip(".…").split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    cut = " ".join(words[:max_words])
+    if "," in cut:
+        cut = cut.rsplit(",", 1)[0]
+    parts = cut.split()
+    while len(parts) > 3 and parts[-1].lower().strip(",") in TRAILING_SMALL_WORDS:
+        parts.pop()
+    return " ".join(parts)
+
+
+def brand_claims(kit: BrandKit) -> list[str]:
+    """Everything the brand says about itself, each said once: value props, then the tagline."""
+    out = [c.rstrip(".…") for c in kit.value_props if c.strip()] + ([kit.tagline.rstrip(".…")] if kit.tagline else [])
+    return list(dict.fromkeys(out))
+
+
+def quote_copy(kit: BrandKit, slot: Slot) -> dict:
+    claims = brand_claims(kit)
+    claim = claims[slot.nth % len(claims)]
+    caption, cta = adapt_to_platform(kit, slot, f"{claim}.", "quote")
+    return {"headline": short_claim(claim)[:60], "caption": caption, "cta": cta}
+
+
 def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
     """Template copy for demo mode (no API key) or failed batches, built only from what the
     brand's site says: its products, offerings and claims. Nothing is invented."""
+    kind = effective_kind(slot)
+    if kind == "quote" and (kit.value_props or kit.tagline):
+        return quote_copy(kit, slot)
     if slot.product:
         return fallback_product_copy(kit, slot, slot.product)
     name = kit.name
-    book_category = playbook_for(kit.industry).category
-    offerings = [in_sentence(o) for o in kit.offerings] or [book_category]
+    offerings = [in_sentence(o) for o in kit.offerings] or [playbook_for(kit.industry).category]
     item = offerings[slot.group % len(offerings)]
     Item = item[0].upper() + item[1:]
     claims = [c.rstrip(".…") for c in kit.value_props if c.strip()] or ([kit.tagline.rstrip(".…")] if kit.tagline else [])
     claim = f" {claims[slot.group % len(claims)]}." if claims else ""
     food = "food" in kit.industry.lower()
-    pillar = slot.pillar.lower()
     moment = theme_moment(slot.theme)
+    fields = {"item": item, "brand": name, "moment": moment or "the season", "n": min(4, len(claims) or 1) + 1}
+    H = variety.GENERIC_HEADLINES
     if slot.format == "carousel":
-        headline = f"{min(4, len(claims) or 1) + 1} things to know about {name}"
+        headline = variety.pick(H["carousel"], slot.nth)
         caption = f"A few things worth knowing about {name}, from {item} to how we work. Swipe through.{claim}"
-    elif moment and any(w in pillar for w in ("offer", "special", "season", "occasion", "launch", "update")):
-        headline, caption = f"{moment}: {item}", f"{moment} is coming up. Plan ahead with {item} from {name}.{claim}"
-    elif any(w in pillar for w in ("behind", "kitchen", "craft", "inside", "made", "how")):
-        headline, caption = f"How we make {item}", f"A look at how {name} makes {item}.{claim}"
-    elif any(w in pillar for w in ("customer", "review", "regular", "result", "stor", "win", "member")):
-        headline, caption = "What's your go-to?", f"Tell us: what do you always get at {name}? {Item}, or something else?{claim}"
-    elif any(w in pillar for w in ("tip", "guide", "routine", "idea", "insight")):
-        headline, caption = f"Good to know: {item}", f"Good to know before you visit {name}:{claim or ' ask us anything.'}"
+    elif kind == "moment" and moment:
+        headline = variety.pick(H["moment"], slot.nth)
+        caption = f"{moment} is coming up. Plan ahead with {item} from {name}.{claim}"
+    elif kind == "question":
+        headline = variety.pick(H["question"], slot.nth)
+        caption = (f"Tell us: what do you always get at {name}? {Item}, or something else?" if food
+                   else f"Tell us: what brings you to {name}? {Item}, or something else?") + claim
+    elif kind == "tip":
+        headline = variety.pick(H["tip"], slot.nth)
+        caption = f"Good to know before you visit {name}:{claim or ' ask us anything.'}"
+    elif pillar_angle(slot.pillar) == "craft":
+        headline = variety.pick(H["craft"], slot.nth)
+        caption = f"A look at how {name} makes {item}.{claim}"
     else:
-        headline = f"On the menu: {item}" if food else f"Spotlight: {item}"
+        headline = variety.pick(H["spotlight" if food else "spotlight_other"], slot.nth)
         caption = f"{Item} at {name}.{claim}"
-    caption, cta = adapt_to_platform(kit, slot.platform, caption)
-    return {"headline": headline[:60], "caption": caption, "cta": cta}
+    caption, cta = adapt_to_platform(kit, slot, caption, kind)
+    return {"headline": headline.format(**fields)[:60], "caption": caption, "cta": cta}

@@ -15,7 +15,7 @@ from ..schemas import Campaign, CampaignStatus, Job, JobStep, Slide, SocialPost,
 from ..netguard import UnsafeURL
 from ..scraper.ingestor import SiteUnavailable, ingest
 from ..store import store
-from . import formatter, humanizer, photos, renderer, research, strategist, trends
+from . import formatter, humanizer, photos, renderer, research, strategist, trends, variety
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +110,8 @@ async def attach_site_photos(kit, posts: list[SocialPost], slide_products: dict[
                 by_group[post.group_id] = url
         if url:
             wanted.append((post, url, credit_url))
+        if post.compare and post.compare.image_url:  # the second photo of a "this or that" duo
+            wanted.append((("gallery", post), post.compare.image_url, post.compare.url))
         for slide, product in zip(post.slides, slide_products.get(post.id, [])):
             if product.image_url:
                 wanted.append((slide, product.image_url, product.url))
@@ -132,11 +134,50 @@ async def attach_site_photos(kit, posts: list[SocialPost], slide_products: dict[
         bg = got.get(url)
         if bg is None:
             continue
-        target.background = bg.model_copy(update={"credit_url": credit_url or url})
+        bg = bg.model_copy(update={"credit_url": credit_url or url})
+        if isinstance(target, tuple):
+            target[1].gallery = [bg]
+            continue
+        target.background = bg
         if isinstance(target, SocialPost):
             target.layout = "photo"
             attached += 1
     return attached
+
+
+# Looks for photo posts, rotated so neighbouring posts never look alike: (layout, text position).
+PHOTO_LOOKS = [("photo", "auto"), ("frame", "auto"), ("photo", "top"), ("frame", "auto"), ("photo", "auto"), ("photo", "top")]
+
+
+def assign_layouts(posts: list[SocialPost]) -> None:
+    """Pick each idea's look from its post type, rotating so the feed doesn't repeat itself.
+    Every platform version of an idea gets the same look."""
+    ideas: dict[str, list[SocialPost]] = {}
+    for p in posts:
+        ideas.setdefault(p.group_id or p.id, []).append(p)
+    photo_i = graphic_i = 0
+    last = None
+    for versions in ideas.values():
+        first = versions[0]
+        has_photo = bool(first.background)
+        if first.kind == "quote" and not first.product:
+            look = ("quote", "auto")
+        elif first.kind == "duo" and has_photo and first.gallery:
+            look = ("duo", "auto")
+        elif has_photo:
+            look = PHOTO_LOOKS[photo_i % len(PHOTO_LOOKS)]
+            photo_i += 1
+            if look == last:
+                look, photo_i = PHOTO_LOOKS[photo_i % len(PHOTO_LOOKS)], photo_i + 1
+        else:
+            look = (GRAPHIC_LAYOUTS[graphic_i % len(GRAPHIC_LAYOUTS)], "auto")
+            graphic_i += 1
+            if look == last:
+                look, graphic_i = (GRAPHIC_LAYOUTS[graphic_i % len(GRAPHIC_LAYOUTS)], "auto"), graphic_i + 1
+        for p in versions:
+            # A carousel cover keeps the plain photo look; its pages carry the variety.
+            p.layout, p.text_position = ("photo", "auto") if (p.format == "carousel" and has_photo) else look
+        last = look
 
 
 def new_job(campaign_id: str) -> Job:
@@ -193,7 +234,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
 
         with StepTimer(job, campaign, "copy") as st:
             slots = strategist.plan_slots(campaign.strategy, campaign.trends, campaign.platforms, campaign.days, posts_per_day,
-                                          products=kit.products)
+                                          products=kit.products, claims=len(strategist.brand_claims(kit)))
             copies = await strategist.write_all(kit, campaign.strategy, slots, findings)
             posts = []
             group_ids: dict[int, str] = {}
@@ -214,6 +255,8 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                         trend_title=slot.trend.title if slot.trend else None,
                         trend_url=slot.trend.url if slot.trend else None,
                         product=slot.product,
+                        compare=slot.compare,
+                        kind=slot.kind,
                         layout=GRAPHIC_LAYOUTS[slot.group % len(GRAPHIC_LAYOUTS)],
                         format=slot.format,
                         slides=[Slide(**s) for s in copy.get("slides", [])] if slot.format == "carousel" else [],
@@ -247,10 +290,13 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
         with StepTimer(job, campaign, "render") as st:
             own = await attach_site_photos(kit, campaign.posts, slide_products)
             stock = 0 if own else await attach_stock_photos(kit, campaign.posts)
+            assign_layouts(campaign.posts)
             await renderer.render_posts(kit, campaign.posts)
             pages = sum(len(p.image_urls) for p in campaign.posts)
-            st.step.detail = f"{pages} images" + (f" · {own} with photos from your site" if own else "") + (
-                f" · {stock} with stock photos" if stock else "")
+            campaign.content_mix = variety.variety_report(campaign.posts)
+            mix = campaign.content_mix
+            st.step.detail = (f"{pages} images · {len(mix['types'])} post types · {mix['layouts']} layouts"
+                              + (f" · {own} with photos from your site" if own else "") + (f" · {stock} with stock photos" if stock else ""))
 
         campaign.status = CampaignStatus.DRAFT
         campaign.target_month = campaign.start_date.strftime("%Y-%m")

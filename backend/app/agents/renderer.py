@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import colorsys
+import re
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -24,7 +25,8 @@ SIZES = {
     Platform.X: (1600, 900),
 }
 CAROUSEL_SIZE = (1080, 1350)
-LAYOUTS = ["bold", "split", "quote", "photo"]
+LAYOUTS = ["bold", "split", "quote", "photo", "frame", "duo"]
+PHOTO_LAYOUTS = {"photo", "frame", "duo"}  # need a background photo (duo also needs a second one)
 POSITIONS = ["auto", "top", "center", "bottom"]
 
 FONT_CANDIDATES = {
@@ -207,6 +209,110 @@ def price_chip(draw: ImageDraw.ImageDraw, price: str, right: int, top: int, size
     draw.text((right - tw - pad_x, top + pad_y - size * 0.08), price, font=f, fill=shade(color, 0.25) if luminance(color) > 0.5 else color)
 
 
+def sale_pct(product) -> int:
+    if not product or not product.was_price:
+        return 0
+    def num(s: str) -> float:
+        m = re.search(r"\d[\d,]*(?:\.\d+)?", s or "")
+        return float(m.group(0).replace(",", "")) if m else 0.0
+    now, was = num(product.price), num(product.was_price)
+    return round(100 * (1 - now / was)) if was > now > 0 else 0
+
+
+def sale_badge(img: Image.Image, pct: int, at: tuple[int, int], d: int, fill) -> None:
+    """A round "-30% OFF" sticker."""
+    badge = Image.new("RGBA", (d, d), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(badge)
+    bd.ellipse([0, 0, d - 1, d - 1], fill=(*fill, 255), outline=(255, 255, 255, 255), width=max(3, d // 40))
+    big, small = font(int(d * 0.3)), font(int(d * 0.14))
+    fg = text_on(fill)
+    t1, t2 = f"-{pct}%", "OFF"
+    bd.text(((d - bd.textlength(t1, font=big)) / 2, d * 0.24), t1, font=big, fill=fg)
+    bd.text(((d - bd.textlength(t2, font=small)) / 2, d * 0.58), t2, font=small, fill=fg)
+    img.paste(badge, at, badge)
+
+
+def rounded_photo(path: str, size: tuple[int, int], radius: int) -> Image.Image:
+    photo = cover_photo(path, size).convert("RGBA")
+    mask = Image.new("L", size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, size[0] - 1, size[1] - 1], radius=radius, fill=255)
+    photo.putalpha(mask)
+    return photo
+
+
+def render_frame(kit: BrandKit, post: SocialPost, size: tuple[int, int], headline: str, scale: float) -> Image.Image:
+    """The photo inset in a brand-colour frame, headline on the band below: a calmer, editorial look."""
+    w, h = size
+    primary, accent = rgb(kit.primary_color), rgb(kit.accent_color)
+    m = int(min(w, h) * 0.06)
+    wide = w > h * 1.2
+    img = Image.new("RGB", size, primary)
+    draw = ImageDraw.Draw(img)
+    fg = text_on(primary)
+    if wide:  # photo on the right, text panel on the left
+        pw = int(w * 0.5)
+        photo = rounded_photo(post.background.path, (pw - m, h - 2 * m), m)
+        img.paste(photo, (w - pw, m), photo)
+        tx, tw, top, bottom = m * 2, w - pw - m * 3, m * 2, h - m * 2
+    else:
+        band = int(h * 0.26)
+        photo = rounded_photo(post.background.path, (w - 2 * m, h - band - 2 * m), m)
+        img.paste(photo, (m, m), photo)
+        tx, tw, top, bottom = m * 2, w - m * 4, h - band + int(m * 0.3), h - m
+    paste_logo(img, kit, (m * 2, m * 2, m * 2 + int(w * (0.18 if wide else 0.26)), m * 2 + int(h * (0.14 if wide else 0.09))), on_dark=True)
+    fnt, lines, lh = fit_text(draw, headline, tw, int((bottom - top) * 0.62), int(min(w, h) * 0.085 * scale), max_lines=3)
+    y = top + (int((bottom - top) * 0.3) - lh * len(lines) // 2 if wide else 0)
+    y = draw_lines(draw, lines, fnt, lh, tx, max(top, y), fg)
+    price = post.product.price if post.product else ""
+    meta = "  ·  ".join(x for x in (price[:-3] if price.endswith(".00") else price, brand_label(kit)) if x)
+    draw.rectangle([tx, y + 14, tx + 110, y + 24], fill=accent)
+    draw.text((tx, min(bottom - int(min(w, h) * 0.035), y + 44)), meta, font=font(int(min(w, h) * 0.03), False), fill=fg)
+    if post.kind == "sale" and sale_pct(post.product):
+        d = int(min(w, h) * 0.2)
+        sale_badge(img, sale_pct(post.product), (w - m * 2 - d, m * 2), d, accent)
+    return img
+
+
+def render_duo(kit: BrandKit, post: SocialPost, size: tuple[int, int]) -> Image.Image:
+    """"This or that": two products side by side, lettered A and B, for a vote in the comments."""
+    w, h = size
+    primary, secondary, accent = rgb(kit.primary_color), rgb(kit.secondary_color), rgb(kit.accent_color)
+    m = int(min(w, h) * 0.05)
+    img = Image.new("RGB", size, shade(primary, 0.95))
+    draw = ImageDraw.Draw(img)
+    head_h = int(h * (0.2 if w <= h * 1.2 else 0.24))
+    draw.rectangle([0, 0, w, head_h], fill=primary)
+    paste_logo(img, kit, (m, m, m + int(w * 0.2), head_h - m), on_dark=True)
+    fg = text_on(primary)
+    fnt, lines, lh = fit_text(draw, post.headline or "This or that?", int(w * 0.62), head_h - m, int(head_h * 0.42), max_lines=2)
+    y = (head_h - lh * len(lines)) // 2
+    for line in lines:
+        draw.text((w - m - draw.textlength(line, font=fnt), y), line, font=fnt, fill=fg)
+        y += lh
+    label_h = int(h * 0.13)
+    col_w = (w - 3 * m) // 2
+    ph = h - head_h - label_h - 2 * m
+    items = [(post.background.path, post.product), (post.gallery[0].path, post.compare)]
+    for i, (path, product) in enumerate(items):
+        x = m + i * (col_w + m)
+        photo = rounded_photo(path, (col_w, ph), int(m * 0.8))
+        img.paste(photo, (x, head_h + m), photo)
+        letter = "AB"[i]
+        r = int(min(w, h) * 0.05)
+        draw.ellipse([x + m // 2, head_h + m + m // 2, x + m // 2 + 2 * r, head_h + m + m // 2 + 2 * r], fill=accent)
+        lf = font(int(r * 1.1))
+        draw.text((x + m // 2 + r - draw.textlength(letter, font=lf) / 2, head_h + m + m // 2 + r * 0.35), letter, font=lf, fill=text_on(accent))
+        if product:
+            name = product.name if len(product.name) <= 26 else product.name[:25].rsplit(" ", 1)[0] + "…"
+            ty = head_h + m + ph + int(m * 0.6)
+            nf = font(int(label_h * 0.3))
+            draw.text((x, ty), name, font=nf, fill=secondary)
+            if product.price:
+                price = product.price[:-3] if product.price.endswith(".00") else product.price
+                draw.text((x, ty + int(label_h * 0.4)), price, font=font(int(label_h * 0.26), False), fill=shade(secondary, 0.35))
+    return img
+
+
 def photo_split(kit: BrandKit, post: SocialPost, size: tuple[int, int], headline: str, scale: float, price: str) -> Image.Image:
     """Wide canvas, tall product photo: show the whole photo beside a brand-colour panel."""
     w, h = size
@@ -240,8 +346,15 @@ def render_cover(kit: BrandKit, post: SocialPost, size: tuple[int, int], carouse
     headline = post.headline or kit.tagline or kit.name
     scale = max(0.6, min(1.5, post.text_scale or 1.0))
     layout = post.layout if post.layout in LAYOUTS else "bold"
-    if layout == "photo" and not (post.background and Path(post.background.path).exists()):
+    has_photo = bool(post.background and Path(post.background.path).exists())
+    if layout == "duo" and not (has_photo and post.gallery and Path(post.gallery[0].path).exists()):
+        layout = "photo"
+    if layout in PHOTO_LAYOUTS and not has_photo:
         layout = "bold"
+    if layout == "duo":
+        return render_duo(kit, post, size)
+    if layout == "frame":
+        return render_frame(kit, post, size, headline, scale)
 
     if layout == "photo":
         price = post.product.price if post.product else ""
@@ -261,7 +374,9 @@ def render_cover(kit: BrandKit, post: SocialPost, size: tuple[int, int], carouse
         draw.rectangle([m, y + 22, m + 130, y + 34], fill=accent)
         logo_box = (m, m, m + int(w * 0.3), m + int(h * 0.1))
         paste_logo(img, kit, logo_box, on_dark=True)
-        if price:
+        if post.kind == "sale" and sale_pct(post.product):
+            sale_badge(img, sale_pct(post.product), (w - m - int(min(w, h) * 0.2), m), int(min(w, h) * 0.2), accent)
+        elif price:
             price_chip(draw, price, w - m, m, int(min(w, h) * 0.04), primary)
         draw.text((m, h - m), brand_label(kit), font=font(int(min(w, h) * 0.03), False), fill=(235, 235, 235))
         if carousel:

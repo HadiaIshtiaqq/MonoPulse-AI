@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, FlaskConical } from "lucide-react";
-import { api, type Campaign, type ResearchTask } from "@/lib/api";
+import { ExternalLink, FlaskConical, Shuffle } from "lucide-react";
+import { api, KIND_LABELS, type Campaign, type ContentMix, type PostKind, type ResearchTask } from "@/lib/api";
 
 function ResearchUsed({ ids }: { ids: string[] }) {
   const [tasks, setTasks] = useState<ResearchTask[]>([]);
@@ -22,6 +22,27 @@ function ResearchUsed({ ids }: { ids: string[] }) {
             {t.insights?.content_angles && t.insights.content_angles.length > 0 && (
               <p className="mt-1 text-xs text-slate-500">Angles: {t.insights.content_angles.join(" · ")}</p>
             )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ContentMixCard({ mix }: { mix: ContentMix }) {
+  const types = (Object.entries(mix.types) as [PostKind, number][]).sort((a, b) => b[1] - a[1]);
+  return (
+    <div className="card p-5">
+      <p className="label flex items-center gap-1"><Shuffle size={12} /> Content mix</p>
+      <p className="mt-1 text-xs text-slate-500">
+        {mix.posts} posts · {types.length} post types · {mix.layouts} looks · {mix.repeated_headlines === 0 ? "no repeated headlines" : `${mix.repeated_headlines} repeated headlines`}
+      </p>
+      <ul className="mt-3 space-y-1.5">
+        {types.map(([kind, n]) => (
+          <li key={kind} className="flex items-center gap-2 text-sm">
+            <span className="w-28 shrink-0 text-slate-700">{KIND_LABELS[kind] ?? kind}</span>
+            <span className="h-2 rounded-full bg-brand/70" style={{ width: `${Math.max(6, (n / mix.posts) * 100)}%` }} />
+            <span className="text-xs text-slate-500">{n}</span>
           </li>
         ))}
       </ul>
@@ -78,6 +99,7 @@ export function StrategyPanel({ campaign }: { campaign: Campaign }) {
         )}
       </div>
       <div className="space-y-4">
+        {campaign.content_mix && campaign.content_mix.posts > 0 && <ContentMixCard mix={campaign.content_mix} />}
         {campaign.research_ids?.length > 0 && <ResearchUsed ids={campaign.research_ids} />}
         {b && (
           <div className="card space-y-3 p-5">
@@ -92,8 +114,8 @@ export function StrategyPanel({ campaign }: { campaign: Campaign }) {
           </div>
         )}
         <div className="card p-5">
-          <p className="label">Live trends used (Tavily)</p>
-          {campaign.trends.length === 0 && <p className="mt-2 text-sm text-slate-400">No trends (Tavily key not configured).</p>}
+          <p className="label">News used</p>
+          {campaign.trends.length === 0 && <p className="mt-2 text-sm text-slate-400">No news relevant to this brand this week, so the plan follows its seasonal calendar.</p>}
           <ul className="mt-3 space-y-3">
             {campaign.trends.map((t) => (
               <li key={t.url || t.title}>

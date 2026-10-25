@@ -115,7 +115,7 @@ def test_calendar_dates():
 def test_sale_products_get_sale_copy():
     kit = bata_kit()
     slot = strategist.Slot(day=0, platform=strategist.Platform.INSTAGRAM, pillar="Offers & Occasions", theme="", trend=None,
-                           product=kit.products[0])
+                           product=kit.products[0], kind="sale")
     copy = strategist.fallback_copy(kit, slot)
     assert copy["headline"] == "30% off: Power for men"
     assert "Now Rs.4,199, was Rs.5,999." in copy["caption"]

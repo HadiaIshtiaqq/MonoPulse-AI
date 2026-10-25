@@ -2,7 +2,12 @@ export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:800
 
 export type Platform = "instagram" | "linkedin" | "x" | "facebook";
 export type PostStatus = "DRAFT" | "APPROVED" | "PUBLISHED";
-export type Layout = "bold" | "split" | "quote" | "photo";
+export type Layout = "bold" | "split" | "quote" | "photo" | "frame" | "duo";
+export type PostKind = "spotlight" | "carousel" | "duo" | "tip" | "quote" | "sale" | "moment" | "question";
+export const KIND_LABELS: Record<PostKind, string> = {
+  spotlight: "Spotlight", carousel: "Carousel", duo: "This or that", tip: "Tip", quote: "Brand quote",
+  sale: "Sale", moment: "Seasonal", question: "Question",
+};
 export type TextPosition = "auto" | "top" | "center" | "bottom";
 export type HumanizeMode = "light" | "standard" | "deep";
 
@@ -74,6 +79,9 @@ export interface SocialPost {
   trend_title: string | null;
   trend_url: string | null;
   product: Product | null;
+  compare: Product | null;
+  kind: PostKind;
+  gallery: Background[];
   layout: Layout;
   format: "single" | "carousel";
   slides: Slide[];
@@ -102,9 +110,17 @@ export interface Strategy {
   weekly_themes: string[];
 }
 
+export interface ContentMix {
+  posts: number;
+  types: Partial<Record<PostKind, number>>;
+  layouts: number;
+  repeated_headlines: number;
+}
+
 export interface Campaign {
   id: string;
   source_input: string;
+  content_mix?: ContentMix;
   brand: BrandKit | null;
   start_date: string;
   days: number;

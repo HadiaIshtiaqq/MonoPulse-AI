@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Layers } from "lucide-react";
-import { groupKey, groupPosts, groupStatus, localDayKey, media, type SocialPost } from "@/lib/api";
+import { groupKey, groupPosts, groupStatus, KIND_LABELS, localDayKey, media, type SocialPost } from "@/lib/api";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -141,7 +141,10 @@ export function CalendarView({
                           )}
                         </span>
                       )}
-                      <p className="truncate px-1.5 pt-1 text-[11px] text-slate-600">{p.headline}</p>
+                      <p className="truncate px-1.5 pt-1 text-[11px] text-slate-600">
+                        {p.kind && p.kind !== "spotlight" && <span className="mr-1 font-semibold text-brand-700">{KIND_LABELS[p.kind]} ·</span>}
+                        {p.headline}
+                      </p>
                       <div className="flex items-center gap-0.5 px-1 pb-1">
                         {g.map((v) => (
                           <button key={v.id} type="button" onClick={(e) => { e.stopPropagation(); onOpen(v); }}
