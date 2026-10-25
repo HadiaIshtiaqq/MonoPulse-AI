@@ -49,7 +49,7 @@ def absolute(url: str | None) -> str | None:
     return f"{config.PUBLIC_API_URL}{url.split('?')[0]}" if url else None
 
 
-def share_links(post: SocialPost, site_url: str | None) -> dict:
+def share_links(post: SocialPost) -> dict:
     text = full_caption(post)
     images = [absolute(u) for u in (post.image_urls or [post.image_url]) if u]
     if post.platform is Platform.X:
@@ -59,8 +59,10 @@ def share_links(post: SocialPost, site_url: str | None) -> dict:
         url = f"https://www.linkedin.com/feed/?shareActive=true&text={quote(text)}"
         note = "LinkedIn is open with your caption. Attach the downloaded image" + ("s." if len(images) > 1 else ".")
     elif post.platform is Platform.FACEBOOK:
-        url = f"https://www.facebook.com/sharer/sharer.php?u={quote(site_url or (images[0] if images else ''))}"
-        note = "Your caption is copied. Paste it into Facebook and attach the image."
+        # Facebook's share dialog only takes a link, which would post a preview of the website
+        # instead of the designed image; its news feed composer accepts a pasted image.
+        url = "https://www.facebook.com/"
+        note = "Facebook is open. Paste the image into a new post, then paste the caption."
     else:
         url = "https://www.instagram.com/"
         note = "Your caption is copied. Download the image" + ("s" if len(images) > 1 else "") + " and post from Instagram."

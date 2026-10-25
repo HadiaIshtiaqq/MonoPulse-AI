@@ -12,6 +12,31 @@ import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 import { PostPreview } from "@/components/PostPreview";
 import { PhotoPicker } from "@/components/PhotoPicker";
 import { TellScore } from "@/components/TellScore";
+import { canShareFiles, copyImage, copyText, downloadAll, pasteKey, shareToApp } from "@/lib/share";
+
+/** What to do in the platform's tab after "Open …", given what MonoPlus could hand over. */
+function shareSteps(platform: SocialPost["platform"], imageOnClipboard: boolean, multi: boolean, count: number): string[] {
+  const paste = pasteKey();
+  const label = PLATFORM_META[platform].label;
+  const attach = imageOnClipboard
+    ? `Click in the post box and press ${paste}: your image attaches.`
+    : `Attach the downloaded image${count > 1 ? `s (${count} slides, in order)` : ""}.`;
+  if (platform === "instagram") {
+    return [
+      `Your image${count > 1 ? "s were" : " was"} downloaded and the caption copied.`,
+      `In Instagram, click Create → Post → Select from computer and choose the image${count > 1 ? "s in order" : ""}.`,
+      `On the caption step press ${paste}, then Share.`,
+    ];
+  }
+  if (platform === "facebook") {
+    return [
+      `In Facebook, click "What's on your mind?". ${attach}`,
+      `Click "Copy caption" below and paste it (${paste}) into the post.`,
+      "Click Post.",
+    ];
+  }
+  return [`${label} is open with your caption already in the post box.`, multi ? attach.replace("Click in the post box and press", "Press") : attach, "Click Post."];
+}
 
 type Tab = "design" | "copy" | "publish";
 const LAYOUTS: { id: Layout; label: string }[] = [
@@ -76,12 +101,15 @@ export function PostEditor({
   const [tone, setTone] = useState("casual");
   const [showDraft, setShowDraft] = useState(false);
   const [patterns, setPatterns] = useState<{ before: Pattern[]; after: Pattern[] } | null>(null);
+  const [guide, setGuide] = useState<{ imageOnClipboard: boolean; multi: boolean } | null>(null);
+  const [sheet, setSheet] = useState(false);
+  useEffect(() => setSheet(canShareFiles()), []);
 
   useEffect(() => {
     setHeadline(post.headline); setCaption(post.caption); setHashtags(post.hashtags.join(" ")); setCta(post.cta);
     setSlides(post.slides); setScale(post.text_scale); setWhen(toLocalInput(post.publish_at));
   }, [post]);
-  useEffect(() => { setNotice(null); setPatterns(null); setShowDraft(false); }, [post.id]);
+  useEffect(() => { setNotice(null); setPatterns(null); setShowDraft(false); setGuide(null); }, [post.id]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -113,17 +141,49 @@ export function PostEditor({
   const charCount = caption.length + (hashtags ? hashtags.length + 2 : 0);
   const slidesDirty = JSON.stringify(slides) !== JSON.stringify(post.slides);
 
+  const fileBase = `${(brand?.name || "post").replace(/[^\w]+/g, "-").toLowerCase()}-${post.platform}`;
+  const fullCaption = `${caption}\n\n${hashtags}`.trim();
+
   async function openApp() {
+    // Open the tab inside the click so pop-up blockers allow it; point it at the platform below.
+    const tab = window.open("about:blank", "_blank");
     setBusy("share");
     setNotice(null);
     try {
       if (copyDirty) onChange(await api.updatePost(post.id, { caption, hashtags: hashtags.split(/\s+/).filter(Boolean) }));
       const share = await api.share(post.id);
-      await navigator.clipboard.writeText(share.caption).catch(() => {});
-      window.open(share.url, "_blank", "noopener");
-      setNotice({ kind: "ok", text: `${share.note} Then click "Mark as posted".` });
+      // X and LinkedIn take the caption in the link; everyone else gets it from the clipboard.
+      // A single image goes on the clipboard so pasting into the post box attaches it;
+      // Instagram's website (and multi-image carousels) need the files instead.
+      const multi = images.length > 1 || post.platform === "instagram";
+      let imageOnClipboard = false;
+      if (multi) {
+        await copyText(share.caption);
+        await downloadAll(images, fileBase);
+      } else {
+        imageOnClipboard = await copyImage(images[0]);
+        if (!imageOnClipboard) await downloadAll(images, fileBase);
+      }
+      if (tab) tab.location.href = share.url;
+      else window.open(share.url, "_blank");
+      setGuide({ imageOnClipboard, multi });
     } catch (e) {
+      tab?.close();
       setNotice({ kind: "err", text: (e as Error).message });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function shareSheet() {
+    setBusy("sheet");
+    setNotice(null);
+    try {
+      await copyText(fullCaption); // Facebook and Instagram drop shared text, so it's ready to paste
+      await shareToApp(images, fullCaption, fileBase);
+      setNotice({ kind: "ok", text: "Shared. If the app didn't keep the caption, it's copied: just paste it. Then click \"Mark as posted\"." });
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") setNotice({ kind: "err", text: (e as Error).message });
     } finally {
       setBusy(null);
     }
@@ -421,16 +481,56 @@ export function PostEditor({
                         ) : (
                           <>
                             <p className="mt-1 text-xs text-slate-500">
-                              {PLATFORM_META[post.platform].label} isn&apos;t connected for direct posting yet, so this copies the caption and opens {PLATFORM_META[post.platform].label} for you.
+                              {post.platform === "x" || post.platform === "linkedin"
+                                ? `Opens ${PLATFORM_META[post.platform].label} with your caption filled in and your image ready to paste.`
+                                : post.platform === "facebook"
+                                  ? "Opens Facebook with your image ready to paste. Facebook doesn't let other apps fill in the caption, so you paste it too."
+                                  : "Downloads your image and copies the caption, then opens Instagram."}
                             </p>
                             <div className="mt-3 flex flex-wrap gap-2">
                               <button onClick={openApp} disabled={busy !== null} className="btn-dark btn-sm flex-1">
                                 {busy === "share" ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />} Open {PLATFORM_META[post.platform].label}
                               </button>
+                              {sheet && (
+                                <button onClick={shareSheet} disabled={busy !== null} className="btn-ghost btn-sm flex-1" title="Send the image and caption to an app on this device">
+                                  {busy === "sheet" ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />} Share to an app
+                                </button>
+                              )}
                               <button onClick={() => run("mark", () => api.markPublished(post.id), "Marked as posted")} disabled={busy !== null} className="btn-ghost btn-sm flex-1">
                                 <Check size={14} /> Mark as posted
                               </button>
                             </div>
+                            {guide && (
+                              <div className="mt-3 rounded-xl bg-indigo-50/70 p-3 text-sm text-slate-700">
+                                <ol className="list-decimal space-y-1 pl-5">
+                                  {shareSteps(post.platform, guide.imageOnClipboard, guide.multi, images.length).map((s) => <li key={s}>{s}</li>)}
+                                  <li>Come back and click &ldquo;Mark as posted&rdquo;.</li>
+                                </ol>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {post.platform !== "x" && post.platform !== "linkedin" && (
+                                    <button className="btn-primary btn-sm" onClick={async () => setNotice(await copyText(fullCaption)
+                                      ? { kind: "ok", text: "Caption copied. Paste it into the post." } : { kind: "err", text: "Couldn't copy. Select the caption and copy it by hand." })}>
+                                      <Copy size={13} /> Copy caption
+                                    </button>
+                                  )}
+                                  {images.length === 1 && post.platform !== "instagram" && (
+                                    <button className="btn-ghost btn-sm" onClick={async () => setNotice(await copyImage(images[0])
+                                      ? { kind: "ok", text: `Image copied. Press ${pasteKey()} in the post box.` } : { kind: "err", text: "This browser can't copy images; use Download below." })}>
+                                      <Copy size={13} /> Copy image again
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            <details className="mt-3 text-xs text-slate-500">
+                              <summary className="cursor-pointer select-none font-medium text-slate-600">Want it to post by itself in one click?</summary>
+                              <p className="mt-1.5">
+                                {post.platform === "facebook" || post.platform === "instagram"
+                                  ? "Meta only lets apps post to Facebook Pages and Instagram Business or Creator accounts (not personal profiles). Connect your brand's Page and MonoPlus posts the image and caption itself, on schedule."
+                                  : `Connect your ${PLATFORM_META[post.platform].label} account and MonoPlus posts the image and caption itself, on schedule.`}
+                                {" "}The keys go in the server&apos;s <code>.env</code> file; the steps are listed there.
+                              </p>
+                            </details>
                           </>
                         )}
                         {post.publish_error && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">Last attempt failed: {post.publish_error}</p>}

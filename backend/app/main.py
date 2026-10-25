@@ -428,8 +428,8 @@ async def rewrite_post(post_id: str, req: RewriteRequest) -> SocialPost:
 
 @app.get("/api/posts/{post_id}/share")
 def share_post(post_id: str) -> dict:
-    campaign, post = _post(post_id)
-    return share_links(post, campaign.brand.website_url if campaign.brand else None)
+    _, post = _post(post_id)
+    return share_links(post)
 
 
 @app.post("/api/posts/{post_id}/mark-published")

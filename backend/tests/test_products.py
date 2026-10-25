@@ -200,6 +200,21 @@ def test_svg_logo_is_rendered_and_partner_logos_are_ignored():
     assert any("Gul_Ahmed" in u for u in site.logo_candidates)
 
 
+def test_share_links_never_send_facebook_a_website_preview():
+    from app.publishing import share_links
+
+    now = datetime.now(timezone.utc)
+
+    def post(platform):
+        return SocialPost(campaign_id="c", day=0, platform=platform, caption="New in: Kurta. PKR 6,500.", hashtags=["#Kurta"],
+                          image_url="/media/c_1.png", publish_at=now)
+
+    fb = share_links(post(Platform.FACEBOOK))
+    assert fb["url"] == "https://www.facebook.com/" and fb["image_url"].endswith("/media/c_1.png")
+    assert "PKR%206%2C500" in share_links(post(Platform.X))["url"]  # caption prefilled where allowed
+    assert "shareActive=true&text=" in share_links(post(Platform.LINKEDIN))["url"]
+
+
 def test_wide_post_with_tall_product_photo_uses_split(tmp_path):
     path = tmp_path / "tall.jpg"
     Image.new("RGB", (600, 900), (10, 10, 10)).save(path)
