@@ -12,6 +12,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,7 @@ from .schemas import (
     BrandUpdateRequest,
     Campaign,
     CampaignStatus,
+    CompetitorResearchRequest,
     CreateCampaignRequest,
     CreateResearchTaskRequest,
     HumanizeRequest,
@@ -528,6 +530,27 @@ def queue_research(req: CreateResearchTaskRequest) -> ResearchTask:
     task = ResearchTask(topic=req.topic.strip(), region=req.region.strip(), campaign_id=req.campaign_id)
     store.research[task.id] = task
     store.save()
+    return task
+
+
+@app.post("/api/research/competitors", status_code=201)
+async def research_competitors(req: CompetitorResearchRequest) -> ResearchTask:
+    """Start a competitor analysis for a brand (by website, or a campaign's brand). It runs in
+    the background; poll GET /api/research/tasks/{id} for progress and the report."""
+    campaign = store.campaigns.get(req.campaign_id) if req.campaign_id else None
+    if req.campaign_id and not (campaign and campaign.brand):
+        raise HTTPException(404, "campaign not found")
+    url = (campaign.brand.website_url if campaign else None) or (req.url or "").strip()
+    if not url:
+        raise HTTPException(422, "Give the brand's website, or pick a campaign.")
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    name = campaign.brand.name if campaign else urlparse(url).netloc.removeprefix("www.")
+    task = ResearchTask(topic=f"Competitors of {name}", kind="competitors", brand_url=url, campaign_id=req.campaign_id,
+                        competitor_urls=[u.strip() for u in req.competitor_urls if u.strip()][:8])
+    store.research[task.id] = task
+    store.save()
+    research.start_now(task.id)
     return task
 
 

@@ -28,6 +28,13 @@ Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** 
 - **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
 - **Branded design**: Renders single images and 1080×1350 carousels (cover, one page per product, CTA) with the brand's logo at the top, its colours, and the product's price. It uses the brand's own photos first, then licensed stock or uploads. No watermarks.
 - **Scheduling and direct posting**: Drag-and-drop calendar, one-click approval, and automatic publishing at each post's time through the official Instagram Graph, Facebook Pages, LinkedIn and X v2 APIs.
+- **Competitor research and strategy agent** ([competitors.py](backend/app/agents/competitors.py)): this runs automatically for every new campaign, from the Research tab, or from the command line (`python scripts/competitor_research.py bata.com.pk`). It works in four steps:
+  1. **Finds competitors:** a few web searches ("X competitors", "brands like X", "best footwear brands in Pakistan"), plus reading the round-up articles they return for brands linked to their own websites. It also uses any competitors you name. With a key, Nemotron picks the direct competitors.
+  2. **Reads each competitor's site:** prices, sales and discount depth, product lines, who they sell to, service promises (delivery, returns, cash on delivery, instalments) and the social platforms they use. For Shopify stores whose pages refuse automated visits, it reads their public store data instead.
+  3. **Compares** them with the brand in plain, sourced facts: price position, who's discounting, gaps and strengths.
+  4. **Writes the advice:** recommendations (what, why, how), a 4-week plan tied to the brand's seasonal calendar, and content ideas. Nemotron writes these when configured; otherwise rules derived from the comparison do.
+
+  The results appear in the Research tab and on the campaign's Strategy tab, and can be attached to future campaigns.
 - **Market research agent**: Plans searches, reads sources and writes a cited report with content ideas that can be attached to a campaign.
 - **MCP server**: Seven tools at `POST /mcp` (MCP 2025-11-25, Streamable HTTP) let other agents and assistants run campaigns.
 - **Live pipeline view**: The web app shows each pipeline step as it runs, with timings and results.
@@ -230,7 +237,7 @@ Key design points:
 │   │   │   └── memory.py           # Research library
 │   │   ├── scraper/                # Brand reader (logo, palette, products, prices)
 │   │   └── social/                 # Instagram, Facebook, LinkedIn, X clients
-│   ├── tests/                      # 105 tests, network mocked
+│   ├── tests/                      # 109 tests, network mocked
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/                       # Next.js web app
@@ -444,7 +451,7 @@ Fill in the `META_*`, `INSTAGRAM_ACCOUNT_ID`, `LINKEDIN_*` and `X_USER_ACCESS_TO
 cd backend && .venv/bin/python -m pytest -q
 ```
 
-There are 105 tests, with every external API mocked. They cover:
+There are 109 tests, with every external API mocked. They cover:
 
 - the pipeline and model router
 - scraping and the humanizer's fact guard

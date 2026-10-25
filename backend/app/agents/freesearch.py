@@ -92,11 +92,23 @@ async def duckduckgo(query: str, max_results: int = 6, include_domains: list[str
             async with httpx.AsyncClient(timeout=15, headers=UA, follow_redirects=True) as client:
                 resp = await client.post("https://html.duckduckgo.com/html/", data={"q": query[:300]})
             await asyncio.sleep(0.4)
+        if resp.status_code == 202 or "anomaly" in resp.text[:20000].lower():
+            global last_block
+            last_block = time.time()
+            log.warning("duckduckgo is rate-limiting this server; no results for %r", query)
         out = parse_duckduckgo(resp.text, max_results)
     except httpx.HTTPError as exc:
         log.warning("duckduckgo search failed for %r: %s", query, exc)
-    _cache[key] = (time.time(), out)
+    if out:  # an empty answer is often a temporary block: don't remember it
+        _cache[key] = (time.time(), out)
     return out
+
+
+last_block = 0.0  # when DuckDuckGo last refused us (rate limit / bot check)
+
+
+def recently_blocked(within: float = 600) -> bool:
+    return time.time() - last_block < within
 
 
 def parse_duckduckgo(html: str, max_results: int = 6) -> list[dict]:

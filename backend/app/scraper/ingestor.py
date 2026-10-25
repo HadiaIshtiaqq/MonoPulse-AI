@@ -74,6 +74,8 @@ class ScrapedSite:
     products: list[Product] = field(default_factory=list)
     images: list[str] = field(default_factory=list)
     shop: dict = field(default_factory=dict)  # Shopify's public store info (/meta.json), when it's a Shopify store
+    socials: list[str] = field(default_factory=list)  # platforms the site links to: instagram, tiktok…
+    text: str = ""  # the page's visible text (trimmed), for promises made in banners and footers
 
     def text_blob(self, limit: int = 4000) -> str:
         catalogue = [f"Product: {p.name}" + (f" ({p.category})" if p.category else "") + (f" {p.price}" if p.price else "")
@@ -217,7 +219,33 @@ def parse_html(html: str, base_url: str) -> ScrapedSite:
     site.logo_candidates = list(dict.fromkeys(logos))
     site.products = product_finder.extract_products(soup, base_url)
     site.images = product_finder.extract_site_images(soup, base_url)
+    site.socials = social_platforms([a["href"] for a in soup.find_all("a", href=True)])
+    for tag in soup(["script", "style", "noscript", "svg"]):
+        tag.decompose()
+    site.text = " ".join(soup.get_text(" ").split())[:30000]
     return site
+
+
+SOCIAL_PLATFORMS = [("instagram", "instagram.com"), ("facebook", "facebook.com"), ("tiktok", "tiktok.com"),
+                    ("youtube", "youtube.com"), ("x", "twitter.com"), ("x", "x.com"), ("pinterest", "pinterest."),
+                    ("linkedin", "linkedin.com"), ("whatsapp", "wa.me"), ("whatsapp", "whatsapp.com"), ("snapchat", "snapchat.com")]
+
+
+def social_platforms(hrefs: list[str]) -> list[str]:
+    """Which social platforms a site links to (its footer icons, usually)."""
+    found = []
+    for href in hrefs:
+        host = urlparse(href).netloc.lower().removeprefix("www.")
+        for name, domain in SOCIAL_PLATFORMS:
+            if host == domain or host.endswith("." + domain) or (domain.endswith(".") and host.startswith(domain)):
+                found.append(name)
+    return list(dict.fromkeys(found))
+
+
+def service_claims(site: ScrapedSite) -> list[str]:
+    """The service promises a site makes (delivery, returns, cash on delivery, instalments…)."""
+    text = f"{site.description} {site.text}"
+    return list(dict.fromkeys(label for rx, label in CLAIMS if label and re.search(rx, text, re.I)))
 
 
 GENERIC_WORDS = {"shop", "store", "online", "official", "home", "with", "from", "page", "site", "website", "logo", "welcome"}
@@ -302,16 +330,19 @@ def guess_industry(text: str) -> str:
 
 
 def clean_name(site: ScrapedSite) -> str:
+    """The brand's name: og:site_name, else the part of the page title that matches the domain
+    ("Women Clothing | Khaadi Pakistan" on khaadi.com -> "Khaadi Pakistan"), else the shortest part."""
     if site.site_name:
         return site.site_name
+    host = urlparse(site.url).netloc.lower().removeprefix("www.")
+    labels = [lab for lab in host.split(".") if len(lab) >= 3 and lab not in ("com", "net", "org", "shop", "store")]
     if site.title:
-        for sep in (" | ", " - ", " – ", " — ", ": "):
-            if sep in site.title:
-                parts = [p.strip() for p in site.title.split(sep) if p.strip()]
-                return min(parts, key=len)
+        parts = [p.strip() for p in re.split(r"\s+[|–—-]\s+|:\s+", site.title) if p.strip()]
+        if len(parts) > 1:
+            matching = [p for p in parts if any(lab[:5] in re.sub(r"[^a-z0-9]", "", p.lower()) for lab in labels)]
+            return min(matching or parts, key=len)[:60]
         return site.title[:60]
-    host = urlparse(site.url).netloc.removeprefix("www.")
-    return host.split(".")[0].replace("-", " ").title()
+    return (labels[0] if labels else host).replace("-", " ").title()
 
 
 def detect_input(raw: str) -> tuple[str, str]:

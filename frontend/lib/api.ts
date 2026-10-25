@@ -121,6 +121,7 @@ export interface Campaign {
   id: string;
   source_input: string;
   content_mix?: ContentMix;
+  competitor_task_id?: string | null;
   brand: BrandKit | null;
   start_date: string;
   days: number;
@@ -145,9 +146,47 @@ export interface ResearchInsights {
   opportunity: number;
 }
 
+export interface CompetitorProfile {
+  name: string;
+  url: string;
+  tagline: string;
+  price_range: string;
+  median_price: number;
+  currency: string;
+  products_seen: number;
+  on_sale: number;
+  best_discount: number;
+  lines: string[];
+  segments: string[];
+  claims: string[];
+  socials: string[];
+  sample_products: Product[];
+  found_via: string;
+  reachable: boolean;
+  note: string;
+}
+
+export interface CompetitorReport {
+  brand: CompetitorProfile | null;
+  competitors: CompetitorProfile[];
+  summary: string;
+  position: string[];
+  strengths: string[];
+  gaps: string[];
+  recommendations: { title: string; why: string; how: string }[];
+  plan: { week: number; focus: string; actions: string[] }[];
+  content_ideas: string[];
+  method: "rules" | "model";
+}
+
 export interface ResearchTask {
   id: string;
   topic: string;
+  kind: "question" | "competitors";
+  brand_url: string;
+  competitor_urls: string[];
+  progress: string[];
+  competitors: CompetitorReport | null;
   region: string;
   campaign_id: string | null;
   status: "pending" | "running" | "retry" | "completed" | "failed";
@@ -339,6 +378,8 @@ export const api = {
   researchTask: (id: string) => req<ResearchTask>(`/api/research/tasks/${id}`),
   queueResearch: (body: { topic: string; region?: string; campaign_id?: string | null }) => req<ResearchTask>("/api/research/tasks", json("POST", body)),
   deleteResearch: (id: string) => req<void>(`/api/research/tasks/${id}`, { method: "DELETE" }),
+  researchCompetitors: (body: { url?: string; campaign_id?: string | null; competitor_urls?: string[] }) =>
+    req<ResearchTask>("/api/research/competitors", json("POST", body)),
   memory: (q: string) =>
     req<{ kind: string; title: string; created_at: string; excerpt: string }[]>(`/api/research/memory?q=${encodeURIComponent(q)}`),
 };

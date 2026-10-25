@@ -214,6 +214,8 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
             campaign.brand = await ingest(raw_input, search_fn=trends.search if config.search_enabled() else None)
             st.step.detail = f"{campaign.brand.name} · {campaign.brand.industry or 'industry unknown'}"
         kit = campaign.brand
+        # Competitor research runs alongside, without holding up the campaign.
+        campaign.competitor_task_id = research.queue_competitor_analysis(campaign)
 
         with StepTimer(job, campaign, "trends") as st:
             if config.search_enabled():

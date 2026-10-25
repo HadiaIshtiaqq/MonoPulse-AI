@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Brain, Clock, FileText, Globe, Lightbulb, ListChecks, Loader2, Play, Search, Sparkles, Square, Trash2 } from "lucide-react";
+import { Brain, CheckCircle, Clock, FileText, Globe, Lightbulb, ListChecks, Loader2, Play, Search, Sparkles, Square, Swords, Trash2 } from "lucide-react";
 import { api, streamEvents, type CampaignSummary, type ResearchInsights, type ResearchTask } from "@/lib/api";
 import { Markdown } from "@/components/Markdown";
+import { CompetitorReportView } from "@/components/CompetitorReport";
 
 type Ev = { type: string; [k: string]: any };
 
@@ -112,11 +113,14 @@ export default function ResearchPage() {
       <div>
         <h1 className="text-2xl font-bold">Market research</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Nemotron 3 Ultra plans the searches, Tavily runs them live, the agent reads the best sources and writes a cited report.
-          Attach any finished report to a campaign and the posts will draw on it.
+          The research agent finds a brand&apos;s competitors, reads their websites and turns the comparison into a strategy and a 4-week plan.
+          Every new campaign gets one automatically. You can also ask any market question below. Attach a finished report to a campaign and its posts draw on it.
         </p>
       </div>
 
+      <CompetitorAnalysis campaigns={campaigns} onChange={() => setRefresh((n) => n + 1)} />
+
+      <p className="pt-2 text-sm font-semibold text-slate-700">Ask a market question</p>
       <form onSubmit={run} className="card space-y-3 p-4">
         <div className="flex flex-wrap gap-2">
           <input className="input min-w-[260px] flex-1" value={q} onChange={(e) => setQ(e.target.value)} placeholder="What do you want to know about your market?" />
@@ -170,6 +174,107 @@ export default function ResearchPage() {
   );
 }
 
+function CompetitorAnalysis({ campaigns, onChange }: { campaigns: CampaignSummary[]; onChange: () => void }) {
+  const [url, setUrl] = useState("");
+  const [campaignId, setCampaignId] = useState("");
+  const [known, setKnown] = useState("");
+  const [task, setTask] = useState<ResearchTask | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const running = !!task && (task.status === "pending" || task.status === "running" || task.status === "retry");
+
+  // Open a report linked from a campaign (/research?task=…).
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("task");
+    if (id) api.researchTask(id).then(setTask).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!task || !running) return;
+    const t = setInterval(async () => {
+      try {
+        const next = await api.researchTask(task.id);
+        setTask(next);
+        if (next.status === "completed" || next.status === "failed") onChange();
+      } catch {}
+    }, 1500);
+    return () => clearInterval(t);
+  }, [task?.id, running]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function start(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const t = await api.researchCompetitors({
+        url: campaignId ? undefined : url.trim(), campaign_id: campaignId || null,
+        competitor_urls: known.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+      });
+      setTask(t);
+      onChange();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card space-y-4 p-5">
+      <div className="flex flex-wrap items-start gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><Swords size={18} /></span>
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">Competitor analysis and strategy</p>
+          <p className="text-sm text-slate-500">
+            Finds brands like yours, reads their sites (prices, sales, promises, platforms), compares them with yours and writes recommendations, a 4-week plan and content ideas.
+          </p>
+        </div>
+      </div>
+      <form onSubmit={start} className="space-y-2">
+        <div className="flex flex-wrap gap-2">
+          <select className="input w-auto" value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+            <option value="">A website…</option>
+            {campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {!campaignId && (
+            <input className="input min-w-[240px] flex-1" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Brand website, e.g. bata.com.pk" />
+          )}
+          <button className="btn-primary" disabled={busy || running || (!campaignId && url.trim().length < 4)}>
+            {busy || running ? <Loader2 size={14} className="animate-spin" /> : <Swords size={14} />} Analyze competitors
+          </button>
+        </div>
+        <input className="input" value={known} onChange={(e) => setKnown(e.target.value)}
+          placeholder="Optional: competitors you already know, e.g. sapphireonline.pk, mariab.pk" />
+      </form>
+      {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+      {task && (
+        <div className="space-y-4 border-t border-slate-100 pt-4">
+          <div className="flex items-center gap-2">
+            <p className="font-semibold">{task.topic}</p>
+            <span className={`chip ${task.status === "completed" ? "bg-emerald-50 text-emerald-700" : task.status === "failed" ? "bg-red-50 text-red-700" : "bg-sky-50 text-sky-700"}`}>
+              {running ? "working" : task.status}
+            </span>
+          </div>
+          {(running || !task.competitors) && (
+            <ol className="space-y-1.5 text-sm">
+              {task.progress.map((p, i) => (
+                <li key={i} className="flex gap-2 text-slate-600"><CheckCircle size={14} className="mt-0.5 shrink-0 text-emerald-500" />{p}</li>
+              ))}
+              {running && <li className="flex items-center gap-2 text-slate-400"><Loader2 size={14} className="animate-spin" /> working…</li>}
+            </ol>
+          )}
+          {task.error && <p className="text-sm text-amber-700">{task.error}</p>}
+          {task.competitors && <CompetitorReportView report={task.competitors} />}
+          {task.status === "completed" && (
+            <Link href={`/?research=${task.id}`} className="btn-ghost w-fit"><Sparkles size={14} /> Use in a new campaign</Link>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TraceLine({ ev }: { ev: Ev }) {
   const row = (icon: React.ReactNode, body: React.ReactNode) => (
     <li className="flex gap-2"><span className="mt-0.5 shrink-0 text-slate-400">{icon}</span><span className="min-w-0">{body}</span></li>
@@ -211,7 +316,10 @@ function Library({ refresh }: { refresh: number }) {
           {tasks.map((t) => (
             <div key={t.id} className="p-4">
               <div className="flex items-center gap-2">
-                <button onClick={() => setOpen(open === t.id ? null : t.id)} className="min-w-0 flex-1 text-left text-sm font-medium hover:text-brand">{t.topic}</button>
+                <button onClick={() => setOpen(open === t.id ? null : t.id)} className="min-w-0 flex-1 text-left text-sm font-medium hover:text-brand">
+                  {t.kind === "competitors" && <span className="chip mr-1.5 bg-brand-soft text-brand-700"><Swords size={10} /> Competitors</span>}
+                  {t.topic}
+                </button>
                 <span className={`chip ${tone(t.status)}`}>{t.status}</span>
                 <span className="text-xs text-slate-400">{timeAgo(t.completed_at ?? t.created_at)}</span>
                 {t.status === "completed" && (
@@ -223,7 +331,13 @@ function Library({ refresh }: { refresh: number }) {
                   className="p-1 text-slate-400 hover:text-red-600" aria-label="Delete"><Trash2 size={13} /></button>
               </div>
               {t.error && <p className="mt-1 text-xs text-amber-700">{t.error}</p>}
-              {open === t.id && t.report && (
+              {(t.status === "running" || t.status === "pending") && t.progress?.length > 0 && (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Loader2 size={11} className="animate-spin" /> {t.progress[t.progress.length - 1]}</p>
+              )}
+              {open === t.id && t.competitors && (
+                <div className="mt-3 border-t border-slate-100 pt-3"><CompetitorReportView report={t.competitors} /></div>
+              )}
+              {open === t.id && !t.competitors && t.report && (
                 <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
                   {t.insights && <InsightsCard i={t.insights} />}
                   <Markdown>{t.report}</Markdown>

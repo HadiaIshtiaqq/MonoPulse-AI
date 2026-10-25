@@ -14,9 +14,10 @@ from typing import AsyncIterator
 
 from .. import config
 from ..llm import LLMError, router
-from ..schemas import BrandKit, ResearchInsights, ResearchSource, ResearchTask, now_utc
+from ..schemas import BrandKit, CompetitorReport, ResearchInsights, ResearchSource, ResearchTask, now_utc
+from ..scraper.ingestor import ingest
 from ..store import store
-from . import memory, trends
+from . import competitors, memory, trends
 from .strategist import brand_brief
 
 log = logging.getLogger(__name__)
@@ -264,12 +265,34 @@ def brand_for(task: ResearchTask) -> BrandKit | None:
     return camp.brand if camp else None
 
 
+async def competitor_events(task: ResearchTask) -> AsyncIterator[dict]:
+    """A competitor analysis as research events: progress lines, then the report."""
+    kit = brand_for(task)
+    if kit is None or (task.brand_url and kit.website_url != task.brand_url):
+        if not task.brand_url:
+            raise ValueError("No brand to analyse: give a website or a campaign.")
+        yield {"type": "progress", "message": f"Reading {task.brand_url}"}
+        kit = await ingest(task.brand_url)
+    task.topic = f"Competitors of {kit.name}"
+    async for ev in competitors.run(kit, competitor_urls=task.competitor_urls):
+        if ev["type"] == "report":
+            report: CompetitorReport = ev["report"]
+            task.competitors = report
+            yield {"type": "report", "content": competitors.to_markdown(kit.name, report), "sources": []}
+        else:
+            yield ev
+
+
 async def execute(task: ResearchTask) -> AsyncIterator[dict]:
     """Run research for a task, recording the result on it, and re-yield the events."""
     task.status, task.started_at, task.attempts = "running", now_utc(), task.attempts + 1
+    task.progress = []
     errors = []
+    events = competitor_events(task) if task.kind == "competitors" else run(task.topic, task.region, brand_for(task))
     try:
-        async for ev in run(task.topic, task.region, brand_for(task)):
+        async for ev in events:
+            if ev["type"] == "progress":
+                task.progress.append(ev["message"])
             if ev["type"] == "report":
                 task.report = ev["content"]
                 task.sources = [ResearchSource.model_validate(s) for s in ev["sources"]]
@@ -304,6 +327,27 @@ async def process_task(task_id: str) -> None:
         log.exception("research task %s failed", task_id)
 
 
+_running: set[asyncio.Task] = set()
+
+
+def start_now(task_id: str) -> None:
+    """Run a queued task right away instead of waiting for the worker's next pass."""
+    job = asyncio.get_running_loop().create_task(process_task(task_id))
+    _running.add(job)
+    job.add_done_callback(_running.discard)
+
+
+def queue_competitor_analysis(campaign) -> str | None:
+    """Every new campaign gets a competitor analysis in the background (when web search is on)."""
+    kit = campaign.brand
+    if not (kit and kit.website_url and config.search_enabled()):
+        return None
+    task = ResearchTask(topic=f"Competitors of {kit.name}", kind="competitors", brand_url=kit.website_url, campaign_id=campaign.id)
+    store.research[task.id] = task
+    start_now(task.id)
+    return task.id
+
+
 async def worker(poll_s: float = 5.0) -> None:
     while True:
         for t in [t for t in store.research.values() if t.status in ("pending", "retry")][:2]:
@@ -319,7 +363,13 @@ def campaign_context(research_ids: list[str]) -> str:
         if not t or t.status != "completed" or not t.report:
             continue
         lines = [f"Research: {t.topic}"]
-        if t.insights:
+        if t.competitors:
+            c = t.competitors
+            lines += [f"- {x}" for x in (c.position + c.gaps)[:5]]
+            lines += [f"- Strategy: {r.title}: {r.how}" for r in c.recommendations[:4]]
+            if c.content_ideas:
+                lines.append("- Content angles: " + "; ".join(c.content_ideas[:5]))
+        elif t.insights:
             i = t.insights
             lines += [f"- {label}: {val}" for label, val in (("Trend", i.verified_trend), ("Audience", i.audience_insight),
                                                               ("Pricing gap", i.pricing_gap), ("Product", i.feature_insights)) if val]

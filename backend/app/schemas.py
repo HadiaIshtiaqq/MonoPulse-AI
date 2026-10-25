@@ -167,6 +167,7 @@ class Campaign(BaseModel):
     timings: dict[str, float] = {}
     research_ids: list[str] = []
     content_mix: dict = {}  # post types, layouts and repeated headlines (see variety.variety_report)
+    competitor_task_id: str | None = None  # the competitor analysis started with this campaign
     created_at: datetime = Field(default_factory=now_utc)
 
 
@@ -189,11 +190,61 @@ class ResearchSource(BaseModel):
     published_at: str | None = None
 
 
+class CompetitorProfile(BaseModel):
+    name: str
+    url: str = ""
+    tagline: str = ""
+    price_range: str = ""
+    median_price: float = 0
+    currency: str = ""
+    products_seen: int = 0
+    on_sale: int = 0
+    best_discount: int = 0
+    lines: list[str] = []
+    segments: list[str] = []
+    claims: list[str] = []  # service promises on the site: delivery, returns, cash on delivery…
+    socials: list[str] = []  # platforms the site links to
+    sample_products: list[Product] = []
+    found_via: str = ""  # how the agent found it
+    reachable: bool = True
+    note: str = ""
+
+
+class Recommendation(BaseModel):
+    title: str
+    why: str = ""
+    how: str = ""
+
+
+class PlanWeek(BaseModel):
+    week: int
+    focus: str
+    actions: list[str] = []
+
+
+class CompetitorReport(BaseModel):
+    brand: CompetitorProfile | None = None
+    competitors: list[CompetitorProfile] = []
+    summary: str = ""
+    position: list[str] = []  # where the brand stands against them, in facts
+    strengths: list[str] = []
+    gaps: list[str] = []
+    recommendations: list[Recommendation] = []
+    plan: list[PlanWeek] = []
+    content_ideas: list[str] = []
+    method: str = "rules"  # rules | model (who wrote the advice)
+
+
 class ResearchTask(BaseModel):
     id: str = Field(default_factory=new_id)
     topic: str
+    kind: str = "question"  # question | competitors
+    brand_url: str = ""  # competitors: the brand's website
+    competitor_urls: list[str] = []  # competitors: ones the user named, analysed first
     region: str = ""
     campaign_id: str | None = None
+    progress: list[str] = []  # what the agent has done so far, for a live view
+    competitors: CompetitorReport | None = None
     status: str = "pending"  # pending | running | retry | completed | failed
     attempts: int = 0
     report: str | None = None
@@ -212,6 +263,12 @@ class MemoryEntry(BaseModel):
     title: str
     content: str
     created_at: datetime = Field(default_factory=now_utc)
+
+
+class CompetitorResearchRequest(BaseModel):
+    url: str | None = Field(default=None, max_length=500)  # the brand's website, or…
+    campaign_id: str | None = None  # …a campaign whose brand to analyse
+    competitor_urls: list[str] = Field(default=[], max_length=8)  # competitors you already know (optional)
 
 
 class CreateResearchTaskRequest(BaseModel):

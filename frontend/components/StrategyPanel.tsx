@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, FlaskConical, Shuffle } from "lucide-react";
+import { ExternalLink, FlaskConical, Loader2, Shuffle, Swords } from "lucide-react";
 import { api, KIND_LABELS, type Campaign, type ContentMix, type PostKind, type ResearchTask } from "@/lib/api";
 
 function ResearchUsed({ ids }: { ids: string[] }) {
@@ -25,6 +25,49 @@ function ResearchUsed({ ids }: { ids: string[] }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function CompetitorInsights({ taskId }: { taskId: string }) {
+  const [task, setTask] = useState<ResearchTask | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.researchTask(taskId).then((t) => alive && setTask(t)).catch(() => {});
+    load();
+    const t = setInterval(() => {
+      if (task?.status === "completed" || task?.status === "failed") return;
+      load();
+    }, 3000);
+    return () => { alive = false; clearInterval(t); };
+  }, [taskId, task?.status]);
+  if (!task) return null;
+  const r = task.competitors;
+  const working = task.status !== "completed" && task.status !== "failed";
+  return (
+    <div className="card p-5">
+      <p className="label flex items-center gap-1"><Swords size={12} /> Competitor insights</p>
+      {working && (
+        <p className="mt-2 flex items-center gap-2 text-sm text-slate-500">
+          <Loader2 size={14} className="animate-spin" /> {task.progress[task.progress.length - 1] ?? "Finding competitors…"}
+        </p>
+      )}
+      {task.status === "failed" && <p className="mt-2 text-sm text-amber-700">{task.error ?? "The analysis didn't finish."}</p>}
+      {r && (
+        <>
+          {r.competitors.length > 0 && (
+            <p className="mt-2 text-xs text-slate-500">Compared with {r.competitors.filter((c) => c.reachable).map((c) => c.name).join(", ") || "no readable competitors"}</p>
+          )}
+          <ol className="mt-3 space-y-2 text-sm">
+            {r.recommendations.slice(0, 3).map((rec, i) => (
+              <li key={rec.title}><span className="font-semibold text-brand">{i + 1}. {rec.title}.</span> <span className="text-slate-600">{rec.how}</span></li>
+            ))}
+          </ol>
+        </>
+      )}
+      <Link href={`/research?task=${task.id}`} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline">
+        Full analysis and 4-week plan <ExternalLink size={12} />
+      </Link>
     </div>
   );
 }
@@ -99,6 +142,7 @@ export function StrategyPanel({ campaign }: { campaign: Campaign }) {
         )}
       </div>
       <div className="space-y-4">
+        {campaign.competitor_task_id && <CompetitorInsights taskId={campaign.competitor_task_id} />}
         {campaign.content_mix && campaign.content_mix.posts > 0 && <ContentMixCard mix={campaign.content_mix} />}
         {campaign.research_ids?.length > 0 && <ResearchUsed ids={campaign.research_ids} />}
         {b && (
