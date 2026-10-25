@@ -176,15 +176,17 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
 
         with StepTimer(job, campaign, "trends") as st:
             if config.search_enabled():
-                campaign.trends = await trends.gather_trends(kit)
-                st.step.detail = f"{len(campaign.trends)} live items" if campaign.trends else "no fresh news found"
+                found = await trends.gather_trends(kit)
+                campaign.trends = strategist.relevant_trends(kit, found)
+                st.step.detail = (f"{len(campaign.trends)} relevant stories" + (f" (of {len(found)} found)" if len(found) > len(campaign.trends) else "")
+                                  if campaign.trends else "no news relevant to this brand this week")
             else:
                 st.step.status, st.step.detail = "skipped", "live search turned off"
 
         weeks = max(1, (campaign.days + 6) // 7)
         findings = research.campaign_context(campaign.research_ids)
         with StepTimer(job, campaign, "strategy") as st:
-            campaign.strategy = await strategist.build_strategy(kit, campaign.trends, weeks, findings)
+            campaign.strategy = await strategist.build_strategy(kit, campaign.trends, weeks, findings, start=campaign.start_date)
             st.step.detail = ", ".join(p.name for p in campaign.strategy.pillars)
             if findings:
                 st.step.detail += f" · using {len(campaign.research_ids)} research report(s)"

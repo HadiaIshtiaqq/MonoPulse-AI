@@ -11,9 +11,14 @@ import logging
 import re
 from dataclasses import dataclass
 
+from datetime import date, timedelta
+
 from .. import config
 from ..llm import LLMError, router
 from ..schemas import BrandKit, CampaignStrategy, ContentPillar, Platform, Product, TrendItem
+from . import calendar
+from .calendar import COUNTRY_NAMES
+from .playbooks import TERMS, WHO, amount, brand_facts, join_words, playbook_for, playbook_key, tidy_price
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +75,11 @@ def trend_brief(trends: list[TrendItem]) -> str:
 # --------------------------------------------------------------------------- strategy
 
 STRATEGY_SYSTEM = """You are the strategy director of a small social media agency.
-Plan a content campaign for the brand below, using the live trends where they genuinely fit.
+Plan a content campaign for the brand below. Base it on the BRAND FACTS: what it actually sells, its product lines,
+prices and sales, who it sells to and where. Be specific to this brand; nothing in the plan should fit any other business.
+Plan the weekly themes around the SEASONAL MOMENTS listed (with their dates) where they fit the brand.
+Use a live trend only if it is clearly about this brand's products, customers, industry or country; ignore the rest.
+Never invent facts, awards, numbers or offers.
 Return JSON:
 {
   "positioning": "one sentence: who it's for, what it does, why it's different",
@@ -81,10 +90,29 @@ Return JSON:
 }"""
 
 
-async def build_strategy(kit: BrandKit, trends: list[TrendItem], weeks: int, research: str = "") -> CampaignStrategy:
+def facts_brief(kit: BrandKit, start: date, days: int) -> str:
+    f = brand_facts(kit)
+    book = playbook_for(kit.industry)
+    lines = [
+        f"Sells: {book.category}" + (f" (lines: {', '.join(f.lines)})" if f.lines else ""),
+        f"For: {f.who or 'not stated'}" + (f", in {f.country}" if f.country else ""),
+        f"Prices: {f.price_range}" if f.price_range else "",
+        f"On sale now: up to {f.best_discount}% off" if f.best_discount else "",
+        f"What this audience wants: {book.need}",
+    ]
+    moments = calendar.upcoming(kit.country, start, days)
+    return "\n".join(x for x in lines if x) + "\n\nSEASONAL MOMENTS:\n" + (
+        "\n".join(f"- {m.label()}" for m in moments) or "- none in this window")
+
+
+async def build_strategy(kit: BrandKit, trends: list[TrendItem], weeks: int, research: str = "",
+                         start: date | None = None) -> CampaignStrategy:
+    start = start or date.today()
+    trends = relevant_trends(kit, trends)
     if router.enabled:
         try:
-            user = f"BRAND:\n{brand_brief(kit)}\n\nLIVE TRENDS:\n{trend_brief(trends)}\n\n"
+            user = (f"BRAND:\n{brand_brief(kit)}\n\nBRAND FACTS:\n{facts_brief(kit, start, weeks * 7)}\n\n"
+                    f"LIVE TRENDS:\n{trend_brief(trends)}\n\n")
             if research:
                 user += f"MARKET RESEARCH (use these findings to shape pillars and themes):\n{research}\n\n"
             user += f"Weeks in campaign: {weeks}"
@@ -103,28 +131,98 @@ async def build_strategy(kit: BrandKit, trends: list[TrendItem], weeks: int, res
                 return strategy
         except (LLMError, AttributeError, TypeError) as exc:
             log.warning("strategy generation failed, using fallback: %s", exc)
-    return fallback_strategy(kit, trends, weeks)
+    return fallback_strategy(kit, trends, weeks, start)
 
 
-def fallback_strategy(kit: BrandKit, trends: list[TrendItem], weeks: int) -> CampaignStrategy:
-    vp = kit.value_props or [kit.tagline or kit.name]
-    pillars = [
-        ContentPillar(name="Behind the Scenes", description=f"How {kit.name} actually does the work."),
-        ContentPillar(name="Customer Wins", description="Real outcomes and stories from customers."),
-        ContentPillar(name="Quick Tips", description=f"Useful advice for people interested in {kit.industry.lower() or 'what we do'}."),
-        ContentPillar(name="Offers & News", description=f"What's new: {vp[0][:80]}"),
-    ]
-    themes = [t.title[:70] for t in trends[:weeks]]
-    while len(themes) < weeks:
-        themes.append(pillars[len(themes) % 4].name)
-    return CampaignStrategy(
-        positioning=f"{kit.name}: {kit.tagline or vp[0]}",
-        audience=f"People {('in ' + kit.location) if kit.location else 'nearby'} looking for {kit.industry.lower() or 'a business they can trust'}.",
-        voice_rules=["Be specific, not generic", "Talk like a person, not a press release", "One idea per post",
-                     "Lead with the customer's problem", "End with a clear next step"],
-        pillars=pillars,
-        weekly_themes=themes,
-    )
+NOT_NEWS = re.compile(r"official (?:online )?(?:store|site|website)|shop now|buy online|\| ?home\b|sign in|log in", re.I)
+# Corporate and financial stories are news about a company, not something its customers want to see.
+CORPORATE = re.compile(r"\bstock\b|\bshares?\b|earnings|investor|\bipo\b|valuation|revenue|quarterly|lawsuit|layoffs?|"
+                       r"\bhires?\b|appoints?|chief \w+ officer|\bceo\b|\bcfo\b|acquisition|merger", re.I)
+GENERIC_NAME_WORDS = {"the", "and", "shop", "store", "online", "official", "company", "brand", "group", "studio", "bakery", "cafe",
+                      "order", "orders", "special", "cards", "items", "more", "best", "sellers", "ready", "sale", "home", "with"}
+
+
+def relevant_trends(kit: BrandKit, trends: list[TrendItem], limit: int = 8) -> list[TrendItem]:
+    """Keep only news about this brand, its product lines or what it sells, best first.
+
+    Broad industry words ("food", "fashion") alone aren't enough, since every market report uses
+    them; a story needs the brand, one of its lines, or a specific word for what it sells
+    ("bread", "sandal", "kurta"), or a broad word plus the brand's country."""
+    broad, specific = TERMS.get(playbook_key(kit.industry), ((), ()))
+    own = {w for w in re.findall(r"[a-z]{4,}", " ".join([*kit.offerings, *kit.keywords[:6]]).lower())} - GENERIC_NAME_WORDS
+    country = COUNTRY_NAMES.get(kit.country.upper(), "").removeprefix("the ").lower()
+    name_words = [w for w in re.findall(r"[a-z]{4,}", kit.name.lower()) if w not in GENERIC_NAME_WORDS]
+    lines = [l.lower() for l in brand_facts(kit).lines if len(l) >= 4 and l.lower() not in {"ready to wear", "best sellers"}]
+    scored = []
+    for t in trends:
+        text = f"{t.title} {t.snippet}".lower()
+        if NOT_NEWS.search(t.title) or CORPORATE.search(t.title):
+            continue
+        brand = any(re.search(rf"\b{re.escape(w)}\b", text) for w in name_words)
+        line = any(l in text for l in lines)
+        exact = any(re.search(rf"\b{re.escape(w)}", text) for w in (*specific, *own))
+        general = any(re.search(rf"\b{re.escape(w)}", text) for w in broad)
+        local = bool(country) and country in text
+        score = 4 * brand + 3 * line + 2 * exact + general + local
+        if score >= 2:
+            scored.append((score, t))
+    scored.sort(key=lambda x: -x[0])  # stable: equal scores keep search order
+    return [t for _, t in scored[:limit]]
+
+
+def fallback_strategy(kit: BrandKit, trends: list[TrendItem], weeks: int, start: date | None = None) -> CampaignStrategy:
+    """A brand-specific plan without a model: the industry playbook filled with the brand's facts."""
+    start = start or date.today()
+    book = playbook_for(kit.industry)
+    f = brand_facts(kit)
+    pillars = [ContentPillar(name=n, description=d.format(brand=kit.name)) for n, d in book.pillars]
+
+    if f.lines:
+        offer = f"{book.category} ({join_words(f.lines[:3])})"
+    elif kit.offerings:
+        offer = join_words([in_sentence(o).lower() for o in kit.offerings[:3]])
+    else:
+        offer = book.category
+    where = f" across {f.country}" if f.country else (f" in {kit.location}" if kit.location else "")
+    positioning = f"{kit.name} offers {offer}" + (f" for {f.who}" if f.who else "") + where
+    if f.price_range:
+        positioning += f", priced {f.price_range}"
+    if kit.tagline:
+        positioning += f". {kit.tagline.rstrip('.…')}"
+    who = f.who or WHO.get(playbook_key(kit.industry), "customers")
+    audience = (f"{who[0].upper()}{who[1:]}" + (f" in {f.country}" if f.country else "")
+                + f" who want {book.need}" + (". Many are waiting for a sale" if f.best_discount else "") + ".")
+
+    voice = list(book.voice)
+    if f.best_discount:
+        voice.append(f"When something is on sale, say how much: up to {f.best_discount}% off right now")
+
+    themes = weekly_themes(kit, pillars, start, weeks, relevant_trends(kit, trends))
+    return CampaignStrategy(positioning=positioning + ".", audience=audience, voice_rules=voice[:6], pillars=pillars, weekly_themes=themes)
+
+
+def weekly_themes(kit: BrandKit, pillars: list[ContentPillar], start: date, weeks: int, trends: list[TrendItem]) -> list[str]:
+    """One theme per week: the seasonal moment it builds up to, else a relevant trend, else a pillar."""
+    moments = calendar.upcoming(kit.country, start, weeks * 7)
+    seasons = iter(calendar.ongoing(kit.country, start))
+    themes: list[str] = []
+    used: set = set()
+    trend_iter = iter(trends)
+    for w in range(weeks):
+        week_start, week_end = start + timedelta(days=7 * w), start + timedelta(days=7 * w + 13)
+        moment = next((m for m in moments if week_start <= m.day <= week_end and m not in used), None)
+        if moment:
+            used.add(moment)
+            lead = "Build-up to " if moment.day > week_start + timedelta(days=6) else ""
+            themes.append(f"{lead}{moment.label()}")
+            continue
+        season = next(seasons, None) if w == 0 else None
+        if season:
+            themes.append(f"{season.name}: what's new this season")
+            continue
+        trend = next(trend_iter, None)
+        themes.append(f"In the news: {trend.title[:70]}" if trend else pillars[w % len(pillars)].name)
+    return themes
 
 
 # --------------------------------------------------------------------------- slots
@@ -278,7 +376,8 @@ async def write_all(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slot]
 def product_slides(products) -> list[dict]:
     slides = []
     for p in products:
-        body = " · ".join(x for x in (p.category, p.price) if x)
+        price = price_line(p).strip().rstrip(".")
+        body = " · ".join(x for x in (p.category, price) if x)
         slides.append({"headline": short_name(p.name), "body": body or "Now on our website."})
     return slides
 
@@ -306,9 +405,16 @@ def shop_link(kit: BrandKit, p: Product) -> str:
     return url.split("//")[-1].rstrip("/")
 
 
+AUDIENCE_SUFFIX = re.compile(r"^(.+?)\s+[-–—]\s+(men|women|ladies|kids|boys|girls|toddlers?|junior|infants?|unisex)\b", re.I)
+
+
 def short_name(name: str, max_words: int = 6) -> str:
     """A product name short enough for an image headline, cut at a natural break rather
-    than mid-word ("3 Piece Printed Cotton Linen Suit with Dupatta" -> "...Linen Suit")."""
+    than mid-word ("3 Piece Printed Cotton Linen Suit with Dupatta" -> "...Linen Suit").
+    Line-and-audience names read naturally: "Power - Men" -> "Power for men"."""
+    m = AUDIENCE_SUFFIX.match(name)
+    if m:
+        return f"{m.group(1).strip()} for {m.group(2).lower()}"
     base = re.split(r"\s+(?:with|for|in|by)\s+|\s+[-|–—:]\s+|\s*\(", name, maxsplit=1, flags=re.I)[0].strip() or name
     words = base.split()
     return " ".join(words[:max_words]) if len(words) > max_words else base
@@ -318,26 +424,47 @@ def product_angle(kit: BrandKit, slot: Slot, p: Product) -> tuple[str, str]:
     """(image headline, the idea in one sentence): what every platform version of a post shares."""
     name, brand = short_name(p.name), kit.name
     coll = f" from our {p.category} collection" if p.category else ""
-    fashion = "fashion" in kit.industry.lower()
+    industry = kit.industry.lower()
+    wearable = any(w in industry for w in ("fashion", "footwear", "jewel", "apparel"))
     pillar = slot.pillar.lower()
+    sale = sale_percent(p)
     if slot.format == "carousel":
         n = len(slot.slide_products) + 1
-        return (f"{n} pieces worth a closer look" if fashion else f"{n} favourites from {brand}",
+        return (f"{n} picks worth a closer look" if wearable else f"{n} favourites from {brand}",
                 f"A few favourites from {brand}, starting with the {name}{coll}")
-    if "behind" in pillar:
+    if sale and any(w in pillar for w in ("offer", "sale", "occasion", "special", "launch")):
+        return f"{sale}% off: {name}", f"The {name}{coll} is {sale}% off right now"
+    if any(w in pillar for w in ("behind", "craft", "making", "inside", "kitchen", "made")):
         return f"The making of the {name}", f"Every detail of the {name}{coll} was chosen on purpose"
-    if "customer" in pillar:
-        return "Everyone's asking about this one", f"The {name}{coll} is the piece people keep asking us about"
-    if "tip" in pillar:
-        return (f"How to wear the {name}" if fashion else f"Getting the most from the {name}",
+    if any(w in pillar for w in ("comfort", "fit")):
+        return f"Made to be worn all day: {name}", f"The {name}{coll} is built for comfort from the first wear"
+    if any(w in pillar for w in ("customer", "review", "regular", "result", "stor", "win")):
+        return "Everyone's asking about this one", f"The {name}{coll} is the one people keep asking us about"
+    if any(w in pillar for w in ("tip", "style", "how", "routine", "guide", "idea")):
+        return (f"How to wear the {name}" if wearable else f"Getting the most from the {name}",
                 f"Keep everything else simple and let the {name}{coll} lead")
+    if sale:
+        return f"{sale}% off: {name}", f"The {name}{coll} is {sale}% off right now"
     return f"New in: {name}", f"The {name}{coll} is new at {brand}"
+
+
+def sale_percent(p: Product) -> int:
+    now, was = amount(p.price), amount(p.was_price)
+    return round(100 * (1 - now / was)) if was > now > 0 else 0
+
+
+def price_line(p: Product) -> str:
+    if not p.price:
+        return ""
+    if p.was_price and sale_percent(p):
+        return f" Now {tidy_price(p.price)}, was {tidy_price(p.was_price)}."
+    return f" {tidy_price(p.price)}."
 
 
 def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
     """Template copy for a post that features one real product, written for its platform."""
     headline, idea = product_angle(kit, slot, p)
-    price = f" {p.price}." if p.price else ""
+    price = price_line(p)
     link = shop_link(kit, p)
     carousel = slot.format == "carousel"
     if slot.platform is Platform.INSTAGRAM:
@@ -362,64 +489,55 @@ def adapt_to_platform(kit: BrandKit, platform: Platform, caption: str) -> tuple[
     if platform is Platform.X:
         return caption.split(". ")[0].rstrip(".") + ".", site or kit.name
     if platform is Platform.LINKEDIN:
-        return f"From the {kit.name} team: {caption}\n\nWe'd love to hear how you approach this.", (f"Learn more: {site}" if site else "")
+        return f"From the {kit.name} team: {caption}\n\nWe'd love to hear what you think.", (f"Learn more: {site}" if site else "")
     if platform is Platform.FACEBOOK:
         return f"{caption} What do you think? Tell us in the comments.", ("Visit us today" if kit.location else f"Visit {site}" if site else "")
     return f"{caption}\n\nSave this for later.", ("Visit us today" if kit.location else "Learn more at the link in bio")
 
 
+def in_sentence(phrase: str) -> str:
+    """How a heading reads mid-sentence: "SPECIAL ORDER CAKES" / "Special order cakes" -> "special
+    order cakes"; title-cased names ("Gift Cards") keep their capitals."""
+    if phrase.isupper():
+        return phrase.lower()
+    words = phrase.split()
+    return phrase[0].lower() + phrase[1:] if len(words) > 1 and words[1][:1].islower() else phrase
+
+
+def theme_moment(theme: str) -> str:
+    """"Build-up to 11.11 sale (11 Nov)" -> "11.11 sale"; "" when the week isn't about a date."""
+    m = re.match(r"^(?:Build-up to )?(.+?) \((?:expected )?\d{1,2} \w{3}\)$", theme or "")
+    return m.group(1) if m else ""
+
+
 def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
-    """Template copy for demo mode (no API key) or failed batches. Deliberately written in
-    the generic 'raw LLM draft' style so the humanizer has something to fix in demos."""
+    """Template copy for demo mode (no API key) or failed batches, built only from what the
+    brand's site says: its products, offerings and claims. Nothing is invented."""
     if slot.product:
         return fallback_product_copy(kit, slot, slot.product)
-    props = [p.strip().rstrip(".") for p in kit.value_props if p.strip()] or [kit.tagline or kit.name]
-    vp = props[slot.day % len(props)]
-    # Short value props scraped from menus/nav ("Kale Caesar") are products; longer ones are claims.
-    is_product = len(vp.split()) <= 4
-    thing = f"our {vp}" if is_product and vp.lower() != kit.name.lower() else "what we do"
-    claim = vp if not is_product else (kit.tagline or f"{kit.name} keeps things simple")
-    name, industry = kit.name, (kit.industry or "small business").lower()
-    where = f" in {kit.location.split(',')[0]}" if kit.location else ""
-    trend = f" Have you seen the news: “{slot.trend.title.rstrip('.')}”? Here's our take." if slot.trend else ""
-    variants = {
-        "Behind the Scenes": [
-            ("Meet the team behind the magic",
-             f"In today's fast-paced world, it is important to know who you are working with. Every day at {name}{where} starts early, and {thing} gets the same care whether it's the first order or the fiftieth.{trend}"),
-            ("How we actually do it",
-             f"People ask how we keep {thing} consistent. Honestly? Boring routines, checked twice. {claim}.{trend}"),
-            (f"A morning at {name}"[:40],
-             f"Before the doors open at {name}, there's a checklist nobody sees. It's why {thing} turns out the way it does.{trend}"),
-        ],
-        "Customer Wins": [
-            ("Real results, real customers",
-             f"Our customers do not just get a service, they get people who remember their name. {claim}. That's why so many come back to {name}.{trend}"),
-            ("What regulars keep telling us",
-             f"The nicest thing we heard this week? “I keep coming back for {thing}.” We'll take it.{trend}"),
-            ("Why people choose us",
-             f"No gimmicks, just {thing} done properly. {claim}.{trend}"),
-        ],
-        "Quick Tips": [
-            (f"One {industry} tip for this week"[:60],
-             f"Quick tip from the {name} team: start small, stay consistent, and ask questions early. It works in {industry} and pretty much everywhere else.{trend}"),
-            ("Save this for later",
-             f"Getting the most out of {thing}: ask what's freshest, try one new thing a month, and tell us what you think. We read every message.{trend}"),
-            ("The mistake we see most",
-             f"The most common {industry} mistake? Trying to do everything at once. Pick one thing and do it well. That's how we built {name}.{trend}"),
-        ],
-        "Offers & News": [
-            (f"New at {name}"[:40],
-             f"Exciting news! We've been working on {thing} and it's finally ready. Come and see what's new at {name}{where}.{trend}"),
-            ("This week only",
-             f"Something new this week at {name}: {thing}, done our way. Ask us about it next time you're in.{trend}"),
-            ("You asked, we listened",
-             f"You asked for more of {thing}, so that's exactly what we did. Thank you for the ideas, keep them coming.{trend}"),
-        ],
-    }
-    options = variants.get(slot.pillar, variants["Customer Wins"])
-    headline, caption = options[slot.day % len(options)]
+    name = kit.name
+    book_category = playbook_for(kit.industry).category
+    offerings = [in_sentence(o) for o in kit.offerings] or [book_category]
+    item = offerings[slot.group % len(offerings)]
+    Item = item[0].upper() + item[1:]
+    claims = [c.rstrip(".…") for c in kit.value_props if c.strip()] or ([kit.tagline.rstrip(".…")] if kit.tagline else [])
+    claim = f" {claims[slot.group % len(claims)]}." if claims else ""
+    food = "food" in kit.industry.lower()
+    pillar = slot.pillar.lower()
+    moment = theme_moment(slot.theme)
     if slot.format == "carousel":
-        headline = f"{min(4, len(props)) + 1} things to know about {name}"[:60]
-        caption = f"Swipe through for a few things we wish more people knew about {industry}. {caption}"
+        headline = f"{min(4, len(claims) or 1) + 1} things to know about {name}"
+        caption = f"A few things worth knowing about {name}, from {item} to how we work. Swipe through.{claim}"
+    elif moment and any(w in pillar for w in ("offer", "special", "season", "occasion", "launch", "update")):
+        headline, caption = f"{moment}: {item}", f"{moment} is coming up. Plan ahead with {item} from {name}.{claim}"
+    elif any(w in pillar for w in ("behind", "kitchen", "craft", "inside", "made", "how")):
+        headline, caption = f"How we make {item}", f"A look at how {name} makes {item}.{claim}"
+    elif any(w in pillar for w in ("customer", "review", "regular", "result", "stor", "win", "member")):
+        headline, caption = "What's your go-to?", f"Tell us: what do you always get at {name}? {Item}, or something else?{claim}"
+    elif any(w in pillar for w in ("tip", "guide", "routine", "idea", "insight")):
+        headline, caption = f"Good to know: {item}", f"Good to know before you visit {name}:{claim or ' ask us anything.'}"
+    else:
+        headline = f"On the menu: {item}" if food else f"Spotlight: {item}"
+        caption = f"{Item} at {name}.{claim}"
     caption, cta = adapt_to_platform(kit, slot.platform, caption)
-    return {"headline": headline, "caption": caption, "cta": cta}
+    return {"headline": headline[:60], "caption": caption, "cta": cta}

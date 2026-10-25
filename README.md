@@ -11,7 +11,13 @@ Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** 
 - **One-input brand reading**: Scrapes the website for name, logo, colour palette and tone of voice, and builds an editable brand kit. Colours come from the logo first, so a store platform's stylesheet can't hijack the palette. Given only a social handle, it finds the official site first.
 - **Real products and photos**: Finds the site's actual products (name, price as displayed, collection, link and full-size photo) from schema.org data, store product tiles, Shopify's product feed or generic product cards, plus the site's own photos. Posts feature these real products, prices and photos instead of generic graphics.
 - **Live trend awareness**: Searches the last 14 days of industry news with Tavily so posts reference what is actually happening, and keeps each source link on the post.
-- **Nemotron-planned strategy**: Nemotron 3 Ultra writes positioning, four content pillars and weekly themes before a single caption is written.
+- **A strategy specific to each brand**: Nemotron 3 Ultra plans the positioning, audience, four content pillars and weekly themes from the brand's own facts, read from its site:
+  - what it sells and its product lines;
+  - its price range and current sales;
+  - who it's for (men, women, kids);
+  - its country (from Shopify store data, the domain, the currency or addresses).
+
+  Weekly themes are planned around that country's seasonal moments, such as 11.11, Black Friday / White Friday, wedding season, Ramadan and Eid, Diwali and Christmas. Only news that's actually about the brand or what it sells is used; corporate and generic market reports are dropped. Without a key, an industry playbook (footwear, fashion, food, beauty, fitness, software, real estate and more) is filled in with the same facts.
 - **Every post, made for every platform**: Each post idea gets its own version for Instagram (4:5 image, hook-first caption, "link in bio"), Facebook (square, conversational, asks a question), LinkedIn (square, more professional) and X (16:9, one short line with the link). All versions share the idea, product, photo and image headline, and each is posted at that platform's best hour. A carousel idea is a carousel on Instagram and LinkedIn and a single image elsewhere.
 - **Parallel copywriting**: Captions and carousel slides are generated in concurrent batches. A post's platform versions always go in the same batch so they stay consistent, and a 30-day, four-platform campaign (120 versions) takes minutes.
 - **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
@@ -103,7 +109,7 @@ Plain-text version (for contexts that don't render Mermaid):
 1. **Create**: `POST /api/campaigns` (or the `create_campaign` MCP tool) validates the request, saves a `GENERATING` campaign, and starts a background job. It returns `campaign_id` and `job_id` immediately (`202`).
 2. **Brand reader**: Fetches the site through the SSRF guard and extracts the logo, the palette (logo colours first, then the theme colour, then ranked stylesheets), real products with prices and photos ([scraper/products.py](backend/app/scraper/products.py)), and the site's own images. Nemotron Nano turns the page text into a structured brand profile.
 3. **Trend engine**: Runs Tavily news (last 14 days) and general searches built from the brand's industry and keywords, then merges and dedupes them.
-4. **Strategist**: Nemotron 3 Ultra returns JSON with positioning, audience, voice rules, four pillars and weekly themes.
+4. **Strategist**: Nemotron 3 Ultra receives the brand facts, the relevant trends and the seasonal calendar for the brand's country ([calendar.py](backend/app/agents/calendar.py)), and returns JSON with positioning, audience, voice rules, four pillars and weekly themes. Without a model, the industry playbook ([playbooks.py](backend/app/agents/playbooks.py)) builds the same plan from the same facts.
 5. **Copywriter**: Builds the posting calendar in code, assigns a real product to each post (and a few more to each carousel), then sends batches of `COPY_BATCH_SIZE` posts to Nemotron 3 Ultra concurrently. Each batch returns JSON captions, CTAs and carousel slides.
 6. **Humanizer**: Scores every caption for AI-writing patterns, rewrites the ones that score high, and keeps a rewrite only if the fact guard passes and the score drops.
 7. **Formatter**: Nemotron Nano proposes hashtags, alt text and SEO phrases; code normalizes hashtags and enforces each platform's character limit.
@@ -219,7 +225,7 @@ Key design points:
 │   │   │   └── memory.py           # Research library
 │   │   ├── scraper/                # Brand reader (logo, palette, products, prices)
 │   │   └── social/                 # Instagram, Facebook, LinkedIn, X clients
-│   ├── tests/                      # 86 tests, network mocked
+│   ├── tests/                      # 93 tests, network mocked
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/                       # Next.js web app
@@ -433,7 +439,7 @@ Fill in the `META_*`, `INSTAGRAM_ACCOUNT_ID`, `LINKEDIN_*` and `X_USER_ACCESS_TO
 cd backend && .venv/bin/python -m pytest -q
 ```
 
-There are 86 tests, with every external API mocked. They cover:
+There are 93 tests, with every external API mocked. They cover:
 
 - the pipeline and model router
 - scraping and the humanizer's fact guard

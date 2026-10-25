@@ -157,9 +157,9 @@ def test_campaign_uses_attached_research(monkeypatch):
 
     seen = {}
 
-    async def fake_strategy(kit, trends_, weeks, findings=""):
+    async def fake_strategy(kit, trends_, weeks, findings="", start=None):
         seen["strategy"] = findings
-        return strategist.fallback_strategy(kit, trends_, weeks)
+        return strategist.fallback_strategy(kit, trends_, weeks, start)
 
     async def fake_write_all(kit, strategy, slots, findings=""):
         seen["copy"] = findings

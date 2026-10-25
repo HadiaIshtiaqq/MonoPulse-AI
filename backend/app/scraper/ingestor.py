@@ -22,6 +22,7 @@ from PIL import Image
 from .. import config
 from ..llm import LLMError, router
 from ..netguard import UnsafeURL, safe_client
+from ..agents.calendar import COUNTRY_NAMES
 from ..schemas import BrandKit, Product
 from . import products as product_finder
 
@@ -38,8 +39,12 @@ HSL_RE = re.compile(r"hsla?\(\s*([\d.]+)(?:deg)?[\s,]+([\d.]+)%[\s,]+([\d.]+)%")
 PRESET_RE = re.compile(r"--wp--preset--[\w-]+\s*:[^;}]*[;}]|\.has-[\w-]+-(?:background-)?color[^{]*\{[^}]*\}")
 
 INDUSTRY_KEYWORDS = {
+    "Footwear": ["footwear", "shoes", "shoe", "sandal", "sneaker", "heels", "slipper", "boots", "loafer", "chappal",
+                 "peshawari", "khussa", "moccasin", "joggers", "flip flop"],
     "Fashion & Apparel": ["dress", "kurta", "dupatta", "shirt", "jeans", "apparel", "clothing", "fashion", "unstitched",
-                          "ready to wear", "co-ord", "embroidered", "trousers", "abaya", "shalwar", "sneakers", "jacket"],
+                          "ready to wear", "co-ord", "embroidered", "trousers", "abaya", "shalwar", "jacket"],
+    "Jewellery": ["jewel", "necklace", "earring", "bracelet", "bangle", "pendant", "diamond", "gold plated"],
+    "Furniture & Home": ["furniture", "sofa", "mattress", "home decor", "cushion", "dining table", "wardrobe", "bedding"],
     "Food & Beverage": ["restaurant", "cafe", "coffee", "bakery", "menu", "pizza", "kitchen", "dining", "brunch"],
     "Fitness & Wellness": ["gym", "fitness", "yoga", "pilates", "wellness", "workout", "trainer", "spa"],
     "Beauty": ["salon", "beauty", "hair", "nails", "skincare", "makeup", "barber", "cosmetic"],
@@ -68,6 +73,7 @@ class ScrapedSite:
     address_hint: str = ""
     products: list[Product] = field(default_factory=list)
     images: list[str] = field(default_factory=list)
+    shop: dict = field(default_factory=dict)  # Shopify's public store info (/meta.json), when it's a Shopify store
 
     def text_blob(self, limit: int = 4000) -> str:
         catalogue = [f"Product: {p.name}" + (f" ({p.category})" if p.category else "") + (f" {p.price}" if p.price else "")
@@ -282,9 +288,15 @@ def ink_color_from_image(data: bytes) -> str | None:
     return None
 
 
+GENERIC_INDUSTRIES = {"E-commerce & Retail"}  # every online shop says "shop", "cart" and "sale"
+
+
 def guess_industry(text: str) -> str:
     text = text.lower()
     scores = {ind: sum(text.count(k) for k in kws) for ind, kws in INDUSTRY_KEYWORDS.items()}
+    specific = {ind: s for ind, s in scores.items() if ind not in GENERIC_INDUSTRIES and s > 0}
+    if specific:
+        return max(specific, key=specific.get)
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else "Small Business"
 
@@ -375,14 +387,24 @@ async def fetch_html(client: httpx.AsyncClient, url: str) -> tuple[str, str]:
 async def fetch_site(url: str, client: httpx.AsyncClient) -> ScrapedSite:
     html, final_url = await fetch_html(client, url)
     site = parse_html(html, final_url)
-    if len(site.products) < 3 and ("cdn.shopify.com" in html or "Shopify.shop" in html):
+    if "cdn.shopify.com" in html or "Shopify.shop" in html:
         origin = f"{urlparse(site.url).scheme}://{urlparse(site.url).netloc}"
+        # Shopify's public store info: name, city, country, currency and description.
         try:
-            r = await client.get(f"{origin}/products.json?limit=24", timeout=8)
-            if r.status_code == 200:
-                site.products = product_finder.shopify_products(r.json(), origin, product_finder.shopify_currency(html)) or site.products
+            r = await client.get(f"{origin}/meta.json", timeout=8)
+            if r.status_code == 200 and isinstance(r.json(), dict):
+                site.shop = r.json()
+                site.description = site.description or str(site.shop.get("description") or "")
         except (httpx.HTTPError, UnsafeURL, ValueError):
             pass
+        if len(site.products) < 3:
+            try:
+                r = await client.get(f"{origin}/products.json?limit=24", timeout=8)
+                if r.status_code == 200:
+                    currency = product_finder.shopify_currency(html) or str(site.shop.get("currency") or "")
+                    site.products = product_finder.shopify_products(r.json(), origin, currency) or site.products
+            except (httpx.HTTPError, UnsafeURL, ValueError):
+                pass
     return site
 
 
@@ -471,14 +493,121 @@ async def enrich(kit: BrandKit, text: str) -> BrandKit:
     return kit
 
 
+JUNK_TEXT = re.compile(
+    r"\b(cart|checkout|log ?in|sign ?(in|up)|my account|wishlist|cookie|newsletter|subscribe|search|menu|not found|404|"
+    r"shopping bag|added to|quick view|sold out|filter|sort by|javascript|your bag|is empty|loading|skip to)\b", re.I)
+COUNTRY_TLDS = {"pk": "PK", "in": "IN", "ae": "AE", "sa": "SA", "bd": "BD", "uk": "GB", "ca": "CA", "au": "AU", "nz": "NZ",
+                "ie": "IE", "de": "DE", "fr": "FR", "es": "ES", "it": "IT", "nl": "NL", "tr": "TR", "eg": "EG", "my": "MY",
+                "sg": "SG", "id": "ID", "ph": "PH", "za": "ZA", "ng": "NG", "ke": "KE", "qa": "QA", "kw": "KW", "om": "OM", "bh": "BH"}
+COUNTRY_WORDS = {"pakistan": "PK", "karachi": "PK", "lahore": "PK", "islamabad": "PK", "india": "IN", "mumbai": "IN",
+                 "delhi": "IN", "dubai": "AE", "uae": "AE", "saudi": "SA", "riyadh": "SA", "bangladesh": "BD", "dhaka": "BD",
+                 "united kingdom": "GB", "london": "GB", "manchester": "GB", "canada": "CA", "toronto": "CA", "australia": "AU",
+                 "sydney": "AU", "melbourne": "AU", "new zealand": "NZ", "san francisco": "US", "los angeles": "US",
+                 "new york": "US", "chicago": "US", "bay area": "US", "santa monica": "US", "brooklyn": "US", "seattle": "US", "austin": "US", "united states": "US"}
+CURRENCY_COUNTRY = {"PKR": "PK", "₹": "IN", "INR": "IN", "AED": "AE", "SAR": "SA", "£": "GB", "GBP": "GB", "BDT": "BD"}
+SEGMENT_WORDS = [("men", r"\bmen\b|\bmen's\b|\bmens\b|\bgents\b"), ("women", r"\bwomen\b|\bwomen's\b|\bladies\b|\bwomens\b"),
+                 ("kids", r"\bkids?\b|\bchildren\b|\bboys\b|\bgirls\b|\btoddler|\bjunior\b|\bbaby\b|\binfant")]
+CLAIMS = [(r"nationwide (?:delivery|shipping)|(?:delivery|shipping) (?:all )?across", "Nationwide delivery"),
+          (r"free (?:delivery|shipping)", "Free delivery"), (r"same[- ]day delivery", "Same-day delivery"),
+          (r"made (?:in[- ]house|from scratch|fresh daily)|baked (?:fresh|daily)", "Made fresh, in-house"),
+          (r"cash on delivery|\bCOD\b", "Cash on delivery"), (r"easy (?:returns|exchange)|free returns|\d+[- ]day returns?", "Easy returns"),
+          (r"warranty|guarantee", "Warranty"), (r"handmade|hand[- ]crafted", "Handmade"), (r"since (?:19|20)\d\d", None),
+          (r"\b\d{2,4}\+? (?:stores|outlets|branches)", None), (r"installments?", "Pay in installments")]
+
+
+def detect_country(kit: BrandKit, site: ScrapedSite, shop: dict | None = None) -> str:
+    if shop and shop.get("country"):
+        return str(shop["country"]).upper()[:2]
+    host = urlparse(site.url or kit.website_url or "").netloc.lower()
+    tld = host.rsplit(".", 1)[-1] if "." in host else ""
+    if tld in COUNTRY_TLDS:
+        return COUNTRY_TLDS[tld]
+    text = f"{site.title} {site.description} {site.address_hint} {' '.join(site.paragraphs[:10])}".lower()
+    for word, code in COUNTRY_WORDS.items():
+        if re.search(rf"\b{re.escape(word)}\b", text):
+            return code
+    if re.search(r"\b[A-Z]{2}\s\d{5}(?:-\d{4})?\b", site.address_hint + " " + " ".join(site.paragraphs[:10])):
+        return "US"  # a US state + ZIP code
+    prices = " ".join(p.price for p in site.products)
+    return next((code for cur, code in CURRENCY_COUNTRY.items() if cur in prices), "")
+
+
+def detect_segments(site: ScrapedSite) -> list[str]:
+    text = " ".join([site.description, *(p.name + " " + p.category for p in site.products), *site.headings[:20]]).lower()
+    return [seg for seg, rx in SEGMENT_WORDS if re.search(rx, text)]
+
+
+def first_sentence(text: str, max_words: int = 16) -> str:
+    """The first sentence, never cut mid-word; longer ones are cut at a comma or word boundary."""
+    s = re.split(r"(?<=[.!?])\s+", " ".join(text.split()))[0].strip()
+    s = re.sub(r"^(discover|explore|shop|welcome to|browse)\s+", "", s, flags=re.I)
+    words = s.split()
+    if len(words) <= max_words:
+        return s.rstrip(" ,;:.")
+    cut = " ".join(words[:max_words])
+    return (cut.rsplit(",", 1)[0] if "," in cut else cut).rstrip(" ,;:.") + "…"
+
+
+def title_description(site: ScrapedSite, name: str) -> str:
+    """The descriptive part of a page title ("Brand – Fresh bread baked daily"), if any."""
+    parts = [p.strip() for p in re.split(r"\s+[|–—-]\s+", site.title or "") if p.strip()]
+    return next((p for p in parts if name.lower() not in p.lower() and len(p.split()) >= 3 and not JUNK_TEXT.search(p)), "")
+
+
+def tagline_from(site: ScrapedSite, name: str) -> str:
+    """A short, real line about the brand: the title's descriptive part, else the description's
+    first clause, else a heading that isn't page furniture ("Your cart is empty")."""
+    for text in (title_description(site, name), site.description):
+        if text and not JUNK_TEXT.search(first_sentence(text)):
+            return first_sentence(text)
+    return next((h for h in site.headings if not JUNK_TEXT.search(h) and len(h.split()) >= 2), "")
+
+
+NOT_OFFERINGS = re.compile(r"^(home|welcome|who we are|about|contact|faq|locations?|shop|menu|news|blog|careers|stories|"
+                           r"our story|happenings|follow|subscribe|gallery)\b", re.I)
+
+
+def offerings_from(site: ScrapedSite, name: str) -> list[str]:
+    """What a business offers, from short headings ("SPECIAL ORDER CAKES", "Gift Cards"), for sites
+    that don't list products with prices."""
+    out = []
+    brand_words = [w for w in re.findall(r"[a-z]{4,}", name.lower()) if w not in GENERIC_WORDS | {"bakery", "cafe", "studio"}]
+    for h in site.headings:
+        words = h.split()
+        # "Tartine Happenings", "Tartine at home": sections about the brand, not things it sells.
+        if not (1 <= len(words) <= 5) or JUNK_TEXT.search(h) or NOT_OFFERINGS.search(h) \
+                or any(w in h.lower() for w in brand_words) or h.endswith((".", "?", "!", ":")):
+            continue
+        out.append(h[0].upper() + h[1:].lower() if h.isupper() else h)
+    return list(dict.fromkeys(out))[:6]
+
+
+def value_props_from(site: ScrapedSite) -> list[str]:
+    text = f"{site.description} {' '.join(site.paragraphs[:8])}"
+    sentences: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", site.description.strip()):
+        sentence = re.sub(r"^(discover|explore|shop online or|welcome to|browse)\s+", "", sentence.strip(), flags=re.I).rstrip(".")
+        if 4 <= len(sentence.split()) <= 30 and not JUNK_TEXT.search(sentence) and not sentence.lower().startswith(("shop", "visit")):
+            sentences.append(sentence[0].upper() + sentence[1:])
+    claims: list[str] = []
+    for rx, label in CLAIMS:
+        m = re.search(rx, text, re.I)
+        if m:
+            claims.append(label or m.group(0)[0].upper() + m.group(0)[1:])
+    return list(dict.fromkeys(sentences + claims))[:5]
+
+
 def heuristic_kit(site: ScrapedSite, kit: BrandKit) -> BrandKit:
     blob = site.text_blob()
     kit.industry = kit.industry or guess_industry(blob)
-    kit.tagline = kit.tagline or (site.headings[0] if site.headings else site.description[:100])
+    site.description = site.description or title_description(site, kit.name)
+    kit.tagline = kit.tagline if kit.tagline and not JUNK_TEXT.search(kit.tagline) else tagline_from(site, kit.name)
     kit.description = site.description or (site.paragraphs[0] if site.paragraphs else "")
+    kit.segments = kit.segments or detect_segments(site)
+    if not site.products:
+        kit.offerings = kit.offerings or offerings_from(site, kit.name)
     if not kit.value_props:
-        lines = list(dict.fromkeys(p.category or p.name for p in site.products))[:5]
-        kit.value_props = lines or [h for h in site.headings[1:6]] or [p[:120] for p in site.paragraphs[:3]]
+        kit.value_props = value_props_from(site) or [first_sentence(p) for p in site.paragraphs[:3] if not JUNK_TEXT.search(p)]
     if not kit.keywords:
         words = re.findall(r"[a-zA-Z]{5,}", blob.lower())
         stop = {"about", "their", "there", "which", "would", "these", "other", "every", "where", "while", "cookies",
@@ -578,6 +707,10 @@ async def _finish_site_kit(kit: BrandKit, site: ScrapedSite, client: httpx.Async
     (logo_url, logo_path, logo_bytes), kit = await asyncio.gather(logo_task, enrich_task)
     kit.logo_url, kit.logo_path = logo_url, logo_path
     kit.products, kit.images = site.products, site.images
+    kit.country = detect_country(kit, site, site.shop)
+    if not kit.location and site.shop.get("city"):
+        country = str(site.shop.get("country") or "")
+        kit.location = f"{site.shop['city']}, {COUNTRY_NAMES.get(country, country).removeprefix('the ')}".strip(", ")
 
     logo_colors = dominant_colors_from_image(logo_bytes) if logo_bytes else []
     if not logo_colors and not (site.theme_color and is_brand_like(site.theme_color)):

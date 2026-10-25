@@ -13,6 +13,8 @@ from tavily import AsyncTavilyClient
 from .. import config
 from ..schemas import BrandKit, TrendItem
 from . import freesearch
+from .calendar import COUNTRY_NAMES
+from .playbooks import DEFAULT, brand_facts, playbook_for
 
 log = logging.getLogger(__name__)
 
@@ -76,19 +78,25 @@ async def extract(urls: list[str]) -> dict[str, str]:
 
 
 def build_queries(kit: BrandKit, today: date | None = None) -> list[tuple[str, str]]:
+    """Searches about this brand's own products and market, not its broad sector: "footwear
+    trends Pakistan", not "e-commerce & retail news" (which returns census reports)."""
     today = today or date.today()
-    month = today.strftime("%B %Y")
-    industry = kit.industry or "small business"
+    month, year = today.strftime("%B %Y"), today.year
+    book = playbook_for(kit.industry)
+    category = book.category if book.category != "products and services" else (kit.industry or "small business").lower()
+    country = COUNTRY_NAMES.get(kit.country.upper(), "").removeprefix("the ")
+    lines = brand_facts(kit).lines
     queries = [
-        (f"{industry} industry news trends {month}", "news"),
-        (f"trending {industry} social media topics and hashtags {month}", "general"),
+        (kit.name, "news"),  # news about the brand itself
+        (f"{category} trends {country} {year}".strip(), "news"),
+        (f"{category} new styles and launches {month}" if book is not DEFAULT else f"{category} industry news {month}", "general"),
     ]
-    if kit.location:
+    if country:
+        queries.append((f"{country} {category} market {month}", "news"))
+    elif kit.location:
         queries.append((f"{kit.location} local events {month}", "news"))
-    else:
-        queries.append((f"{industry} consumer behavior trend {month}", "news"))
-    if kit.keywords:
-        queries.append((f"{' '.join(kit.keywords[:3])} latest", "news"))
+    if lines:
+        queries.append((f"{kit.name} {' '.join(lines[:2])}", "general"))
     return queries
 
 

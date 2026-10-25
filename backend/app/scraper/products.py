@@ -192,6 +192,42 @@ def data_attr_products(soup: BeautifulSoup, base: str) -> list[Product]:
     return out
 
 
+COLOR_WORDS = {"black", "white", "brown", "tan", "beige", "navy", "blue", "red", "green", "grey", "gray", "pink", "maroon",
+               "olive", "mustard", "camel", "khaki", "cream", "off white", "silver", "gold", "purple", "orange", "yellow", "multi"}
+TITLE_CLASS = re.compile(r"title|name|heading", re.I)
+SALE_RE = re.compile(rf"(?:sale\s*price|now)?\s*({PRICE_RE.pattern})\s*(?:regular\s*price|was|original\s*price)\s*({PRICE_RE.pattern})", re.I)
+
+
+def is_label_not_name(text: str) -> bool:
+    """Image alt texts are often a colour or a size ("Brown", "Black / 42"), not the product's name."""
+    low = re.sub(r"[^a-z ]", " ", text.lower()).split()
+    return not low or all(w in COLOR_WORDS or w in {"and", "with", "size"} for w in low) or len(text) < 3
+
+
+def _card_name(card: Tag, link: Tag, img: Tag) -> str:
+    candidates = [link.get("title") or ""]
+    for el in card.find_all(class_=TITLE_CLASS):
+        candidates.append(el.get_text(" ", strip=True))
+    candidates += [a.get_text(" ", strip=True) for a in card.find_all("a", href=link["href"])]
+    candidates.append(img.get("alt") or "")
+    for c in candidates:
+        c = _clean(c)
+        if c and not PRICE_RE.fullmatch(c) and not is_label_not_name(c) and len(c) <= 120:
+            return c
+    return ""
+
+
+def sale_prices(text: str) -> tuple[str, str]:
+    """(price now, regular price) from a card's text; regular price is "" when it isn't on sale."""
+    m = SALE_RE.search(text)
+    if m:
+        now, was = (" ".join(g.split()) for g in (m.group(1), m.group(2)))
+        if now != was:
+            return now, was
+    m = PRICE_RE.search(text)
+    return (" ".join(m.group(0).split()) if m else ""), ""
+
+
 def card_products(soup: BeautifulSoup, base: str) -> list[Product]:
     """Generic fallback: an image inside a link whose surrounding card shows a price."""
     out = []
@@ -199,21 +235,19 @@ def card_products(soup: BeautifulSoup, base: str) -> list[Product]:
         link = img.find_parent("a", href=True)
         if not link:
             continue
-        card, match = link, None
-        for _ in range(4):
+        card, text = link, ""
+        for _ in range(5):
             text = card.get_text(" ", strip=True)
-            if len(text) > 400:
-                break
-            match = PRICE_RE.search(text)
-            if match or card.parent is None:
+            if PRICE_RE.search(text) or card.parent is None or len(text) > 600:
                 break
             card = card.parent
-        if not match:
+        if not PRICE_RE.search(text) or len(text) > 2000:
             continue
-        name = _clean(img.get("alt") or link.get("title") or link.get_text(" ", strip=True))
+        name = _card_name(card, link, img)
         image = image_of(img, base)
         if name and image:
-            out.append(Product(name=name, price=" ".join(match.group(0).split()), url=urljoin(base, link["href"]), image_url=image))
+            price, was = sale_prices(text)
+            out.append(Product(name=name, price=price, was_price=was, url=urljoin(base, link["href"]), image_url=image))
     return out
 
 
@@ -224,10 +258,20 @@ def shopify_products(data: dict, origin: str, currency: str = "") -> list[Produc
             continue
         variants = p.get("variants") or [{}]
         images = p.get("images") or [{}]
+        was = variants[0].get("compare_at_price")
+        on_sale = was and currency and _amount(was) > _amount(variants[0].get("price"))
         out.append(Product(name=_clean(p["title"]), price=format_price(variants[0].get("price"), currency) if currency else "",
+                           was_price=format_price(was, currency) if on_sale else "",
                            url=f"{origin}/products/{p.get('handle', '')}", image_url=str(images[0].get("src") or ""),
                            category=_clean(p.get("product_type") or "", 60)))
     return out
+
+
+def _amount(value) -> float:
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def shopify_currency(html: str) -> str:
@@ -243,7 +287,8 @@ def extract_products(soup: BeautifulSoup, base: str) -> list[Product]:
         found += card_products(soup, base)
     seen, out = set(), []
     for p in found:
-        key = (p.name.lower(), p.image_url)
+        # A product page linked twice (two images in one card) is still one product.
+        key = p.url.split("?")[0] if p.url else (p.name.lower(), p.image_url)
         if len(p.name) < 2 or key in seen:
             continue
         seen.add(key)

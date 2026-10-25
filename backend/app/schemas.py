@@ -44,6 +44,7 @@ class PostStatus(str, Enum):
 class Product(BaseModel):
     name: str
     price: str = ""  # exactly as displayed on the site, currency included
+    was_price: str = ""  # the regular price when the product is on sale
     url: str = ""
     image_url: str = ""
     category: str = ""
@@ -60,6 +61,9 @@ class BrandKit(BaseModel):
     value_props: list[str] = []
     industry: str = ""
     location: str = ""
+    country: str = ""  # ISO code, e.g. "PK"; drives the seasonal calendar and trend searches
+    segments: list[str] = []  # who the products are for, e.g. ["men", "women", "kids"]
+    offerings: list[str] = []  # what it offers when the site lists no products, e.g. ["Special order cakes"]
     keywords: list[str] = []
     primary_color: str = "#2563EB"
     secondary_color: str = "#0F172A"
