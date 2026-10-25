@@ -1,202 +1,512 @@
 # MonoPlus
 
-**Ask Alexa to run your social media.** MonoPlus turns a business website or Instagram handle into a month of on-brand posts (captions, designed images and swipeable carousels) and exposes it all to Alexa+ through a self-hosted MCP server: *"Alexa, make a two-week campaign for tartinebakery.com"*, *"Is it ready?"*, *"Approve them all."*
+**MonoPlus** is an autonomous social media agent for small businesses. Give it a website or an Instagram handle and it reads the brand, checks this week's industry news, plans a content strategy, writes and humanizes a month of posts, designs branded images and carousels, and publishes approved posts on schedule to Instagram, Facebook, LinkedIn and X. The owner's only job is to approve.
 
-Built for **Build, Ship, Shape: Amazon Developer Hackathon**. License: [MIT](LICENSE) · Third-party notices: [third_party/NOTICE.md](third_party/NOTICE.md)
+Every AI step runs on **NVIDIA Nemotron** served by **Nebius Token Factory**, with Nemotron 3 Ultra for reasoning and writing and Nemotron Nano for fast structured calls. Live search comes from **Tavily**.
 
-| Submission field | |
-|---|---|
-| Primary track | **Alexa+**: self-hosted MCP server, protocol revision **2025-11-25**, **Streamable HTTP** ([backend/app/mcp_server.py](backend/app/mcp_server.py)), plus a simulated Alexa+ experience in the web app ([frontend/app/alexa/page.tsx](frontend/app/alexa/page.tsx)) |
-| Mini challenge | **AWS Builder**: Amazon Bedrock Converse API with Amazon Nova models powers every AI step when `AWS_BEDROCK_ENABLED=1` ([backend/app/llm.py](backend/app/llm.py)) |
-| Mini challenge | **Open Source**: _TODO: the Open Source challenge asks for an additional project or a contribution (fork, branch or PR) made during the hackathon. Add its URL, your GitHub username and a short description here._ |
-| Repository | Public, MIT-licensed: https://github.com/HadiaIshtiaqq/MonoPulse-AI |
-| Demo video | _TODO: public YouTube/Vimeo link, under 3 minutes, in English_ |
-| Live demo | _TODO: deployed URL (Alexa+ needs the MCP endpoint on public HTTPS)_ |
+Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** track (also entering Best Use of Tavily). License: [MIT](LICENSE).
 
----
+## Core Features
 
-## The problem
+- **One-input brand reading**: Scrapes the website for name, logo, colour palette, products, prices and tone of voice, and builds an editable brand kit. Given only a social handle, it finds the official site first.
+- **Live trend awareness**: Searches the last 14 days of industry news with Tavily so posts reference what is actually happening, and keeps each source link on the post.
+- **Nemotron-planned strategy**: Nemotron 3 Ultra writes positioning, four content pillars and weekly themes before a single caption is written.
+- **Parallel copywriting**: Captions and carousel slides are generated in concurrent batches, so a 30-day, multi-platform campaign takes minutes.
+- **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
+- **Branded design**: Renders single images and 1080×1350 carousels (cover, slides, CTA) in four layouts, with brand colours, logo and licensed stock or uploaded photos. No watermarks.
+- **Scheduling and direct posting**: Drag-and-drop calendar, one-click approval, and automatic publishing at each post's time through the official Instagram Graph, Facebook Pages, LinkedIn and X v2 APIs.
+- **Market research agent**: Plans searches, reads sources and writes a cited report with content ideas that can be attached to a campaign.
+- **MCP server**: Seven tools at `POST /mcp` (MCP 2025-11-25, Streamable HTTP) let other agents and assistants run campaigns. A voice page in the web app drives the same tools.
+- **Live pipeline view**: The web app shows each pipeline step as it runs, with timings and results.
 
-Small businesses know they should post every day, and almost none do. Agencies cost thousands a month, and the cheap AI post generators produce copy that reads like a chatbot, ignore what's happening this week, and still need someone at a desk to drive them. The owner of a bakery or a gym is on their feet all day. A voice assistant they already talk to is the natural place for this to live.
+## Architecture
 
-## What it does
+### Video Demo
 
-- **One input, a month of posts.** MonoPlus reads the website (logo, colours, products, tone), checks today's industry news, plans a strategy, writes every caption, removes the AI-sounding patterns, and designs branded images and carousels for Instagram, LinkedIn, X and Facebook.
-- **Alexa+ can drive it.** Seven MCP tools let Alexa+ (or any MCP client) create a campaign, follow its progress, list what's posting, approve posts, read the brand kit, humanize copy and research the market.
-- **A full web studio when you sit down.** Calendar, list and feed views; a post editor with platform-accurate previews; brand-kit editing; stock or uploaded photos; carousel slide editing; scheduling; direct posting; ZIP export.
+_TODO: public YouTube link (3 minutes or less)._
 
-## How it works
+MonoPlus is a FastAPI backend that runs each campaign as a background job made of seven named steps, plus a Next.js web app that polls the job and renders the results. All state lives in one JSON store. Every model call goes through a single router that sends each *purpose* to Nemotron 3 Ultra or Nemotron Nano on Token Factory.
 
+```mermaid
+flowchart TB
+    subgraph Client["Owner"]
+        U1["Web app (Next.js)<br/>Create · Calendar · Post studio · Research · Humanizer"]
+        U2["MCP clients / voice page"]
+    end
+
+    subgraph Backend["MonoPlus backend · FastAPI"]
+        A0["POST /api/campaigns · POST /mcp"]
+        subgraph Pipeline["Campaign job (background, live progress)"]
+            P1["1 · Brand reader"]
+            P2["2 · Trend engine"]
+            P3["3 · Strategist"]
+            P4["4 · Copywriter (parallel batches)"]
+            P5["5 · Humanizer + fact guard"]
+            P6["6 · Formatter (code-enforced limits)"]
+            P7["7 · Designer (Pillow)"]
+        end
+        R1["ModelRouter (llm.py)<br/>purpose → Ultra / Nano"]
+        S1["Scheduler + publishers"]
+        D1[("JSON store<br/>campaigns · posts · jobs · research")]
+    end
+
+    subgraph Nebius["Nebius Token Factory"]
+        N1["NVIDIA Nemotron 3 Ultra"]
+        N2["NVIDIA Nemotron Nano"]
+    end
+
+    subgraph Search["Search"]
+        T1["Tavily search + extract"]
+        T2["Free fallback<br/>Google News RSS · DuckDuckGo"]
+    end
+
+    subgraph Social["Social platforms"]
+        X1["Instagram Graph · Facebook Pages · LinkedIn · X v2"]
+    end
+
+    U1 -->|REST| A0
+    U2 -->|JSON-RPC| A0
+    A0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7
+    P1 & P3 & P4 & P5 & P6 --> R1
+    R1 --> N1
+    R1 --> N2
+    P1 & P2 --> T1
+    T1 -.no key.-> T2
+    P7 --> D1
+    U1 -->|approve| D1
+    S1 -->|due + approved| X1
+    D1 --> S1
 ```
- "Alexa, make a two-week campaign for tartinebakery.com"
-            │
-            ▼
- Alexa+ (or the simulated Echo Show page)
-            │  JSON-RPC 2.0 over Streamable HTTP, MCP 2025-11-25
-            ▼
- POST /mcp ── tools/call create_campaign ──────────────────────────────┐
-                                                                       ▼
- MonoPlus agent pipeline (FastAPI, Python)                        runs in the background
-   1. Brand reader ───── website → name, logo, palette, products, voice
-   2. Trend engine ───── live news + trending topics (Tavily, or free Google News / DuckDuckGo)
-   3. Strategist ─────── positioning, 4 content pillars, weekly themes        ┐
-   4. Copywriter ─────── every caption + carousel slides, in parallel batches  │ Amazon Bedrock (Nova Pro / Nova Lite)
-   5. Humanizer ──────── detects 13 AI-writing patterns, fact-guarded          │ or NVIDIA Nemotron on Nebius
-   6. SEO formatter ──── hashtags, alt text, platform limits                    ┘
-   7. Designer ───────── branded images and carousels (Pillow)
-            │
-            ▼
- "Is it ready?" → get_campaign_status · "Approve them all" → approve_posts
- Scheduler posts approved posts at their time (Instagram, Facebook, LinkedIn, X APIs)
+
+Plain-text version (for contexts that don't render Mermaid):
+
+```text
+ Web app ──REST──▶ POST /api/campaigns          MCP client ──JSON-RPC──▶ POST /mcp
+                         │                                                  │
+                         └───────────────┬──────────────────────────────────┘
+                                         ▼
+   Campaign job ─ 1 Brand reader ─ 2 Trends ─ 3 Strategy ─ 4 Copy ─ 5 Humanize ─ 6 Format ─ 7 Render
+                       │              │           │           │          │           │
+                       │           Tavily         └──── ModelRouter ─────┘───────────┘
+                       │       (or free search)    Ultra: strategy, copy, humanize
+                       └──── Nano: brand extract   Nano:  brand extract, SEO
+                                         ▼
+                              JSON store (campaigns, posts, jobs)
+                                         ▼
+          owner approves ──▶ Scheduler (every minute) ──▶ Instagram / Facebook / LinkedIn / X
 ```
 
----
+### Data flow
 
-## Alexa+ track: the MCP server
+1. **Create**: `POST /api/campaigns` (or the `create_campaign` MCP tool) validates the request, saves a `GENERATING` campaign, and starts a background job. It returns `campaign_id` and `job_id` immediately (`202`).
+2. **Brand reader**: Fetches the site through the SSRF guard and extracts logo, palette (ranked stylesheets, theme presets filtered out), products and prices. Nemotron Nano turns the page text into a structured brand profile.
+3. **Trend engine**: Runs Tavily news (last 14 days) and general searches built from the brand's industry and keywords, then merges and dedupes them.
+4. **Strategist**: Nemotron 3 Ultra returns JSON with positioning, audience, voice rules, four pillars and weekly themes.
+5. **Copywriter**: Builds the posting calendar in code, then sends batches of `COPY_BATCH_SIZE` posts to Nemotron 3 Ultra concurrently. Each batch returns JSON captions, CTAs and carousel slides.
+6. **Humanizer**: Scores every caption for AI-writing patterns, rewrites the ones that score high, and keeps a rewrite only if the fact guard passes and the score drops.
+7. **Formatter**: Nemotron Nano proposes hashtags, alt text and SEO phrases; code normalizes hashtags and enforces each platform's character limit.
+8. **Designer**: Pillow renders every image and carousel page into `/media`. The campaign becomes `DRAFT`.
+9. **Review and publish**: The owner edits and approves posts in the web app (or by MCP). With auto-publish on, the scheduler checks every minute and posts each approved post at its time through the official APIs, recording the remote id and URL.
 
-**Endpoint:** `POST {PUBLIC_API_URL}/mcp` · protocol revision `2025-11-25` (also negotiates `2025-06-18` and `2025-03-26`) · Streamable HTTP.
+### Run states
 
-| Behaviour | Implementation |
-|---|---|
-| Single MCP endpoint | `POST /mcp` takes one JSON-RPC message. Requests get `application/json`; notifications and responses get `202 Accepted`. `GET /mcp` returns `405` (no server-initiated stream); `DELETE /mcp` ends a session. |
-| Lifecycle | `initialize` negotiates the protocol version, returns capabilities, server info and instructions, and issues an `Mcp-Session-Id`. `notifications/initialized` and `ping` are handled. |
-| Headers | Unknown sessions get `404`; unsupported `MCP-Protocol-Version` values get `400`. |
-| Security | The `Origin` header is validated (DNS-rebinding protection). With `MONOPLUS_ACCESS_KEY` set, requests need `Authorization: Bearer <key>`; otherwise `401` with `WWW-Authenticate`. |
-| Errors | Unknown tools return JSON-RPC `-32602`. Tool failures return `isError: true` with a readable message, so the assistant can recover. |
-| Results | Every tool returns spoken-style `content` text plus `structuredContent` for screens. |
+- **Campaign:** `GENERATING → DRAFT → APPROVED → PUBLISHED`, or `FAILED`.
+- **Post:** `DRAFT → APPROVED → PUBLISHED`.
+- **Job step:** `pending → running → done`, `skipped` or `error`, with seconds and a result summary per step.
+- **Research task:** `pending → running → completed`, `failed`, or `retry` (set when a server restart interrupts a run).
 
-**Tools**
+### Safety properties
 
-| Tool | What Alexa can do with it |
-|---|---|
-| `create_campaign` | "Make a two-week campaign for tartinebakery.com on Instagram." Starts generation; returns the campaign id and a review link. |
-| `get_campaign_status` | "Is it ready?" Live step progress while generating, then posts, approvals and the next post. |
-| `list_upcoming_posts` | "What's posting this week?" Unpublished posts in the next N days with image links. |
-| `approve_posts` | "Approve them all." Approves every draft, or specific post ids. |
-| `humanize_text` | "Make this sound less like AI: …" Fact-guarded rewrite; returns how human it sounds before and after. |
-| `research_market` | "What do customers complain about with salad chains?" A cited summary with content ideas, saved to the research library. |
-| `get_brand_profile` | "What are my brand colours?" Colours, logo, voice and value props. |
+- **The model never decides a fact the code can check.** Prices, dates, links, handles and hashtags are compared before and after every rewrite, and a rewrite that changes any of them is discarded. Prices stay exactly as displayed on the site.
+- **Structured output only.** Every model call that feeds the app requests JSON, which is validated against Pydantic models. If output is malformed, the step falls back to deterministic template copy instead of showing raw model text.
+- **Writes are deterministic code.** Models only return text and JSON. Publishing, scheduling and storage are plain Python.
+- **No double posting.** Each post is locked while publishing, and a post that is already published returns `409`.
+- **SSRF guard.** Every server-side fetch of a user-supplied URL (websites, logos, photos, webhooks) is checked on each request, including redirects. Private, loopback and link-local addresses are blocked.
+- **Access key.** With `MONOPLUS_ACCESS_KEY` set, every `/api` call and `/mcp` need the key. The web app asks for it once.
+- **No secrets in the UI.** Tokens and model details never reach the browser.
 
-**Verified with the official MCP Python SDK** (`mcp` 2.3.0 client, `streamable_http_client` + `ClientSession`): the client negotiated `2025-11-25`, listed all seven tools, created a real campaign for sweetgreen.com, polled it to completion, approved its posts, read the brand kit, humanized text and ran live research. The repo's test suite covers the same protocol rules ([backend/tests/test_mcp_alexa.py](backend/tests/test_mcp_alexa.py)).
+### How NVIDIA Nemotron on Nebius Token Factory is used
 
-**Try it yourself**
+All model calls go through `ModelRouter` ([backend/app/llm.py](backend/app/llm.py)), which uses the OpenAI-compatible Token Factory API. Agents never name a model; they pass a **purpose**, and `PURPOSE_TIER` maps it to a tier. This follows the track brief's guidance: Ultra for serious reasoning, Nano for fast everyday calls.
+
+| Purpose | Tier | Model (default) | Called from |
+| --- | --- | --- | --- |
+| `strategy` | Ultra | `nvidia/NVIDIA-Nemotron-3-Ultra` | strategist |
+| `copywriting` | Ultra | Nemotron 3 Ultra | strategist (parallel batches) |
+| `humanize` | Ultra | Nemotron 3 Ultra | humanizer (rewrite and Deep translation chain) |
+| `rewrite` | Ultra | Nemotron 3 Ultra | post editor tone rewrite |
+| `research_plan`, `research_report` | Ultra | Nemotron 3 Ultra | research agent |
+| `brand_extract` | Nano | `nvidia/NVIDIA-Nemotron-Nano-9B-v2` | brand reader |
+| `format_seo` | Nano | Nemotron Nano | formatter |
+| `insight_extract` | Nano | Nemotron Nano | research agent |
+| `classify` | Nano | Nemotron Nano | voice page tool routing |
+
+Shared mechanics:
+
+- **Model auto-selection**: On the first call the router lists the models available to the key. If a configured id isn't offered, it picks the closest Nemotron Ultra or Nano instead of failing.
+- **Fast Nano calls**: Nano prompts are prefixed with `/no_think` and use low temperatures. `<think>` blocks are stripped from every response before parsing.
+- **Bounded concurrency**: Copy batches run in parallel under a semaphore, with timeouts (`LLM_TIMEOUT_S`) and retries.
+- **Telemetry**: Every call records tier, model, purpose, latency, token counts and errors. `GET /api/telemetry` returns them, which shows the Ultra/Nano split for a campaign.
+
+### How Tavily is used
+
+| Where | Tavily call | Purpose |
+| --- | --- | --- |
+| Trend engine ([trends.py](backend/app/agents/trends.py)) | `search` with `topic="news"`, `days=14`, plus general search | This week's industry news and trending topics; source links stay on posts |
+| Brand reader ([ingestor.py](backend/app/scraper/ingestor.py)) | `search` | Find a business's official website from a social handle |
+| Research agent ([research.py](backend/app/agents/research.py)) | `search`, then `extract` | Read full source pages before Nemotron writes the cited report |
+
+Without `TAVILY_API_KEY`, free Google News RSS and DuckDuckGo are used ([freesearch.py](backend/app/agents/freesearch.py)), and the research agent writes an extractive summary.
+
+### Agents
+
+| Agent | File | Pipeline step | Input → Output | Model / tools |
+| --- | --- | --- | --- | --- |
+| **Brand reader** | `scraper/ingestor.py` | `ingest` | URL or @handle → `BrandKit` | Nemotron Nano; HTTP fetch (SSRF-guarded); Tavily search for handles |
+| **Trend engine** | `agents/trends.py` | `trends` | `BrandKit` → `list[TrendItem]` | Tavily search (no model) |
+| **Strategist** | `agents/strategist.py` | `strategy` | `BrandKit` + trends → `CampaignStrategy` | Nemotron 3 Ultra |
+| **Copywriter** | `agents/strategist.py` | `copy` | strategy + calendar slots → `list[SocialPost]` | Nemotron 3 Ultra, parallel batches |
+| **Humanizer** | `agents/humanizer.py` | `humanize` | caption → rewritten caption + before/after score | Rule pass, then Nemotron 3 Ultra; fact guard in code |
+| **Formatter** | `agents/formatter.py` | `format` | posts → hashtags, alt text, SEO keywords | Nemotron Nano; limits enforced in code |
+| **Designer** | `agents/renderer.py` | `render` | post + brand kit → PNG images | Pillow (no model) |
+| **Research agent** | `agents/research.py` | separate task | topic → cited report + `ResearchInsights` | Ultra plans, Tavily searches and extracts, Ultra writes, Nano extracts insights |
+
+Key design points:
+
+- **Models propose; code disposes.** No agent can publish, schedule or delete. Those are REST and scheduler actions in plain Python.
+- **Two of the seven steps use no model at all.** Trends come from search results and images from deterministic rendering, so they are reproducible.
+- **Every model step has a deterministic fallback.** With no key, the pipeline still completes using template copy and the rule-based humanizer, and the campaign is marked `mode: "demo"`.
+- **Missing evidence is reported, never invented.** If search returns nothing, research says so instead of citing made-up sources. A thin brand kit triggers a banner asking the owner for more detail.
+
+## Stack
+
+**Backend:**
+- Python 3.12, FastAPI, Pydantic v2
+- NVIDIA Nemotron 3 Ultra and Nemotron Nano via Nebius Token Factory (`openai` SDK)
+- Tavily (`tavily-python`); free search fallback over httpx
+- Pillow (rendering), BeautifulSoup (scraping)
+- Instagram Graph, Facebook Pages, LinkedIn Posts/Images and X v2 APIs
+- pytest with `httpx.MockTransport`
+
+**Web app:**
+- Next.js 14 (App Router), TypeScript, Tailwind CSS
+- lucide-react icons, react-markdown
+
+## Project structure
+
+```text
+├── backend/
+│   ├── app/
+│   │   ├── main.py                 # FastAPI app: REST API, access-key middleware, scheduler startup
+│   │   ├── llm.py                  # ModelRouter: purpose → Nemotron Ultra/Nano, auto-selection, telemetry
+│   │   ├── config.py               # Environment settings
+│   │   ├── schemas.py              # Pydantic models (BrandKit, Campaign, SocialPost, Job, ResearchTask…)
+│   │   ├── store.py                # JSON store
+│   │   ├── netguard.py             # SSRF guard for every outbound fetch
+│   │   ├── publishing.py           # Direct publishing, per-post lock, auto-publish scheduler
+│   │   ├── mcp_server.py           # MCP server (2025-11-25, Streamable HTTP), seven tools
+│   │   ├── alexa.py                # Voice page: utterance → MCP tool call → speech + card
+│   │   ├── agents/
+│   │   │   ├── pipeline.py         # Campaign job: seven named steps with live progress
+│   │   │   ├── strategist.py       # Strategy + copywriting (parallel batches) + fallbacks
+│   │   │   ├── humanizer.py        # AI-pattern detection, rewrite, translation chain, fact guard
+│   │   │   ├── formatter.py        # Hashtags, alt text, SEO, platform limits
+│   │   │   ├── renderer.py         # Pillow images and carousels
+│   │   │   ├── photos.py           # Pexels / Openverse stock photos, uploads
+│   │   │   ├── trends.py           # Tavily search + extract
+│   │   │   ├── freesearch.py       # Google News RSS / DuckDuckGo fallback
+│   │   │   ├── research.py         # Research agent
+│   │   │   └── memory.py           # Research library
+│   │   ├── scraper/                # Brand reader (logo, palette, products, prices)
+│   │   └── social/                 # Instagram, Facebook, LinkedIn, X clients
+│   ├── tests/                      # 77 tests, network mocked
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/                       # Next.js web app
+│   ├── app/                        #   Create, campaigns/[id], research, humanizer, alexa (voice page)
+│   ├── components/                 #   CalendarView, PostEditor, BrandKitPanel, QueueList, Sidebar…
+│   └── lib/api.ts                  #   Typed API client
+├── third_party/                    # Licences and notices for the humanizer projects
+├── .env.example
+└── LICENSE                         # MIT
+```
+
+## API
+
+All endpoints are under `http://localhost:8000`. With `MONOPLUS_ACCESS_KEY` set, send it as `X-Access-Key`.
+
+### `POST /api/campaigns`
+
+Starts a campaign job and returns immediately.
+
+```json
+{
+  "input": "https://www.tartinebakery.com",
+  "platforms": ["instagram", "linkedin"],
+  "days": 7
+}
+```
+
+`input` is a website URL or an @handle. `platforms` defaults to Instagram, LinkedIn and X; `days` is 1–31 (default 30); `start_date`, `posts_per_day` (1–3) and `research_ids` (up to three completed research tasks) are optional.
+
+Response (`202`):
+
+```json
+{ "campaign_id": "76226cebde6f", "job_id": "f21975ff6184" }
+```
+
+### `GET /api/jobs/{job_id}`
+
+Live progress, which the web app polls while a campaign generates. Real response from a run (trimmed):
+
+```json
+{
+  "id": "f21975ff6184",
+  "campaign_id": "76226cebde6f",
+  "status": "running",
+  "steps": [
+    { "key": "ingest",   "label": "Reading your site & building the brand kit", "status": "done", "detail": "Tartine Bakery · Food & Beverage", "seconds": 0.95 },
+    { "key": "trends",   "label": "Checking today's news & trends",             "status": "done", "detail": "10 live items" },
+    { "key": "strategy", "label": "Planning the content strategy",              "status": "done", "detail": "Behind the Scenes, Customer Wins, Quick Tips, Offers & News" },
+    { "key": "copy",     "label": "Writing the posts",                          "status": "done", "detail": "7 drafts · 2 carousels" },
+    { "key": "humanize", "label": "Making the copy sound human",                "status": "done", "detail": "AI-tell score 3 → 0" },
+    { "key": "format",   "label": "Hashtags & SEO",                             "status": "done" },
+    { "key": "render",   "label": "Designing the visuals",                      "status": "running" }
+  ],
+  "brand": { "name": "Tartine Bakery", "industry": "Food & Beverage", "primary_color": "#C87E1E", "accent_color": "#FFBC7D", "logo_url": "https://tartinebakery.com/wp-content/uploads/2025/07/favicon.png" }
+}
+```
+
+### `GET /api/campaigns/{campaign_id}`
+
+The full campaign: brand kit, strategy, trends, and every post with caption, hashtags, alt text, image URLs, `publish_at` and status.
+
+### `PATCH /api/posts/{post_id}`
+
+Edit and re-render a post. Any of `headline`, `caption`, `cta`, `hashtags`, `publish_at`, `status`, `layout` (`bold | split | quote | photo`), `slides`, `text_position`, `text_scale` (0.6–1.5).
+
+### `POST /api/posts/{post_id}/publish`
+
+Posts directly to the platform's API and returns the post with `remote_id` and `remote_url`. Returns `400` if the platform isn't connected and `409` if the post is already published.
+
+### `POST /api/humanize`
+
+```json
+{ "text": "In today's fast-paced world, our seamless sourdough is a game-changer - only $12!", "mode": "light" }
+```
+
+Real response (trimmed):
+
+```json
+{
+  "text": "Our smooth sourdough is a big deal - only $12!",
+  "before": 22,
+  "after": 0,
+  "patterns_before": [
+    { "id": "ai_words",   "label": "Overused AI words",     "count": 2, "example": "seamless" },
+    { "id": "inflation",  "label": "Inflated significance", "count": 1, "example": "In today's fast-paced" }
+  ],
+  "steps": [
+    { "name": "Original",  "score": 22, "accepted": true },
+    { "name": "Rule pass", "score": 0,  "accepted": true }
+  ]
+}
+```
+
+`mode` is `light`, `standard` or `deep` (Nemotron translation chain). The `$12` survives because the fact guard protects it.
+
+### `POST /api/research/tasks`
+
+```json
+{ "topic": "salad chain customer complaints 2026", "region": "US" }
+```
+
+Creates a research task; poll `GET /api/research/tasks/{id}` for the cited `report`, `sources` and `insights` (trend, pricing gap, audience insight, content angles, confidence).
+
+### Other endpoints
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/health` | Which services are connected (Nemotron, Tavily, Pexels, MCP endpoint) |
+| `GET /api/telemetry` | Model calls: tier, model, purpose, latency, tokens |
+| `GET /api/models` | Models available to the Token Factory key |
+| `POST /api/campaigns/{id}/approve-all` | Approve every draft |
+| `PATCH /api/campaigns/{id}/brand` | Edit colours, logo, name, voice; every post re-renders |
+| `GET /api/campaigns/{id}/export` | ZIP of images, captions and a CSV schedule |
+| `GET /api/upcoming` | Unpublished posts in the next days, across campaigns |
+| `POST /api/posts/{id}/background` | Set a stock or uploaded photo |
+| `POST /api/posts/{id}/humanize`, `/rewrite` | Humanize a caption, or rewrite it in a new tone (Nemotron) |
+| `GET /api/photos/search`, `POST /api/uploads` | Licensed stock photo search, image upload |
+| `GET /api/publishing`, `PUT /api/publishing/auto` | Connected platforms; turn auto-publishing on or off |
+| `POST /mcp` | MCP endpoint (see below) |
+
+### MCP server
+
+`POST /mcp` implements MCP **2025-11-25** over Streamable HTTP ([backend/app/mcp_server.py](backend/app/mcp_server.py)). It also negotiates 2025-06-18 and 2025-03-26, issues `Mcp-Session-Id`, validates `MCP-Protocol-Version` and `Origin`, and accepts the access key as a Bearer token.
+
+| Tool | What it does |
+| --- | --- |
+| `create_campaign` | Start a campaign from a website or handle |
+| `get_campaign_status` | Live step progress, then post, approval and next-post counts |
+| `list_upcoming_posts` | Unpublished posts in the next N days, with image links |
+| `approve_posts` | Approve all drafts or specific posts |
+| `humanize_text` | Fact-guarded rewrite with before and after scores |
+| `research_market` | Cited research summary with content ideas |
+| `get_brand_profile` | Colours, logo, voice and value props |
+
+The server was verified with the official MCP Python SDK client, which negotiated `2025-11-25`, listed all seven tools, and ran a full campaign. The voice page in the web app (the "Alexa+" item in the sidebar) sends the same `tools/call` messages; Nemotron Nano chooses the tool from what you say.
+
+## Run locally (step-by-step)
+
+### Prerequisites
+
+- Python 3.12+ and Node 18+
+- A Nebius Token Factory API key (https://tokenfactory.nebius.com)
+- Optional: a Tavily API key, a Pexels API key
+
+### 1. Configure the environment
 
 ```bash
-# MCP Inspector (official debugging client)
-npx @modelcontextprotocol/inspector     # Transport: Streamable HTTP, URL: http://localhost:8000/mcp
-
-# or raw JSON-RPC
-curl -s localhost:8000/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
+cp .env.example .env
 ```
 
-### Simulated Alexa+ experience
+Set at least `NEBIUS_API_KEY`. Add `TAVILY_API_KEY` for live search and `PEXELS_API_KEY` for instant stock photos. The default model ids are corrected automatically if your key offers different Nemotron versions.
 
-The **Alexa+** page in the web app is an Echo Show-style simulation. Speak (browser speech recognition) or type a request, and the answer is read aloud. Each request goes through [backend/app/alexa.py](backend/app/alexa.py):
-
-1. The request is mapped to an MCP tool and its arguments. When a model is configured, it picks the tool from the MCP tool schemas, the way an assistant does; otherwise keyword rules handle it.
-2. The tool call is sent as a real JSON-RPC `tools/call` message through the same handler that serves `/mcp`.
-3. The reply comes back as speech plus a screen card: a campaign progress checklist, upcoming posts with images, the humanized text, research findings or brand colours. "MCP call" under each answer shows the exact JSON-RPC request and response.
-
-If something required is missing, such as the website, Alexa asks for it instead of guessing.
-
----
-
-## AWS Builder: Amazon Bedrock
-
-With `AWS_BEDROCK_ENABLED=1`, every AI step uses the **Bedrock Converse API** through `boto3` ([backend/app/llm.py](backend/app/llm.py), `ModelRouter._complete_bedrock`). Agents ask for a *purpose* and the router picks the model tier:
-
-| Tier | Default model | Used for |
-|---|---|---|
-| Heavy | `amazon.nova-pro-v1:0` | strategy, copywriting, humanizer rewrites, tone rewrites, research plans and reports |
-| Fast | `amazon.nova-lite-v1:0` | brand-profile extraction, hashtags and SEO, research insights, Alexa+ intent routing |
-
-Calls run concurrently (bounded), with adaptive retries, token usage recorded per call, and `GET /api/telemetry` showing the split. Credentials come from the standard AWS chain. Enable model access for both models in the Bedrock console, and use a region where they're available on demand (default `us-east-1`).
-
-> The Bedrock path is covered by a unit test with a stubbed Converse client. Run it against your own AWS account before submitting, and describe what you saw in the product feedback.
-
-The same router also supports NVIDIA Nemotron on Nebius Token Factory (`NEBIUS_API_KEY`). It automatically switches to an available Nemotron model if a configured id isn't offered to your key.
-
----
-
-## Features in the web app
-
-- **Create:** paste a website or handle, pick platforms and 7/14/30 days, and optionally attach market research.
-- **Campaign workspace:** a drag-and-drop calendar and a list view in your local time zone, an Instagram-style feed preview, an editable brand kit (colours, logo, voice; every post re-renders) and the strategy.
-- **Post studio:** Instagram, LinkedIn, X and Facebook previews; templates (bold, split, quote, photo); licensed stock photos (Pexels, or Creative Commons via Openverse) or your own uploads; headline position and size; carousel slide editor; caption, humanizer and tone rewrite.
-- **Humanizer:** built on two MIT projects. [blader/humanizer](https://github.com/blader/humanizer) supplies the pattern catalogue from Wikipedia's "Signs of AI writing". [lynote-ai/humanize-text](https://github.com/lynote-ai/humanize-text) supplies the translation-chain "Deep" mode. A fact guard rejects any rewrite that drops a price, date, link, @handle or #hashtag.
-- **Research:** plans searches, reads sources, and writes a cited report with insights and content angles. It works without any API key, using free search and an extractive summary.
-- **Publishing:** direct posting through the Instagram Graph, Facebook Pages, LinkedIn Posts and X v2 APIs; auto-posting of approved posts at their time; or "Open app" plus "Mark as posted"; or ZIP export.
-- **No watermark** on anything MonoPlus renders.
-
-## Run it locally
-
-Requirements: Python 3.12+ and Node 18+.
+### 2. Start the backend
 
 ```bash
-cp .env.example .env              # set AWS_BEDROCK_ENABLED=1 + AWS credentials (or NEBIUS_API_KEY)
-
 cd backend
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt          # Windows: .venv\Scripts\pip
-.venv/bin/uvicorn app.main:app --port 8000          # API + MCP at http://localhost:8000/mcp
+.venv/bin/uvicorn app.main:app --port 8000          # Windows: .venv\Scripts\uvicorn
+```
 
-cd ../frontend                    # new terminal
+### 3. Check the connections
+
+```bash
+curl -s localhost:8000/api/health
+```
+
+```json
+{ "ok": true, "mode": "live", "ai_provider": "nebius", "nebius": true, "tavily": true, "free_search": true, "pexels": false, "mcp_endpoint": "http://localhost:8000/mcp" }
+```
+
+`"mode": "demo"` means no model key was found; the app still runs on fallbacks.
+
+### 4. Start the web app
+
+```bash
+cd frontend
 npm install
-npm run dev                       # http://localhost:3000  (Alexa+ page: /alexa)
+npm run dev            # http://localhost:3000
 ```
 
-**With no keys at all** everything still runs: template captions, the rule-based humanizer, free web search, extractive research summaries, and the full MCP server and Alexa+ simulation.
+### 5. Generate a campaign
 
-**Tests:** `cd backend && .venv/bin/python -m pytest -q` runs 77 tests, with the network mocked. They cover the MCP transport and tool flows, the Alexa+ simulation, the Bedrock request shape, scraping, the humanizer and its fact guard, rendering and carousels, each publishing API sequence, the access key, SSRF guards and scheduling.
+Paste a website (for example `https://www.sweetgreen.com`) on the Create page, pick platforms and days, and press Generate. Or use curl:
 
-### Deploying for Alexa+
-
-Alexa+ needs the MCP endpoint on **public HTTPS**. Build [backend/Dockerfile](backend/Dockerfile) and run it on any container host, such as AWS App Runner or ECS on Fargate. Then:
-
-- Set `MONOPLUS_ACCESS_KEY` (the MCP client sends it as a Bearer token).
-- Set `PUBLIC_API_URL` and `PUBLIC_APP_URL` to the public URLs.
-- Set `CORS_ORIGINS` to the web app's origin.
-- Mount a volume at `/data`.
-
-The frontend is a standard Next.js app with `NEXT_PUBLIC_API_URL` pointing at the API.
-
-## Repository layout
-
-```
-backend/app/
-  mcp_server.py      MCP server: Streamable HTTP, 2025-11-25, seven tools
-  alexa.py           simulated Alexa+ experience: utterance → MCP tool call → speech + card
-  llm.py             model router: Amazon Bedrock (Converse) or Nemotron on Nebius
-  agents/            pipeline, strategist, humanizer, research, trends, free search, renderer, photos
-  scraper/           brand-kit reader (SSRF-guarded)
-  social/            Instagram, Facebook, LinkedIn and X publishing
-  main.py            REST API, access key, scheduler
-backend/tests/       77 tests
-frontend/            Next.js 14 + Tailwind web app (Create, Campaigns, Alexa+, Research, Humanizer)
-third_party/         licences and notices for the humanizer projects
+```bash
+curl -s localhost:8000/api/campaigns -H 'Content-Type: application/json' \
+  -d '{"input":"https://www.tartinebakery.com","platforms":["instagram"],"days":7}'
+curl -s localhost:8000/api/jobs/<job_id>
 ```
 
----
+### 6. See the Ultra/Nano split
 
-## Submission checklist (for the author)
+```bash
+curl -s localhost:8000/api/telemetry
+```
 
-- [ ] Confirm the hackathon is still accepting submissions.
-- [ ] Deploy the API on public HTTPS and connect it to Alexa+ (or demo the simulated experience). Record the demo under 3 minutes, leading with Alexa+.
-- [ ] Turn on Bedrock (`AWS_BEDROCK_ENABLED=1`) and run a full campaign on it before describing it in the feedback.
-- [ ] Write the product feedback and friction logs below from your own experience.
-- [ ] If any of this existed before the submission window, explain what changed during it. The public commit history of this repository starts on 24 October 2026.
-- [ ] Open Source mini challenge: link the additional project or contribution.
-- [ ] Repository access: this repo is public with an MIT license, so no reviewer invitations are needed.
+### 7. Test the MCP server
 
-## Product feedback
+```bash
+npx @modelcontextprotocol/inspector      # Transport: Streamable HTTP, URL: http://localhost:8000/mcp
+```
 
-_To be written by the author. For each tool (Alexa+ / MCP, Amazon Bedrock, and anything else you used): what you used it for, what worked well, what needs work, how onboarding felt, and whether you'd build with it again._
+### 8. Connect direct posting (optional)
 
-## Friction log
+Fill in the `META_*`, `INSTAGRAM_ACCOUNT_ID`, `LINKEDIN_*` and `X_USER_ACCESS_TOKEN` values in `.env` (the required permissions are listed there), restart the backend, and use **Post** in the post editor or turn on auto-publishing.
 
-_Optional; earns up to a 10% judging bonus. For each entry: the task, the steps you took, expected vs. actual, severity, any workaround, and an actionable suggestion._
+### 9. Run the tests
 
-## Feature requests
+```bash
+cd backend && .venv/bin/python -m pytest -q
+```
 
-_Optional: what you'd want built, why it matters, and how urgent it is (critical / important / nice-to-have)._
+There are 77 tests, with every external API mocked. They cover:
+
+- the pipeline and model router
+- scraping and the humanizer's fact guard
+- rendering and carousels
+- research and free-search parsing
+- each publishing API's request sequence
+- the MCP protocol and tools
+- the access key, SSRF guards and scheduling
+
+### Try it without paying for anything
+
+With no keys at all, everything still runs:
+
+- template captions instead of Nemotron copy
+- the rule-based humanizer
+- free web search and extractive research summaries
+- rendering, scheduling, export and the MCP server
+
+## Deploy
+
+[backend/Dockerfile](backend/Dockerfile) builds the API. Run it on Nebius AI Cloud (a VM or Serverless Endpoint) or any container host, then:
+
+- Set `NEBIUS_API_KEY`, `TAVILY_API_KEY` and `MONOPLUS_ACCESS_KEY`.
+- Set `PUBLIC_API_URL` and `PUBLIC_APP_URL` to the public URLs, and `CORS_ORIGINS` to the web app's origin.
+- Mount a persistent volume at `/data` (JSON store and rendered media).
+
+The web app is a standard Next.js build with `NEXT_PUBLIC_API_URL` pointing at the API.
+
+## Error handling
+
+| Situation | Response |
+| --- | --- |
+| Campaign, post, job or research not found | `404` with a clear message |
+| Missing or wrong access key | `401` |
+| Invalid input (bad colour, `days` out of range, short input) | `422` with the failing field |
+| Research attached to a campaign before it's completed | `422` |
+| Tone rewrite with no Nemotron key | `503` explaining that the caption can still be edited by hand |
+| Token Factory or rewrite failure | `502` with the error; the campaign pipeline itself falls back to template copy instead of failing |
+| Posting to a platform that isn't connected | `400` naming the platform |
+| Publishing a post that is already published | `409`; nothing is sent twice |
+| Platform API rejects a post | `502`; the post keeps its status and records `publish_error` |
+| Website unreachable, private or internal URL | Brand reader refuses the fetch (SSRF guard); the campaign fails with a readable message |
+| Thin website | Campaign completes, and a banner asks the owner to add detail to the brand kit |
+| Search off or no results | Research says so explicitly; no invented sources |
+| Server restarted mid-research | Task is marked `retry` instead of hanging |
+| MCP: unknown tool / bad arguments | JSON-RPC `-32602`; tool failures return `isError: true` with a readable message |
+| MCP: unknown session / unsupported version / bad Origin | `404` / `400` / `403` |
+
+## Logging and telemetry
+
+- **Model calls**: `GET /api/telemetry` records tier, model, purpose, latency, token counts and errors for every call. API keys are never included.
+- **Pipeline**: every job step records its status, duration and a one-line result (`GET /api/jobs/{id}`), and the campaign keeps per-step timings.
+- **Publishing**: each post records how it was published (`direct`, `webhook` or `manual`), the remote id and URL, or the platform's error.
+- **Server log**: search fallbacks, model auto-selection and failed fetches are logged by the backend.
+
+## Limitations
+
+- **Direct posting is untested on live accounts.** It is unit-tested against mocked Instagram, Facebook, LinkedIn and X APIs, and real use needs your own app credentials. Instagram requires a Business or Creator account linked to a Facebook Page.
+- **Single-tenant by design.** One JSON store for one business; there are no user accounts or multi-tenant database.
+- **No image-generation model.** Images are designed from templates, brand colours and licensed photos. This keeps them on-brand, but they are less varied than generated images.
+- **Thin sites give thin brand kits.** A single landing page doesn't give much to work with; the app flags this and lets the owner edit the kit.
+
+## Credits
+
+The humanizer builds on two MIT-licensed projects (notices in [third_party/](third_party/)):
+
+- [blader/humanizer](https://github.com/blader/humanizer): pattern catalogue from Wikipedia's "Signs of AI writing".
+- [lynote-ai/humanize-text](https://github.com/lynote-ai/humanize-text): translation-chain "Deep" mode.
+
+## Hackathon submission notes (for the author; fill in before submitting)
+
+- **Demo video:** _TODO_. Show the problem in the first 20 seconds, then a real website going in, the live pipeline, posts and carousels, the telemetry Ultra/Nano split, and Tavily sources on a post.
+- **Live demo URL:** _TODO_.
+- **Feedback on Nebius Token Factory and NVIDIA Nemotron:** _TODO, in your own words: what worked, what didn't, onboarding, latency, cost. There's a prize for the most valuable feedback._
+- **Existed before the submission period?** _TODO if applicable: explain what was significantly updated during it._
+- **Builders & Brews city:** _TODO, if you attended._
