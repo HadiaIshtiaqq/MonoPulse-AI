@@ -1,4 +1,4 @@
-"""MCP server (Streamable HTTP, 2025-11-25), Alexa+ simulation and the Bedrock provider."""
+"""MCP server (Streamable HTTP, 2025-11-25) and the Bedrock provider."""
 import asyncio
 import time
 
@@ -149,31 +149,6 @@ def test_mcp_requires_bearer_key_when_configured(client, monkeypatch):
     r = client.post("/mcp", json=body, headers=HEADERS)
     assert r.status_code == 401 and "Bearer" in r.headers["www-authenticate"]
     assert client.post("/mcp", json=body, headers=dict(HEADERS, Authorization="Bearer s3cret")).status_code == 200
-    assert client.post("/api/alexa/simulate", json={"utterance": "what's posting this week"}).status_code == 401
-
-
-def test_alexa_simulation_routes_through_mcp(client):
-    r = client.post("/api/alexa/simulate", json={"utterance": "Alexa, make a two weeks campaign for bluebird.example on Instagram", "session_id": "s1"}).json()
-    assert r["tool"] == "create_campaign" and r["routed_by"] == "rules"
-    assert r["rpc"]["request"]["method"] == "tools/call" and r["rpc"]["request"]["params"]["arguments"]["days"] == 14
-    assert r["rpc"]["request"]["params"]["arguments"]["platforms"] == ["instagram"]
-    cid = r["card"]["campaign_id"]
-    wait_ready(cid)
-    r = client.post("/api/alexa/simulate", json={"utterance": "Is my campaign ready?", "session_id": "s1"}).json()
-    assert r["tool"] == "get_campaign_status" and r["card"]["campaign_id"] == cid and "ready" in r["speech"]
-    r = client.post("/api/alexa/simulate", json={"utterance": "approve them all", "session_id": "s1"}).json()
-    assert r["tool"] == "approve_posts" and r["card"]["approved_now"] == 14
-
-
-def test_alexa_asks_for_missing_website_instead_of_guessing(client):
-    r = client.post("/api/alexa/simulate", json={"utterance": "create a campaign for my bakery"}).json()
-    assert r["tool"] is None and "website" in r["speech"]
-    assert store.campaigns == {}  # nothing created for a made-up URL
-
-
-def test_alexa_humanize(client):
-    r = client.post("/api/alexa/simulate", json={"utterance": "Humanize this: In today's digital landscape, our seamless app is a game-changer."}).json()
-    assert r["tool"] == "humanize_text" and "seamless" not in r["card"]["text"].lower()
 
 
 def test_bedrock_provider_uses_converse(monkeypatch):

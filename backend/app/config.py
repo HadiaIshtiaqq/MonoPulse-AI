@@ -23,7 +23,7 @@ AWS_BEDROCK_ENABLED = _env("AWS_BEDROCK_ENABLED", "0") == "1"
 # Amazon Nova models are available on-demand in us-east-1; other models may need an inference profile id.
 AWS_BEDROCK_MODEL_ULTRA = _env("AWS_BEDROCK_MODEL_ULTRA", "amazon.nova-pro-v1:0")
 AWS_BEDROCK_MODEL_NANO = _env("AWS_BEDROCK_MODEL_NANO", "amazon.nova-lite-v1:0")
-# Where the web app lives, for links in MCP / Alexa+ responses.
+# Where the web app lives, for links in MCP responses.
 PUBLIC_APP_URL = _env("PUBLIC_APP_URL", "http://localhost:3000").rstrip("/")
 
 # Heavy tier: strategy, copywriting, humanizer rephrasing.

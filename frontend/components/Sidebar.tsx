@@ -3,11 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { FlaskConical, LayoutGrid, Menu, Mic, Plus, Wand2, X } from "lucide-react";
+import { FlaskConical, LayoutGrid, Menu, Plus, Wand2, X } from "lucide-react";
 
 const NAV = [
   { href: "/campaigns", label: "Campaigns", icon: LayoutGrid, match: (p: string) => p.startsWith("/campaign") },
-  { href: "/alexa", label: "Alexa+", icon: Mic, match: (p: string) => p.startsWith("/alexa") },
   { href: "/research", label: "Research", icon: FlaskConical, match: (p: string) => p.startsWith("/research") },
   { href: "/humanizer", label: "Humanizer", icon: Wand2, match: (p: string) => p.startsWith("/humanizer") },
 ];

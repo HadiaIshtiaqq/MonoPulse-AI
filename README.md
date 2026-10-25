@@ -16,7 +16,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** 
 - **Branded design**: Renders single images and 1080×1350 carousels (cover, slides, CTA) in four layouts, with brand colours, logo and licensed stock or uploaded photos. No watermarks.
 - **Scheduling and direct posting**: Drag-and-drop calendar, one-click approval, and automatic publishing at each post's time through the official Instagram Graph, Facebook Pages, LinkedIn and X v2 APIs.
 - **Market research agent**: Plans searches, reads sources and writes a cited report with content ideas that can be attached to a campaign.
-- **MCP server**: Seven tools at `POST /mcp` (MCP 2025-11-25, Streamable HTTP) let other agents and assistants run campaigns. A voice page in the web app drives the same tools.
+- **MCP server**: Seven tools at `POST /mcp` (MCP 2025-11-25, Streamable HTTP) let other agents and assistants run campaigns.
 - **Live pipeline view**: The web app shows each pipeline step as it runs, with timings and results.
 
 ## Architecture
@@ -31,7 +31,7 @@ MonoPlus is a FastAPI backend that runs each campaign as a background job made o
 flowchart TB
     subgraph Client["Owner"]
         U1["Web app (Next.js)<br/>Create · Calendar · Post studio · Research · Humanizer"]
-        U2["MCP clients / voice page"]
+        U2["MCP clients"]
     end
 
     subgraph Backend["MonoPlus backend · FastAPI"]
@@ -139,7 +139,6 @@ All model calls go through `ModelRouter` ([backend/app/llm.py](backend/app/llm.p
 | `brand_extract` | Nano | `nvidia/NVIDIA-Nemotron-Nano-9B-v2` | brand reader |
 | `format_seo` | Nano | Nemotron Nano | formatter |
 | `insight_extract` | Nano | Nemotron Nano | research agent |
-| `classify` | Nano | Nemotron Nano | voice page tool routing |
 
 Shared mechanics:
 
@@ -205,7 +204,6 @@ Key design points:
 │   │   ├── netguard.py             # SSRF guard for every outbound fetch
 │   │   ├── publishing.py           # Direct publishing, per-post lock, auto-publish scheduler
 │   │   ├── mcp_server.py           # MCP server (2025-11-25, Streamable HTTP), seven tools
-│   │   ├── alexa.py                # Voice page: utterance → MCP tool call → speech + card
 │   │   ├── agents/
 │   │   │   ├── pipeline.py         # Campaign job: seven named steps with live progress
 │   │   │   ├── strategist.py       # Strategy + copywriting (parallel batches) + fallbacks
@@ -219,11 +217,11 @@ Key design points:
 │   │   │   └── memory.py           # Research library
 │   │   ├── scraper/                # Brand reader (logo, palette, products, prices)
 │   │   └── social/                 # Instagram, Facebook, LinkedIn, X clients
-│   ├── tests/                      # 77 tests, network mocked
+│   ├── tests/                      # 74 tests, network mocked
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/                       # Next.js web app
-│   ├── app/                        #   Create, campaigns/[id], research, humanizer, alexa (voice page)
+│   ├── app/                        #   Create, campaigns/[id], research, humanizer
 │   ├── components/                 #   CalendarView, PostEditor, BrandKitPanel, QueueList, Sidebar…
 │   └── lib/api.ts                  #   Typed API client
 ├── third_party/                    # Licences and notices for the humanizer projects
@@ -354,7 +352,7 @@ Creates a research task; poll `GET /api/research/tasks/{id}` for the cited `repo
 | `research_market` | Cited research summary with content ideas |
 | `get_brand_profile` | Colours, logo, voice and value props |
 
-The server was verified with the official MCP Python SDK client, which negotiated `2025-11-25`, listed all seven tools, and ran a full campaign. The voice page in the web app (the "Alexa+" item in the sidebar) sends the same `tools/call` messages; Nemotron Nano chooses the tool from what you say.
+The server was verified with the official MCP Python SDK client, which negotiated `2025-11-25`, listed all seven tools, and ran a full campaign.
 
 ## Run locally (step-by-step)
 
@@ -433,7 +431,7 @@ Fill in the `META_*`, `INSTAGRAM_ACCOUNT_ID`, `LINKEDIN_*` and `X_USER_ACCESS_TO
 cd backend && .venv/bin/python -m pytest -q
 ```
 
-There are 77 tests, with every external API mocked. They cover:
+There are 74 tests, with every external API mocked. They cover:
 
 - the pipeline and model router
 - scraping and the humanizer's fact guard

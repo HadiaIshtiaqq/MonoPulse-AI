@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import alexa, config, mcp_server, publishing
+from . import config, mcp_server, publishing
 from .agents import humanizer, memory, photos, pipeline, renderer, research, strategist
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
@@ -59,7 +59,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MonoPlus", version="0.4.0", lifespan=lifespan)
 app.include_router(mcp_server.router)  # /mcp authenticates itself (Bearer token), see mcp_server._authorized
-app.include_router(alexa.router)  # /api/alexa/* sits behind the access-key middleware below
 
 OPEN_PATHS = {"/api/health", "/api/access"}
 

@@ -1,4 +1,4 @@
-"""Self-hosted MCP server for MonoPlus (Alexa+ track).
+"""Self-hosted MCP server for MonoPlus.
 
 Transport: Streamable HTTP, protocol revision 2025-11-25 (also negotiates 2025-06-18 and
 2025-03-26). One endpoint, /mcp:
@@ -7,7 +7,7 @@ Transport: Streamable HTTP, protocol revision 2025-11-25 (also negotiates 2025-0
   GET     405: this server doesn't offer a server-initiated SSE stream.
   DELETE  ends the session named in Mcp-Session-Id.
 
-Every tool calls the same code the web app uses, so Alexa+ (or any MCP client) can create a
+Every tool calls the same code the web app uses, so any MCP client (an agent or assistant) can create a
 campaign, check on it, approve posts, humanize copy and research a market.
 """
 from __future__ import annotations
