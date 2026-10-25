@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from collections import deque
@@ -19,6 +20,8 @@ from openai import AsyncOpenAI
 
 from . import config
 from .schemas import LLMCallRecord
+
+log = logging.getLogger(__name__)
 
 
 class ModelTier(str, Enum):
@@ -57,6 +60,9 @@ class ModelRouter:
         self.records: deque[LLMCallRecord] = deque(maxlen=500)
         # Nebius rate limits are per-key; keep a lid on fan-out.
         self._sem = asyncio.Semaphore(8)
+        self._resolved = False
+        self._resolve_lock = asyncio.Lock()
+        self._bedrock_client = None
 
     @property
     def enabled(self) -> bool:
@@ -75,6 +81,31 @@ class ModelRouter:
     def tier_for(self, purpose: str) -> ModelTier:
         return PURPOSE_TIER.get(purpose, ModelTier.NANO)
 
+    async def resolve_models(self) -> None:
+        """If a configured model id isn't offered to this key, switch to the closest Nemotron that is.
+
+        Model ids on Token Factory change over time; a wrong id would otherwise fail every call.
+        """
+        if self._resolved or not self.enabled:
+            return
+        self._resolved = True
+        try:
+            listing = await self._get_client().models.list()
+            available = [m.id for m in listing.data]
+        except Exception as exc:  # noqa: BLE001 - keep the configured ids if listing isn't possible
+            log.warning("couldn't list Token Factory models: %s", exc)
+            return
+        lower = {m.lower(): m for m in available}
+        nemotron = [m for m in available if "nemotron" in m.lower()]
+        prefs = {ModelTier.ULTRA: ("ultra", "253b", "super", "70b", "49b"), ModelTier.NANO: ("nano", "9b", "8b", "super")}
+        for tier, wanted in prefs.items():
+            if TIER_MODELS[tier].lower() in lower:
+                continue
+            pick = next((m for w in wanted for m in nemotron if w in m.lower()), None) or (nemotron[0] if nemotron else None)
+            if pick:
+                log.info("model %s isn't available; using %s for the %s tier", TIER_MODELS[tier], pick, tier.value)
+                TIER_MODELS[tier] = pick
+
     async def complete(
         self,
         purpose: str,
@@ -85,8 +116,13 @@ class ModelRouter:
         max_tokens: int = 2048,
     ) -> str:
         if not self.enabled:
-            raise LLMError("NEBIUS_API_KEY not set")
+            raise LLMError("No model provider configured (set NEBIUS_API_KEY or AWS_BEDROCK_ENABLED=1)")
         tier = self.tier_for(purpose)
+        if self.provider == "bedrock":
+            return await self._complete_bedrock(purpose, tier, system, user, temperature, max_tokens)
+        if not self._resolved:
+            async with self._resolve_lock:
+                await self.resolve_models()
         model = TIER_MODELS[tier]
         if tier is ModelTier.NANO:
             # Nemotron Nano/Super honour /no_think to skip the reasoning trace for fast calls.
@@ -114,13 +150,59 @@ class ModelRouter:
             record.latency_ms = int((time.perf_counter() - started) * 1000)
             self.records.append(record)
 
+    # ------------------------------------------------------------------ Amazon Bedrock
+
+    @property
+    def provider(self) -> str:
+        """Bedrock when AWS_BEDROCK_ENABLED=1 (AWS Builder path), otherwise Nebius Token Factory."""
+        return "bedrock" if config.AWS_BEDROCK_ENABLED else "nebius"
+
+    def _bedrock(self):
+        if self._bedrock_client is None:
+            import boto3  # imported lazily so the Nebius-only setup doesn't need AWS packages
+            from botocore.config import Config
+
+            self._bedrock_client = boto3.client(
+                "bedrock-runtime", region_name=config.AWS_REGION,
+                config=Config(read_timeout=config.LLM_TIMEOUT_S, retries={"max_attempts": 3, "mode": "adaptive"}),
+            )
+        return self._bedrock_client
+
+    async def _complete_bedrock(self, purpose: str, tier: "ModelTier", system: str, user: str, temperature: float, max_tokens: int) -> str:
+        model = config.AWS_BEDROCK_MODEL_ULTRA if tier is ModelTier.ULTRA else config.AWS_BEDROCK_MODEL_NANO
+        started = time.perf_counter()
+        record = LLMCallRecord(tier=tier.value, model=model, purpose=purpose, ok=False, latency_ms=0)
+        try:
+            async with self._sem:
+                resp = await asyncio.to_thread(
+                    self._bedrock().converse,
+                    modelId=model,
+                    system=[{"text": system}],
+                    messages=[{"role": "user", "content": [{"text": user}]}],
+                    inferenceConfig={"maxTokens": max_tokens, "temperature": min(1.0, temperature)},
+                )
+            blocks = resp["output"]["message"]["content"]
+            text = "".join(b.get("text", "") for b in blocks)
+            usage = resp.get("usage") or {}
+            record.ok = True
+            record.prompt_tokens, record.completion_tokens = usage.get("inputTokens"), usage.get("outputTokens")
+            return _THINK_RE.sub("", text).strip()
+        except Exception as exc:  # noqa: BLE001 - surfaced to the caller as LLMError
+            record.error = f"{type(exc).__name__}: {exc}"[:300]
+            raise LLMError(record.error) from exc
+        finally:
+            record.latency_ms = int((time.perf_counter() - started) * 1000)
+            self.records.append(record)
+
     async def complete_json(self, purpose: str, system: str, user: str, **kw: Any) -> Any:
         system = system + "\n\nRespond with valid JSON only. No markdown fences, no commentary."
         text = await self.complete(purpose, system, user, **kw)
         return parse_json(text)
 
     def telemetry(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"models": {t.value: m for t, m in TIER_MODELS.items()}, "tiers": {}}
+        models = ({ModelTier.ULTRA.value: config.AWS_BEDROCK_MODEL_ULTRA, ModelTier.NANO.value: config.AWS_BEDROCK_MODEL_NANO}
+                  if self.provider == "bedrock" else {t.value: m for t, m in TIER_MODELS.items()})
+        out: dict[str, Any] = {"provider": self.provider, "models": models, "tiers": {}}
         for tier in ModelTier:
             recs = [r for r in self.records if r.tier == tier.value]
             ok = [r for r in recs if r.ok]

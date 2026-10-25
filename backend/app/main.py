@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, publishing
+from . import alexa, config, mcp_server, publishing
 from .agents import humanizer, memory, photos, pipeline, renderer, research, strategist
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
@@ -57,7 +57,9 @@ async def lifespan(app: FastAPI):
             await w
 
 
-app = FastAPI(title="MonoPlus", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="MonoPlus", version="0.4.0", lifespan=lifespan)
+app.include_router(mcp_server.router)  # /mcp authenticates itself (Bearer token), see mcp_server._authorized
+app.include_router(alexa.router)  # /api/alexa/* sits behind the access-key middleware below
 
 OPEN_PATHS = {"/api/health", "/api/access"}
 
@@ -74,7 +76,8 @@ async def require_access_key(request: Request, call_next):
     return await call_next(request)
 
 
-app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"],
+                   expose_headers=["Mcp-Session-Id"])
 app.mount("/media", StaticFiles(directory=config.MEDIA_DIR), name="media")
 
 _tasks: set[asyncio.Task] = set()
@@ -103,10 +106,13 @@ def health() -> dict:
     return {
         "ok": True,
         "mode": "live" if config.llm_enabled() else "demo",
-        "nebius": config.llm_enabled(),
+        "ai_provider": router.provider if config.llm_enabled() else None,
+        "nebius": bool(config.NEBIUS_API_KEY),
+        "bedrock": config.AWS_BEDROCK_ENABLED,
         "tavily": config.tavily_enabled(),
+        "free_search": config.FREE_SEARCH,
         "pexels": bool(config.PEXELS_API_KEY),
-        "models": {"ultra": config.MODEL_ULTRA, "nano": config.MODEL_NANO},
+        "mcp_endpoint": f"{config.PUBLIC_API_URL}/mcp",
     }
 
 
@@ -132,16 +138,10 @@ def telemetry() -> dict:
 
 @app.post("/api/campaigns", status_code=202)
 async def create_campaign(req: CreateCampaignRequest) -> dict:
-    platforms = list(dict.fromkeys(req.platforms)) or list(renderer.SIZES)
     bad = [r for r in req.research_ids if r not in store.research or store.research[r].status != "completed"]
     if bad:
         raise HTTPException(422, "Only completed research can be attached to a campaign.")
-    campaign = Campaign(start_date=req.start_date or date.today(), days=req.days, platforms=platforms,
-                        research_ids=list(dict.fromkeys(req.research_ids)))
-    job = pipeline.new_job(campaign.id)
-    store.campaigns[campaign.id] = campaign
-    store.jobs[job.id] = job
-    _spawn(pipeline.run_campaign(job, campaign, req.input, req.posts_per_day))
+    campaign, job = pipeline.start(req)
     return {"campaign_id": campaign.id, "job_id": job.id}
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import AsyncIterator
 
 from .. import config
@@ -78,18 +79,89 @@ def _sources_md(sources: list[ResearchSource]) -> str:
     return "\n\n## Sources\n" + "\n".join(f"{s.id}. [{s.title or s.url}]({s.url})" for s in sources)
 
 
-def _evidence_report(question: str, sources: list[dict]) -> str:
-    lines = [f"## Evidence collected for: {question}", "_AI synthesis is unavailable, so this is the raw evidence without analysis._", ""]
-    by_kind: dict[str, list[dict]] = {}
+_STOP = {"the", "and", "for", "with", "what", "are", "how", "our", "this", "that", "from", "about", "which", "who", "their",
+         "your", "into", "have", "has", "was", "were", "will", "they", "them", "its", "but", "not", "you", "all", "can"}
+_SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
+
+
+def _terms(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]{3,}", text.lower()) if w not in _STOP}
+
+
+def _key_findings(question: str, sources: list[dict], limit: int = 6) -> list[tuple[str, int]]:
+    """Extractive summary: the sentences that best answer the question, one per source, cited."""
+    q = _terms(question)
+    scored: list[tuple[float, str, int]] = []
     for s in sources:
-        by_kind.setdefault(s["kind"], []).append(s)
-    for kind, items in by_kind.items():
-        lines.append(f"### {kind.title()}")
-        lines += [f"- [{s['id']}] **{s['title']}**: {s['text'][:220]}" for s in items[:6]]
-        lines.append("")
+        title_terms = _terms(s["title"])
+        for sent in _SENT.split(s["text"]):
+            sent = re.sub(r"^[^:]{2,40}:\s+", "", sent.strip())  # drop "Publisher: " prefixes from news snippets
+            # A snippet that only repeats the headline isn't a finding.
+            if title_terms and _terms(sent) <= title_terms:
+                continue
+            words = len(sent.split())
+            if not 8 <= words <= 45 or sent.lower().startswith(("cookie", "subscribe", "sign up", "click")):
+                continue
+            overlap = len(q & _terms(sent))
+            if overlap:
+                has_number = 0.5 if re.search(r"\d", sent) else 0.0  # specifics (prices, %, dates) are worth more
+                scored.append((overlap + has_number + (0.3 if s["kind"] == "news" else 0), sent, s["id"]))
+    scored.sort(key=lambda x: -x[0])
+    out, used = [], set()
+    for _, sent, sid in scored:
+        if sid in used:
+            continue
+        used.add(sid)
+        out.append((sent, sid))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _evidence_report(question: str, sources: list[dict]) -> str:
+    """Report written without a language model: counts, extracted key findings and content ideas, all cited."""
     if not sources:
-        lines.append("No evidence found. Configure TAVILY_API_KEY for live web research.")
+        return f"## Executive Summary\nNo sources were found for “{question}”. Try wording it more broadly."
+    kinds: dict[str, int] = {}
+    for s in sources:
+        kinds[s["kind"]] = kinds.get(s["kind"], 0) + 1
+    dated = sorted((s for s in sources if s.get("published_at")), key=lambda s: s["published_at"], reverse=True)
+    mix = ", ".join(f"{n} {k}" for k, n in kinds.items())
+    lines = ["## Executive Summary", f"We found {len(sources)} sources on “{question}” ({mix})."]
+    if dated:
+        lines.append(f"The most recent is “{dated[0]['title']}” [{dated[0]['id']}] from {dated[0]['published_at'][:10]}.")
+    findings = _key_findings(question, sources)
+    lines += ["", "## Key Findings"]
+    lines += [f"- {sent} [{sid}]" for sent, sid in findings] or [f"- {s['title']} [{s['id']}]" for s in sources[:5]]
+    social = [s for s in sources if s["kind"] == "social"]
+    if social:
+        lines += ["", "## What People Are Saying"] + [f"- {s['title']} [{s['id']}]" for s in social[:4]]
+    lines += ["", "## Content Ideas"]
+    lines += [f"- React to the news: “{s['title']}” and what it means for your customers [{s['id']}]" for s in (dated or sources)[:3]]
+    if social:
+        lines.append(f"- Answer the question people keep asking in “{social[0]['title']}” [{social[0]['id']}]")
     return "\n".join(lines)
+
+
+def heuristic_insights(question: str, sources: list[dict]) -> ResearchInsights | None:
+    """Structured insights without a model, so research can still shape campaigns."""
+    if not sources:
+        return None
+    findings = _key_findings(question, sources, 3)
+    news = [s for s in sources if s["kind"] == "news"]
+    social = [s for s in sources if s["kind"] == "social"]
+    kinds = len({s["kind"] for s in sources})
+    pricing = next((sent for sent, _ in _key_findings("price prices pricing cost costs cheaper expensive " + question, sources, 6)
+                    if re.search(r"pric|cost|\$|€|£", sent, re.I)), "")
+    return ResearchInsights(
+        verified_trend=findings[0][0][:300] if findings else (f"Recent coverage: {news[0]['title']}" if news else ""),
+        pricing_gap=pricing[:300],
+        audience_insight=(social[0]["title"][:300] if social else ""),
+        content_angles=[f"React to: {s['title'][:120]}" for s in (news or sources)[:3]],
+        confidence=min(85, 25 + 6 * len(sources) + 8 * kinds),
+        confidence_rationale=f"Based on {len(sources)} sources across {kinds} source type(s), summarised without an AI model.",
+        opportunity=min(80, 30 + 10 * len(news[:4]) + 5 * len(social[:2])),
+    )
 
 
 async def run(topic: str, region: str = "", kit: BrandKit | None = None) -> AsyncIterator[dict]:
@@ -114,8 +186,8 @@ async def run(topic: str, region: str = "", kit: BrandKit | None = None) -> Asyn
             yield {"type": "thinking", "content": f"Planner unavailable ({exc}); using the default plan."}
     yield {"type": "plan", "rationale": rationale, "queries": plan}
 
-    if not config.tavily_enabled():
-        yield {"type": "error", "message": "TAVILY_API_KEY is not set, so live research is unavailable."}
+    if not config.search_enabled():
+        yield {"type": "error", "message": "Live search is turned off, so there's no fresh evidence to read."}
 
     for q in plan:
         yield {"type": "search", "kind": q.get("kind", "web"), "query": q["q"]}
@@ -130,7 +202,8 @@ async def run(topic: str, region: str = "", kit: BrandKit | None = None) -> Asyn
             seen.add(r["url"])
             results.append(r)
 
-    to_read = [r for r in results if r["kind"] in ("web", "news")][:3]
+    # Google News links are JavaScript redirects, so prefer pages we can actually read.
+    to_read = [r for r in results if r["kind"] in ("web", "news") and "news.google.com" not in r["url"]][:3]
     for r in to_read:
         yield {"type": "scrape", "url": r["url"]}
     pages = await trends.extract([r["url"] for r in to_read])
@@ -169,6 +242,10 @@ async def run(topic: str, region: str = "", kit: BrandKit | None = None) -> Asyn
             yield {"type": "insights", "insights": insights.model_dump()}
         except (LLMError, AttributeError, ValueError) as exc:
             log.info("insight extraction failed: %s", exc)
+    if insights is None and sources:
+        insights = heuristic_insights(question, sources)
+        if insights:
+            yield {"type": "insights", "insights": insights.model_dump()}
 
     if sources:
         memory.remember("research", topic, report[:8000])

@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, time as dtime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 
 from .. import config
 from ..schemas import Campaign, CampaignStatus, Job, JobStep, Slide, SocialPost
@@ -19,14 +19,33 @@ from . import formatter, humanizer, photos, renderer, research, strategist, tren
 log = logging.getLogger(__name__)
 
 STEPS = [
-    ("ingest", "Scraping site & extracting brand kit"),
-    ("trends", "Searching live trends with Tavily"),
-    ("strategy", "Planning strategy · Nemotron 3 Ultra"),
-    ("copy", "Writing posts · Nemotron 3 Ultra"),
-    ("humanize", "Humanizing copy"),
-    ("format", "Hashtags & SEO · Nemotron Nano"),
-    ("render", "Rendering branded visuals"),
+    ("ingest", "Reading your site & building the brand kit"),
+    ("trends", "Checking today's news & trends"),
+    ("strategy", "Planning the content strategy"),
+    ("copy", "Writing the posts"),
+    ("humanize", "Making the copy sound human"),
+    ("format", "Hashtags & SEO"),
+    ("render", "Designing the visuals"),
 ]
+
+_running: set[asyncio.Task] = set()
+
+
+def start(req) -> tuple[Campaign, Job]:
+    """Create a campaign from a CreateCampaignRequest and generate it in the background.
+
+    Shared by the web API and the MCP server so both behave identically.
+    """
+    platforms = list(dict.fromkeys(req.platforms)) or list(renderer.SIZES)
+    campaign = Campaign(start_date=req.start_date or date.today(), days=req.days,
+                        platforms=platforms, research_ids=list(dict.fromkeys(req.research_ids)))
+    job = new_job(campaign.id)
+    store.campaigns[campaign.id] = campaign
+    store.jobs[job.id] = job
+    task = asyncio.get_running_loop().create_task(run_campaign(job, campaign, req.input, req.posts_per_day))
+    _running.add(task)
+    task.add_done_callback(_running.discard)
+    return campaign, job
 
 # Best-practice posting hour (local) per platform.
 POST_HOUR = {"instagram": 11, "linkedin": 9, "x": 13, "facebook": 15}
@@ -92,16 +111,16 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
     campaign.mode = "live" if config.llm_enabled() else "demo"
     try:
         with StepTimer(job, campaign, "ingest") as st:
-            campaign.brand = await ingest(raw_input, search_fn=trends.search if config.tavily_enabled() else None)
+            campaign.brand = await ingest(raw_input, search_fn=trends.search if config.search_enabled() else None)
             st.step.detail = f"{campaign.brand.name} · {campaign.brand.industry or 'industry unknown'}"
         kit = campaign.brand
 
         with StepTimer(job, campaign, "trends") as st:
-            if config.tavily_enabled():
+            if config.search_enabled():
                 campaign.trends = await trends.gather_trends(kit)
-                st.step.detail = f"{len(campaign.trends)} live items"
+                st.step.detail = f"{len(campaign.trends)} live items" if campaign.trends else "no fresh news found"
             else:
-                st.step.status, st.step.detail = "skipped", "TAVILY_API_KEY not set"
+                st.step.status, st.step.detail = "skipped", "live search turned off"
 
         weeks = max(1, (campaign.days + 6) // 7)
         findings = research.campaign_context(campaign.research_ids)

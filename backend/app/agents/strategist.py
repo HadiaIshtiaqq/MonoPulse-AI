@@ -209,7 +209,8 @@ def clean_slides(raw) -> list[dict]:
 def fallback_slides(kit: BrandKit) -> list[dict]:
     """Demo-mode carousel pages built from the brand's own value props."""
     props = [p.rstrip(".") for p in (kit.value_props or [])][:3] or [kit.tagline or kit.name]
-    slides = [{"headline": p[:60], "body": f"{p}. Ask about it next time you're in, or see more at {kit.website_url or 'our page'}."}
+    site = (kit.website_url or "").split("//")[-1].strip("/") or "our page"
+    slides = [{"headline": p[:60], "body": f"Ask about {p if len(p.split()) <= 4 else 'this'} next time you're in, or see more at {site}."}
               for p in props]
     slides.append({"headline": "Save this for later", "body": f"Questions about any of these? Ask the {kit.name} team, we read every message."})
     return slides
@@ -218,31 +219,54 @@ def fallback_slides(kit: BrandKit) -> list[dict]:
 def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
     """Template copy for demo mode (no API key) or failed batches. Deliberately written in
     the generic 'raw LLM draft' style so the humanizer has something to fix in demos."""
-    vp = kit.value_props[slot.day % len(kit.value_props)] if kit.value_props else kit.tagline or kit.name
-    name, industry = kit.name, (kit.industry or "our industry").lower()
-    trend_line = f" With everyone talking about {slot.trend.title.rstrip('.')}, it's the perfect time to rethink your approach." if slot.trend else ""
-    templates = {
-        "Behind the Scenes": (
-            "Meet the team behind the magic",
-            f"In today's fast-paced world, it is important to know who you are working with. At {name}, we take pride in every detail — {vp.lower().rstrip('.')}.{trend_line} Furthermore, we believe great work starts with great people.",
-        ),
-        "Customer Wins": (
-            "Real results, real customers",
-            f"Our customers do not just get a service — they get a partner. {vp.rstrip('.')}. That is why people keep coming back to {name}!{trend_line} Ready to elevate your experience?",
-        ),
-        "Quick Tips": (
-            f"One {industry} tip you can use today",
-            f"Looking to unlock the full potential of {industry}? Here is a quick tip from the {name} team: start small, stay consistent, and ask questions early.{trend_line} Small changes add up fast!",
-        ),
-        "Offers & News": (
-            f"New at {name}"[:40],
-            f"Exciting news! {vp.rstrip('.')}. We are thrilled to offer a seamless experience from start to finish.{trend_line} Do not miss out!",
-        ),
+    props = [p.strip().rstrip(".") for p in kit.value_props if p.strip()] or [kit.tagline or kit.name]
+    vp = props[slot.day % len(props)]
+    # Short value props scraped from menus/nav ("Kale Caesar") are products; longer ones are claims.
+    is_product = len(vp.split()) <= 4
+    thing = f"our {vp}" if is_product and vp.lower() != kit.name.lower() else "what we do"
+    claim = vp if not is_product else (kit.tagline or f"{kit.name} keeps things simple")
+    name, industry = kit.name, (kit.industry or "small business").lower()
+    where = f" in {kit.location.split(',')[0]}" if kit.location else ""
+    trend = f" Have you seen the news: “{slot.trend.title.rstrip('.')}”? Here's our take." if slot.trend else ""
+    variants = {
+        "Behind the Scenes": [
+            ("Meet the team behind the magic",
+             f"In today's fast-paced world, it is important to know who you are working with. Every day at {name}{where} starts early, and {thing} gets the same care whether it's the first order or the fiftieth.{trend}"),
+            ("How we actually do it",
+             f"People ask how we keep {thing} consistent. Honestly? Boring routines, checked twice. {claim}.{trend}"),
+            (f"A morning at {name}"[:40],
+             f"Before the doors open at {name}, there's a checklist nobody sees. It's why {thing} turns out the way it does.{trend}"),
+        ],
+        "Customer Wins": [
+            ("Real results, real customers",
+             f"Our customers do not just get a service, they get people who remember their name. {claim}. That's why so many come back to {name}.{trend}"),
+            ("What regulars keep telling us",
+             f"The nicest thing we heard this week? “I keep coming back for {thing}.” We'll take it.{trend}"),
+            ("Why people choose us",
+             f"No gimmicks, just {thing} done properly. {claim}.{trend}"),
+        ],
+        "Quick Tips": [
+            (f"One {industry} tip for this week"[:60],
+             f"Quick tip from the {name} team: start small, stay consistent, and ask questions early. It works in {industry} and pretty much everywhere else.{trend}"),
+            ("Save this for later",
+             f"Getting the most out of {thing}: ask what's freshest, try one new thing a month, and tell us what you think. We read every message.{trend}"),
+            ("The mistake we see most",
+             f"The most common {industry} mistake? Trying to do everything at once. Pick one thing and do it well. That's how we built {name}.{trend}"),
+        ],
+        "Offers & News": [
+            (f"New at {name}"[:40],
+             f"Exciting news! We've been working on {thing} and it's finally ready. Come and see what's new at {name}{where}.{trend}"),
+            ("This week only",
+             f"Something new this week at {name}: {thing}, done our way. Ask us about it next time you're in.{trend}"),
+            ("You asked, we listened",
+             f"You asked for more of {thing}, so that's exactly what we did. Thank you for the ideas, keep them coming.{trend}"),
+        ],
     }
-    headline, caption = templates.get(slot.pillar, templates["Customer Wins"])
+    options = variants.get(slot.pillar, variants["Customer Wins"])
+    headline, caption = options[slot.day % len(options)]
     if slot.format == "carousel":
-        headline = f"{min(4, len(kit.value_props) or 1) + 1} things to know about {name}"[:60]
+        headline = f"{min(4, len(props)) + 1} things to know about {name}"[:60]
         caption = f"Swipe through for a few things we wish more people knew about {industry}. {caption}"
     if slot.platform is Platform.X:
-        caption = caption.split(". ")[0] + "."
+        caption = caption.split(". ")[0].rstrip(".") + "."
     return {"headline": headline, "caption": caption, "cta": "Visit us today" if kit.location else "Learn more at the link in bio"}

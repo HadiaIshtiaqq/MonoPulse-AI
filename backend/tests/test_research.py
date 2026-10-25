@@ -28,11 +28,56 @@ def _events(topic, **kw):
     return asyncio.run(collect())
 
 
-def test_offline_research_is_honest():
-    types = [e["type"] for e in _events("bakery pricing trends")]
+def test_research_with_search_off_is_honest():
+    evs = _events("bakery pricing trends")
+    types = [e["type"] for e in evs]
     assert types[0] == "plan" and "error" in types and types[-1] == "done"
-    report = next(e for e in _events("bakery pricing trends") if e["type"] == "report")["content"]
-    assert "TAVILY_API_KEY" in report  # says why there's no data instead of inventing any
+    report = next(e for e in evs if e["type"] == "report")["content"]
+    assert "No sources" in report  # says there's no data instead of inventing any
+
+
+def test_keyless_research_builds_cited_summary_and_insights(monkeypatch):
+    """No Tavily, no Nemotron: free search results still become a real report and insights."""
+    monkeypatch.setattr(config, "FREE_SEARCH", True)
+
+    async def fake_news(query, days=None, max_results=6):
+        return [{"title": "Sourdough prices climb as flour costs rise", "url": "https://news.google.com/a1", "snippet": "Bakers raise loaf prices.",
+                 "published_date": "2026-10-20"}]
+
+    async def fake_ddg(query, max_results=6, include_domains=None):
+        if include_domains:
+            return [{"title": "Is $8 too much for sourdough? : r/Breadit", "url": "https://reddit.com/r/Breadit/1", "snippet": "Locals debate prices",
+                     "published_date": None}]
+        return [{"title": "Bakery pricing guide 2026", "url": "https://example.com/guide", "snippet": "How bakeries price bread", "published_date": None}]
+
+    async def fake_fetch(urls):
+        return {"https://example.com/guide": "Most independent bakeries raised sourdough prices by about 12 percent this year as flour costs rose. "
+                                              "Customers still pay more for fresh bread baked on site."}
+
+    from app.agents import freesearch
+    monkeypatch.setattr(freesearch, "google_news", fake_news)
+    monkeypatch.setattr(freesearch, "duckduckgo", fake_ddg)
+    monkeypatch.setattr(freesearch, "fetch_text", fake_fetch)
+    evs = _events("sourdough bakery pricing")
+    report = next(e for e in evs if e["type"] == "report")["content"]
+    assert "## Key Findings" in report and "12 percent" in report and "[" in report  # extracted and cited
+    assert "## Content Ideas" in report and "## Sources" in report
+    insights = next(e for e in evs if e["type"] == "insights")["insights"]
+    assert insights["content_angles"] and insights["confidence"] > 0 and "12 percent" in insights["pricing_gap"]
+
+
+def test_free_search_parsers():
+    from app.agents import freesearch
+    rss = b"""<rss><channel><item><title>Bakery sales jump - Baking Business</title><link>https://news.google.com/x</link>
+      <pubDate>Wed, 14 Oct 2026 04:00:00 GMT</pubDate><description>&lt;a&gt;Bakery sales jump&lt;/a&gt;</description>
+      <source url="https://bakingbusiness.com">Baking Business</source></item></channel></rss>"""
+    items = freesearch.parse_google_news(rss)
+    assert items[0]["title"] == "Bakery sales jump" and items[0]["published_date"] == "2026-10-14"
+    html = """<div class="result result--ad"><a class="result__a" href="https://ads.example">Ad</a></div>
+      <div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.sweetgreen.com%2F&rut=x">sweetgreen</a>
+      <a class="result__snippet">Healthy food</a></div>"""
+    results = freesearch.parse_duckduckgo(html)
+    assert results == [{"title": "sweetgreen", "url": "https://www.sweetgreen.com/", "snippet": "Healthy food", "published_date": None}]
 
 
 def test_live_research_cites_sources_and_extracts_insights(monkeypatch):

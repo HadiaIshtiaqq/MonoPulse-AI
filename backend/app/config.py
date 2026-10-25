@@ -16,6 +16,16 @@ def _env(name: str, default: str = "") -> str:
 NEBIUS_API_KEY = _env("NEBIUS_API_KEY")
 NEBIUS_BASE_URL = _env("NEBIUS_BASE_URL", "https://api.tokenfactory.nebius.com/v1/")
 
+# Amazon Bedrock (AWS Builder). When enabled, every model call uses the Bedrock Converse API.
+# Credentials come from the standard AWS chain (AWS_ACCESS_KEY_ID/SECRET, profile or role).
+AWS_REGION = _env("AWS_REGION", "us-east-1")
+AWS_BEDROCK_ENABLED = _env("AWS_BEDROCK_ENABLED", "0") == "1"
+# Amazon Nova models are available on-demand in us-east-1; other models may need an inference profile id.
+AWS_BEDROCK_MODEL_ULTRA = _env("AWS_BEDROCK_MODEL_ULTRA", "amazon.nova-pro-v1:0")
+AWS_BEDROCK_MODEL_NANO = _env("AWS_BEDROCK_MODEL_NANO", "amazon.nova-lite-v1:0")
+# Where the web app lives, for links in MCP / Alexa+ responses.
+PUBLIC_APP_URL = _env("PUBLIC_APP_URL", "http://localhost:3000").rstrip("/")
+
 # Heavy tier: strategy, copywriting, humanizer rephrasing.
 MODEL_ULTRA = _env("MODEL_ULTRA", "nvidia/NVIDIA-Nemotron-3-Ultra")
 # Light tier: JSON formatting, hashtag clustering, SEO tagging, classification.
@@ -63,8 +73,16 @@ MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def llm_enabled() -> bool:
-    return bool(NEBIUS_API_KEY)
+    return bool(NEBIUS_API_KEY) or AWS_BEDROCK_ENABLED
 
 
 def tavily_enabled() -> bool:
     return bool(TAVILY_API_KEY)
+
+
+# Free Google News / DuckDuckGo search when Tavily isn't configured. Tests turn this off.
+FREE_SEARCH = _env("FREE_SEARCH", "1") == "1"
+
+
+def search_enabled() -> bool:
+    return tavily_enabled() or FREE_SEARCH

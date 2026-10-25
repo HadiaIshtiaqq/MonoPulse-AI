@@ -213,6 +213,14 @@ export interface StockPhoto {
   source: string;
 }
 
+export interface AlexaReply {
+  speech: string;
+  card: { type: string; [k: string]: any };
+  tool: string | null;
+  routed_by: "model" | "rules";
+  rpc: { request: unknown; response: unknown } | null;
+}
+
 export interface PublishingStatus {
   connected: Record<Platform, boolean>;
   webhook: boolean;
@@ -303,6 +311,7 @@ export const api = {
   publishing: () => req<PublishingStatus>("/api/publishing"),
   setAutoPublish: (enabled: boolean) => req<PublishingStatus>("/api/publishing/auto", json("PUT", { enabled })),
 
+  alexa: (utterance: string, session_id: string) => req<AlexaReply>("/api/alexa/simulate", json("POST", { utterance, session_id })),
   humanize: (text: string, mode: HumanizeMode = "standard") => req<HumanizeResult>("/api/humanize", json("POST", { text, mode })),
 
   researchTasks: () => req<ResearchTask[]>("/api/research/tasks"),
