@@ -136,6 +136,33 @@ export function BrandKitPanel({ campaign, onSaved }: { campaign: Campaign; onSav
           </div>
         </div>
       </div>
+
+      {(brand.products?.length ?? 0) > 0 && (
+        <div className="card p-5 lg:col-span-3">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h3 className="font-bold">Products found on your site</h3>
+            <span className="text-xs text-slate-500">{brand.products.length} products · your posts feature these, with their real photos and prices</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+            {brand.products.map((p, i) => (
+              <a key={`${p.url}-${i}`} href={p.url || undefined} target="_blank" rel="noreferrer"
+                className="group overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:shadow-lift">
+                {p.image_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={p.image_url} alt={p.name} loading="lazy" className="aspect-[3/4] w-full bg-slate-100 object-cover" />
+                ) : (
+                  <div className="grid aspect-[3/4] place-items-center bg-slate-100 text-xs text-slate-400">No photo</div>
+                )}
+                <div className="space-y-0.5 p-2">
+                  <p className="line-clamp-2 text-xs font-semibold text-ink">{p.name}</p>
+                  {p.category && <p className="truncate text-[11px] text-slate-500">{p.category}</p>}
+                  {p.price && <p className="text-xs font-semibold text-brand-700">{p.price}</p>}
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

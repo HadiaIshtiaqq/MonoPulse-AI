@@ -41,6 +41,14 @@ class PostStatus(str, Enum):
     PUBLISHED = "PUBLISHED"
 
 
+class Product(BaseModel):
+    name: str
+    price: str = ""  # exactly as displayed on the site, currency included
+    url: str = ""
+    image_url: str = ""
+    category: str = ""
+
+
 class BrandKit(BaseModel):
     id: str = Field(default_factory=new_id)
     source_input: str
@@ -60,6 +68,8 @@ class BrandKit(BaseModel):
     logo_url: str | None = None
     logo_path: str | None = None
     brand_voice_prompt: str = ""
+    products: list[Product] = []
+    images: list[str] = []  # photos from the brand's own site (URLs)
 
 
 class TrendItem(BaseModel):
@@ -83,18 +93,19 @@ class CampaignStrategy(BaseModel):
     weekly_themes: list[str] = []
 
 
-class Slide(BaseModel):
-    headline: str = ""
-    body: str = ""
-
-
 class Background(BaseModel):
-    source: str  # stock | upload
+    source: str  # stock | upload | website
     path: str  # local file used by the renderer
     thumb_url: str = ""
     credit: str = ""
     credit_url: str = ""
     license: str = ""
+
+
+class Slide(BaseModel):
+    headline: str = ""
+    body: str = ""
+    background: Background | None = None
 
 
 class SocialPost(BaseModel):
@@ -111,6 +122,7 @@ class SocialPost(BaseModel):
     seo_keywords: list[str] = []
     trend_title: str | None = None
     trend_url: str | None = None
+    product: Product | None = None
     layout: str = "bold"  # bold | split | quote | photo
     format: str = "single"  # single | carousel
     slides: list[Slide] = []  # carousel pages after the cover
@@ -239,9 +251,10 @@ class UpdatePostRequest(BaseModel):
 
 
 class SetBackgroundRequest(BaseModel):
-    source: str = Field(pattern="^(stock|upload)$")
+    source: str = Field(pattern="^(stock|upload|website)$")
     photo_id: str | None = None  # stock: id from /api/photos/search
     upload_id: str | None = None  # upload: id from /api/uploads
+    image_url: str | None = None  # website: one of the brand kit's own product or site photos
 
 
 class BrandUpdateRequest(BaseModel):

@@ -23,6 +23,16 @@ export interface BrandKit {
   website_url: string | null;
   brand_voice_prompt: string;
   source_type: string;
+  products: Product[];
+  images: string[];
+}
+
+export interface Product {
+  name: string;
+  price: string;
+  url: string;
+  image_url: string;
+  category: string;
 }
 
 export interface TrendItem {
@@ -36,10 +46,11 @@ export interface TrendItem {
 export interface Slide {
   headline: string;
   body: string;
+  background?: Background | null;
 }
 
 export interface Background {
-  source: "stock" | "upload";
+  source: "stock" | "upload" | "website";
   path: string;
   thumb_url: string;
   credit: string;
@@ -61,6 +72,7 @@ export interface SocialPost {
   seo_keywords: string[];
   trend_title: string | null;
   trend_url: string | null;
+  product: Product | null;
   layout: Layout;
   format: "single" | "carousel";
   slides: Slide[];
@@ -282,7 +294,7 @@ export const api = {
   upcoming: (days = 7) => req<{ campaign_id: string; brand: string; post: SocialPost }[]>(`/api/upcoming?days=${days}`),
 
   updatePost: (id: string, body: PostUpdate) => req<SocialPost>(`/api/posts/${id}`, json("PATCH", body)),
-  setBackground: (id: string, body: { source: "stock"; photo_id: string } | { source: "upload"; upload_id: string }) =>
+  setBackground: (id: string, body: { source: "stock"; photo_id: string } | { source: "upload"; upload_id: string } | { source: "website"; image_url: string }) =>
     req<SocialPost>(`/api/posts/${id}/background`, json("POST", body)),
   humanizePost: (id: string, mode: HumanizeMode = "standard") =>
     req<HumanizeResult & { post: SocialPost }>(`/api/posts/${id}/humanize`, json("POST", { mode })),

@@ -18,11 +18,15 @@ import httpx
 from PIL import Image, ImageOps
 
 from .. import config
+from ..netguard import safe_client
 from ..schemas import Background
 
 log = logging.getLogger(__name__)
 
 UA = {"User-Agent": "MonoPlus/0.3 (social media marketing app)"}
+# Store CDNs often refuse non-browser agents for images.
+WEB_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+MIN_WEB_SIDE = 360
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 MAX_SIDE = 2400
 _cache: dict[str, tuple[float, list["Photo"]]] = {}
@@ -124,6 +128,20 @@ async def to_background(photo_id: str) -> Background:
     name = _save_image(resp.content[:MAX_UPLOAD_BYTES], "bg")
     return Background(source="stock", path=str(config.MEDIA_DIR / name), thumb_url=f"/media/{name}", credit=photo.credit,
                       credit_url=photo.credit_url, license=photo.license)
+
+
+async def website_background(url: str, credit: str, credit_url: str = "") -> Background:
+    """Download one of the brand's own photos (a product shot, a hero image) for a post."""
+    async with safe_client(headers={"User-Agent": WEB_UA}, follow_redirects=True, timeout=15) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    data = resp.content[:MAX_UPLOAD_BYTES]
+    img = Image.open(io.BytesIO(data))
+    if min(img.size) < MIN_WEB_SIDE:
+        raise ValueError("image too small for a post")
+    name = _save_image(data, "web")
+    return Background(source="website", path=str(config.MEDIA_DIR / name), thumb_url=f"/media/{name}", credit=credit,
+                      credit_url=credit_url or url, license="From the brand's own website")
 
 
 def save_upload(data: bytes) -> dict:

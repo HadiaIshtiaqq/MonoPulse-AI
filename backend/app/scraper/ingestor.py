@@ -21,7 +21,8 @@ from PIL import Image
 from .. import config
 from ..llm import LLMError, router
 from ..netguard import UnsafeURL, safe_client
-from ..schemas import BrandKit
+from ..schemas import BrandKit, Product
+from . import products as product_finder
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +37,8 @@ HSL_RE = re.compile(r"hsla?\(\s*([\d.]+)(?:deg)?[\s,]+([\d.]+)%[\s,]+([\d.]+)%")
 PRESET_RE = re.compile(r"--wp--preset--[\w-]+\s*:[^;}]*[;}]|\.has-[\w-]+-(?:background-)?color[^{]*\{[^}]*\}")
 
 INDUSTRY_KEYWORDS = {
+    "Fashion & Apparel": ["dress", "kurta", "dupatta", "shirt", "jeans", "apparel", "clothing", "fashion", "unstitched",
+                          "ready to wear", "co-ord", "embroidered", "trousers", "abaya", "shalwar", "sneakers", "jacket"],
     "Food & Beverage": ["restaurant", "cafe", "coffee", "bakery", "menu", "pizza", "kitchen", "dining", "brunch"],
     "Fitness & Wellness": ["gym", "fitness", "yoga", "pilates", "wellness", "workout", "trainer", "spa"],
     "Beauty": ["salon", "beauty", "hair", "nails", "skincare", "makeup", "barber", "cosmetic"],
@@ -62,9 +65,13 @@ class ScrapedSite:
     logo_candidates: list[str] = field(default_factory=list)
     stylesheets: list[str] = field(default_factory=list)
     address_hint: str = ""
+    products: list[Product] = field(default_factory=list)
+    images: list[str] = field(default_factory=list)
 
     def text_blob(self, limit: int = 4000) -> str:
-        parts = [self.title, self.site_name, self.description, *self.headings, *self.paragraphs]
+        catalogue = [f"Product: {p.name}" + (f" ({p.category})" if p.category else "") + (f" {p.price}" if p.price else "")
+                     for p in self.products[:12]]
+        parts = [self.title, self.site_name, self.description, *catalogue, *self.headings, *self.paragraphs]
         return "\n".join(p for p in parts if p)[:limit]
 
 
@@ -199,6 +206,8 @@ def parse_html(html: str, base_url: str) -> ScrapedSite:
     if og_image:
         logos.append(urljoin(base_url, og_image))
     site.logo_candidates = list(dict.fromkeys(logos))
+    site.products = product_finder.extract_products(soup, base_url)
+    site.images = product_finder.extract_site_images(soup, base_url)
     return site
 
 
@@ -229,11 +238,35 @@ def dominant_colors_from_image(data: bytes, k: int = 5) -> list[str]:
     quant = img.quantize(colors=8)
     palette = quant.getpalette() or []
     counts = sorted(quant.getcolors() or [], reverse=True)
+    total = img.width * img.height
     out = []
-    for _, idx in counts:
+    for count, idx in counts:
+        # Tiny clusters are anti-aliasing blends along edges, not colours the brand chose.
+        if count / total < 0.02:
+            continue
         r, g, b = palette[idx * 3 : idx * 3 + 3]
         out.append(f"#{r:02X}{g:02X}{b:02X}")
     return [c for c in out if is_brand_like(c)][:k]
+
+
+def ink_color_from_image(data: bytes) -> str | None:
+    """The logo's dark 'ink' colour (e.g. a charcoal wordmark), if it has a meaningful one."""
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGBA")
+    except Exception:  # noqa: BLE001
+        return None
+    img.thumbnail((96, 96))
+    bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+    img = Image.alpha_composite(bg, img).convert("RGB")
+    quant = img.quantize(colors=8)
+    palette = quant.getpalette() or []
+    total = img.width * img.height
+    for count, idx in sorted(quant.getcolors() or [], reverse=True):
+        r, g, b = palette[idx * 3 : idx * 3 + 3]
+        color = f"#{r:02X}{g:02X}{b:02X}"
+        if count / total >= 0.04 and _hls(color)[1] < 0.3:
+            return color
+    return None
 
 
 def guess_industry(text: str) -> str:
@@ -289,6 +322,14 @@ async def fetch_site(url: str, client: httpx.AsyncClient) -> ScrapedSite:
 
     sheets = await asyncio.gather(*(css(u) for u in rank_stylesheets(site.stylesheets)[:5]))
     site.colors += extract_colors("\n".join(sheets))
+    if len(site.products) < 3 and ("cdn.shopify.com" in resp.text or "Shopify.shop" in resp.text):
+        origin = f"{urlparse(site.url).scheme}://{urlparse(site.url).netloc}"
+        try:
+            r = await client.get(f"{origin}/products.json?limit=24", timeout=8)
+            if r.status_code == 200:
+                site.products = product_finder.shopify_products(r.json(), origin, product_finder.shopify_currency(resp.text)) or site.products
+        except (httpx.HTTPError, UnsafeURL, ValueError):
+            pass
     return site
 
 
@@ -349,7 +390,8 @@ def heuristic_kit(site: ScrapedSite, kit: BrandKit) -> BrandKit:
     kit.tagline = kit.tagline or (site.headings[0] if site.headings else site.description[:100])
     kit.description = site.description or (site.paragraphs[0] if site.paragraphs else "")
     if not kit.value_props:
-        kit.value_props = [h for h in site.headings[1:6]] or [p[:120] for p in site.paragraphs[:3]]
+        lines = list(dict.fromkeys(p.category or p.name for p in site.products))[:5]
+        kit.value_props = lines or [h for h in site.headings[1:6]] or [p[:120] for p in site.paragraphs[:3]]
     if not kit.keywords:
         words = re.findall(r"[a-zA-Z]{5,}", blob.lower())
         stop = {"about", "their", "there", "which", "would", "these", "other", "every", "where", "while", "cookies"}
@@ -360,15 +402,48 @@ def heuristic_kit(site: ScrapedSite, kit: BrandKit) -> BrandKit:
     return kit
 
 
-def apply_palette(kit: BrandKit, palette: list[str]) -> BrandKit:
+def _tint(hex_color: str, lightness: float) -> str:
+    h, _, s = _hls(hex_color)
+    r, g, b = colorsys.hls_to_rgb(h, lightness, s)
+    return f"#{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}"
+
+
+def choose_palette(theme_color: str | None, logo_colors: list[str], css_colors: list[str]) -> list[str]:
+    """The logo is the most reliable statement of a brand's colours; page CSS often belongs to
+    the store platform or theme (a Salesforce blue, a WordPress preset). CSS is used only when
+    neither an explicit theme-color nor the logo gives a brand colour."""
+    preferred = ([theme_color] if theme_color and is_brand_like(theme_color) else []) + logo_colors
+    candidates = preferred if preferred else rank_palette(css_colors)
+    palette: list[str] = []
+    for c in candidates:
+        if not all(_distance(c, p) > 60 for p in palette):
+            continue
+        # In a logo, a darker or paler version of a chosen colour is shading or edge blending
+        # (e.g. where a dark wordmark overlaps a coloured shape), not a second brand colour.
+        if preferred and any(_hue_gap(c, p) < 0.04 for p in palette):
+            continue
+        palette.append(c)
+    return palette[:5]
+
+
+def _hue_gap(a: str, b: str) -> float:
+    d = abs(_hls(a)[0] - _hls(b)[0])
+    return min(d, 1 - d)
+
+
+def apply_palette(kit: BrandKit, palette: list[str], ink: str | None = None) -> BrandKit:
     if palette:
         kit.palette = palette
         kit.primary_color = palette[0]
-        kit.accent_color = palette[1] if len(palette) > 1 else kit.accent_color
-    # Secondary is used for text panels; derive a deep shade of the primary.
-    h, l, s = _hls(kit.primary_color)
-    r, g, b = colorsys.hls_to_rgb(h, 0.14, min(0.6, s))
-    kit.secondary_color = f"#{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}"
+        # A one-colour brand gets a light tint of its own colour as the accent, not a stranger.
+        kit.accent_color = palette[1] if len(palette) > 1 else _tint(palette[0], 0.8)
+    # Secondary is used for text panels: the logo's own dark ink if it has one, else a deep shade of the primary.
+    if ink:
+        kit.secondary_color = ink
+    else:
+        h, l, s = _hls(kit.primary_color)
+        r, g, b = colorsys.hls_to_rgb(h, 0.14, min(0.6, s))
+        kit.secondary_color = f"#{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}"
     return kit
 
 
@@ -413,9 +488,9 @@ async def _finish_site_kit(kit: BrandKit, site: ScrapedSite, client: httpx.Async
     enrich_task = enrich(kit, site.text_blob() + "\n" + extra_text)
     (logo_url, logo_path, logo_bytes), kit = await asyncio.gather(logo_task, enrich_task)
     kit.logo_url, kit.logo_path = logo_url, logo_path
+    kit.products, kit.images = site.products, site.images
 
-    palette = rank_palette(site.colors)
-    if len(palette) < 2 and logo_bytes:
-        palette += [c for c in dominant_colors_from_image(logo_bytes) if all(_distance(c, p) > 60 for p in palette)]
-    kit = apply_palette(kit, palette[:5])
+    logo_colors = dominant_colors_from_image(logo_bytes) if logo_bytes else []
+    palette = choose_palette(site.theme_color, logo_colors, site.colors)
+    kit = apply_palette(kit, palette, ink=ink_color_from_image(logo_bytes) if logo_bytes and logo_colors else None)
     return heuristic_kit(site, kit)

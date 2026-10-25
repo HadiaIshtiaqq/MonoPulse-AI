@@ -352,6 +352,13 @@ async def set_background(post_id: str, req: SetBackgroundRequest) -> SocialPost:
             if not req.photo_id:
                 raise HTTPException(422, "photo_id is required")
             post.background = await photos.to_background(req.photo_id)
+        elif req.source == "website":
+            kit = campaign.brand
+            product = next((p for p in (kit.products if kit else []) if p.image_url and p.image_url == req.image_url), None)
+            if not kit or not req.image_url or (not product and req.image_url not in kit.images):
+                raise HTTPException(422, "Pick one of the photos found on your website.")
+            post.background = await photos.website_background(req.image_url, credit=f"Photo from {kit.name}",
+                                                              credit_url=product.url if product else "")
         else:
             if not req.upload_id:
                 raise HTTPException(422, "upload_id is required")

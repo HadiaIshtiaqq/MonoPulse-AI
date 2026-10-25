@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, CalendarClock, CalendarDays, CheckCheck, Download, Grid3x3, Layers, Lightbulb, List, Loader2, Palette, Send } from "lucide-react";
-import { api, fmtDay, fmtTime, type Campaign, type Job, type PublishingStatus, type SocialPost } from "@/lib/api";
+import { api, fmtDay, fmtTime, media, type Campaign, type Job, type PublishingStatus, type SocialPost } from "@/lib/api";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { CalendarView } from "@/components/CalendarView";
 import { QueueList } from "@/components/QueueList";
@@ -108,7 +108,13 @@ function CampaignPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-4">
         <Link href="/campaigns" className="rounded-xl p-2 hover:bg-slate-200/70" aria-label="Back to campaigns"><ArrowLeft size={18} /></Link>
-        <span className="h-12 w-12 shrink-0 rounded-2xl shadow-lift" style={{ background: `linear-gradient(135deg, ${b.primary_color}, ${b.accent_color})` }} />
+        {b.logo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={b.logo_url.startsWith("/") ? media(b.logo_url) : b.logo_url} alt={`${b.name} logo`}
+            className="h-14 w-14 shrink-0 rounded-2xl border border-slate-200 bg-white object-contain p-1.5 shadow-lift" />
+        ) : (
+          <span className="h-14 w-14 shrink-0 rounded-2xl shadow-lift" style={{ background: `linear-gradient(135deg, ${b.primary_color}, ${b.accent_color})` }} />
+        )}
         <div className="min-w-0">
           <h1 className="truncate text-2xl font-bold">{b.name}</h1>
           <p className="flex items-center gap-2 truncate text-sm text-slate-500">

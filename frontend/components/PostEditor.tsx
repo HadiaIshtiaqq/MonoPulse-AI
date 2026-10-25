@@ -214,6 +214,11 @@ export function PostEditor({
                     <PhotoPicker
                       defaultQuery={[brand?.industry, post.pillar !== "Offers & News" ? "" : "product"].filter(Boolean).join(" ") || headline}
                       busy={busy !== null}
+                      sitePhotos={[
+                        ...(brand?.products ?? []).filter((p) => p.image_url).map((p) => ({ url: p.image_url, label: [p.name, p.price].filter(Boolean).join(" · ") })),
+                        ...(brand?.images ?? []).filter((u) => !(brand?.products ?? []).some((p) => p.image_url === u)).map((u) => ({ url: u, label: "Photo from your site" })),
+                      ]}
+                      onPickSite={(url) => run("bg", () => api.setBackground(post.id, { source: "website", image_url: url }), "Photo applied")}
                       onPickStock={(p) => run("bg", () => api.setBackground(post.id, { source: "stock", photo_id: p.id }), "Photo applied")}
                       onPickUpload={(id) => run("bg", () => api.setBackground(post.id, { source: "upload", upload_id: id }), "Your photo applied")}
                     />

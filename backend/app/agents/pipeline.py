@@ -81,6 +81,54 @@ async def attach_stock_photos(kit, posts: list[SocialPost]) -> int:
     return attached
 
 
+MAX_SITE_PHOTOS = 40
+SITE_PHOTO_REUSE = 2  # a non-product site photo appears on at most this many posts
+
+
+async def attach_site_photos(kit, posts: list[SocialPost], slide_products: dict[str, list]) -> int:
+    """Put the brand's own photos on its posts: each product post shows that product's photo,
+    carousel pages show theirs, and other posts use the site's own images."""
+    wanted: list[tuple[object, str, str]] = []  # (post or slide, image url, credit url)
+    spare = [u for u in kit.images if u not in {p.image_url for p in kit.products}] or list(kit.images)
+    uses: dict[str, int] = {}
+    for post in posts:
+        url, credit_url = "", ""
+        if post.product and post.product.image_url:
+            url, credit_url = post.product.image_url, post.product.url
+        else:
+            url = next((u for u in spare if uses.get(u, 0) < SITE_PHOTO_REUSE), "")
+            uses[url] = uses.get(url, 0) + 1
+        if url:
+            wanted.append((post, url, credit_url))
+        for slide, product in zip(post.slides, slide_products.get(post.id, [])):
+            if product.image_url:
+                wanted.append((slide, product.image_url, product.url))
+    unique = list(dict.fromkeys(u for _, u, _ in wanted))[:MAX_SITE_PHOTOS]
+    if not unique:
+        return 0
+    sem = asyncio.Semaphore(6)
+
+    async def fetch(url: str):
+        async with sem:
+            try:
+                return await photos.website_background(url, credit=f"Photo from {kit.name}")
+            except Exception as exc:  # noqa: BLE001 - one broken image just means a graphic post instead
+                log.info("site photo %s skipped: %s", url, exc)
+                return None
+
+    got = dict(zip(unique, await asyncio.gather(*(fetch(u) for u in unique))))
+    attached = 0
+    for target, url, credit_url in wanted:
+        bg = got.get(url)
+        if bg is None:
+            continue
+        target.background = bg.model_copy(update={"credit_url": credit_url or url})
+        if isinstance(target, SocialPost):
+            target.layout = "photo"
+            attached += 1
+    return attached
+
+
 def new_job(campaign_id: str) -> Job:
     return Job(campaign_id=campaign_id, steps=[JobStep(key=k, label=l) for k, l in STEPS])
 
@@ -109,6 +157,7 @@ class StepTimer:
 async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_day: int) -> None:
     t_start = time.perf_counter()
     campaign.mode = "live" if config.llm_enabled() else "demo"
+    slide_products: dict[str, list] = {}  # carousel post id -> the products on its pages
     try:
         with StepTimer(job, campaign, "ingest") as st:
             campaign.brand = await ingest(raw_input, search_fn=trends.search if config.search_enabled() else None)
@@ -131,9 +180,11 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                 st.step.detail += f" · using {len(campaign.research_ids)} research report(s)"
 
         with StepTimer(job, campaign, "copy") as st:
-            slots = strategist.plan_slots(campaign.strategy, campaign.trends, campaign.platforms, campaign.days, posts_per_day)
+            slots = strategist.plan_slots(campaign.strategy, campaign.trends, campaign.platforms, campaign.days, posts_per_day,
+                                          products=kit.products)
             copies = await strategist.write_all(kit, campaign.strategy, slots, findings)
             posts = []
+            slide_products.clear()
             for i, (slot, copy) in enumerate(zip(slots, copies)):
                 day = campaign.start_date + timedelta(days=slot.day)
                 hour = POST_HOUR.get(slot.platform.value, 12) + (i % posts_per_day) * 3
@@ -148,12 +199,15 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                         cta=str(copy.get("cta", ""))[:120],
                         trend_title=slot.trend.title if slot.trend else None,
                         trend_url=slot.trend.url if slot.trend else None,
+                        product=slot.product,
                         layout=GRAPHIC_LAYOUTS[i % len(GRAPHIC_LAYOUTS)],
                         format=slot.format,
                         slides=[Slide(**s) for s in copy.get("slides", [])] if slot.format == "carousel" else [],
                         publish_at=datetime.combine(day, dtime(hour=min(hour, 21)), tzinfo=timezone.utc),
                     )
                 )
+                if slot.format == "carousel" and slot.slide_products:
+                    slide_products[posts[-1].id] = list(slot.slide_products)
             campaign.posts = posts
             carousels = sum(p.format == "carousel" for p in posts)
             st.step.detail = f"{len(posts)} drafts" + (f" · {carousels} carousels" if carousels else "")
@@ -176,10 +230,12 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
             await formatter.format_posts(kit, campaign.posts)
 
         with StepTimer(job, campaign, "render") as st:
-            with_photos = await attach_stock_photos(kit, campaign.posts)
+            own = await attach_site_photos(kit, campaign.posts, slide_products)
+            stock = 0 if own else await attach_stock_photos(kit, campaign.posts)
             await renderer.render_posts(kit, campaign.posts)
             pages = sum(len(p.image_urls) for p in campaign.posts)
-            st.step.detail = f"{pages} images" + (f" · {with_photos} with stock photos" if with_photos else "")
+            st.step.detail = f"{pages} images" + (f" · {own} with photos from your site" if own else "") + (
+                f" · {stock} with stock photos" if stock else "")
 
         campaign.status = CampaignStatus.DRAFT
         campaign.target_month = campaign.start_date.strftime("%Y-%m")

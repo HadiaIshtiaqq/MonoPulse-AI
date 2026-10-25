@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from .. import config
 from ..llm import LLMError, router
-from ..schemas import BrandKit, CampaignStrategy, ContentPillar, Platform, TrendItem
+from ..schemas import BrandKit, CampaignStrategy, ContentPillar, Platform, Product, TrendItem
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +35,12 @@ class Slot:
     theme: str
     trend: TrendItem | None
     format: str = "single"
+    product: Product | None = None  # the real product this post features
+    slide_products: tuple[Product, ...] = ()  # carousel pages, one product each
+
+
+def product_brief(p: Product) -> dict:
+    return {k: v for k, v in {"name": p.name, "price": p.price, "collection": p.category}.items() if v}
 
 
 def brand_brief(kit: BrandKit) -> str:
@@ -49,6 +55,7 @@ def brand_brief(kit: BrandKit) -> str:
             "keywords": kit.keywords,
             "voice": kit.brand_voice_prompt,
             "website": kit.website_url,
+            "products_on_site": [product_brief(p) for p in kit.products[:12]],
         },
         ensure_ascii=False,
     )
@@ -121,9 +128,26 @@ def fallback_strategy(kit: BrandKit, trends: list[TrendItem], weeks: int) -> Cam
 # --------------------------------------------------------------------------- slots
 
 
-def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: list[Platform], days: int, per_day: int) -> list[Slot]:
+def varied(products: list[Product]) -> list[Product]:
+    """Interleave products so the same item name (often a generic type like "3-Piece Set")
+    doesn't run several posts in a row."""
+    groups: dict[str, list[Product]] = {}
+    for p in products:
+        groups.setdefault(p.name.lower(), []).append(p)
+    out: list[Product] = []
+    while any(groups.values()):
+        for key in list(groups):
+            if groups[key]:
+                out.append(groups[key].pop(0))
+    return out
+
+
+def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: list[Platform], days: int, per_day: int,
+               products: list[Product] | None = None) -> list[Slot]:
     pillars = [p.name for p in strategy.pillars] or ["General"]
+    catalogue = varied([p for p in (products or []) if p.image_url] or list(products or []))
     slots: list[Slot] = []
+    per_platform: dict[Platform, int] = {}
     i = 0
     for day in range(days):
         for k in range(per_day):
@@ -131,9 +155,17 @@ def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: l
             theme = strategy.weekly_themes[min(day // 7, len(strategy.weekly_themes) - 1)] if strategy.weekly_themes else ""
             # Roughly every third post rides a live trend.
             trend = trends[(i // 3) % len(trends)] if trends and i % 3 == 0 else None
-            # Carousels get the most saves and shares on Instagram and LinkedIn; roughly one in four posts there.
-            fmt = "carousel" if platform in CAROUSEL_PLATFORMS and i % 4 == 2 else "single"
-            slots.append(Slot(day=day, platform=platform, pillar=pillars[i % len(pillars)], theme=theme, trend=trend, format=fmt))
+            # Carousels get the most saves and shares on Instagram and LinkedIn; every third post there.
+            nth = per_platform.get(platform, 0)
+            per_platform[platform] = nth + 1
+            fmt = "carousel" if platform in CAROUSEL_PLATFORMS and nth % 3 == 1 else "single"
+            slot = Slot(day=day, platform=platform, pillar=pillars[i % len(pillars)], theme=theme, trend=trend, format=fmt)
+            if catalogue:
+                # Every post features a real product; carousels walk through a few more of them.
+                slot.product = catalogue[i % len(catalogue)]
+                if fmt == "carousel" and len(catalogue) > 1:
+                    slot.slide_products = tuple(catalogue[(i + j) % len(catalogue)] for j in range(1, min(4, len(catalogue))))
+            slots.append(slot)
             i += 1
     return slots
 
@@ -146,6 +178,9 @@ Each post must fit its platform rules. When a slot includes a trend, connect it 
 (don't force it, and never misstate the news).
 Slots with "format": "carousel" are swipeable multi-image posts: also return "slides", 3 to 5 pages that each teach
 one concrete step, tip or fact (headline <= 8 words, body <= 35 words). The caption then introduces the carousel.
+When a slot has a "product", the post features that exact product, shown in the photo: use its real name, and its price
+exactly as given. When a carousel slot has "slide_products", write exactly one slide per listed product, in order.
+Never invent products, prices, discounts or claims that aren't in the brief.
 Return a JSON array, one object per slot, in the same order:
 [{"slot": <slot index>, "headline": "<= 7 words for the image overlay", "caption": "...", "cta": "short call to action",
   "slides": [{"headline": "...", "body": "..."}]  // carousel slots only
@@ -158,6 +193,10 @@ async def write_batch(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slo
         entry = {"slot": offset + j, "platform": s.platform.value, "format": s.format, "pillar": s.pillar, "weekly_theme": s.theme}
         if s.trend:
             entry["trend"] = f"{s.trend.title} - {s.trend.snippet[:200]}"
+        if s.product:
+            entry["product"] = product_brief(s.product)
+        if s.slide_products:
+            entry["slide_products"] = [product_brief(p) for p in s.slide_products]
         slot_desc.append(entry)
     rules = "\n".join(PLATFORM_RULES[p] for p in {s.platform for s in slots})
     user = (
@@ -190,12 +229,24 @@ async def write_all(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slot]
                     results[idx] = item
     out = []
     for i, r in enumerate(results):
-        copy = r or fallback_copy(kit, slots[i])
-        if slots[i].format == "carousel":
+        slot = slots[i]
+        copy = r or fallback_copy(kit, slot)
+        if slot.format == "carousel":
             slides = clean_slides(copy.get("slides"))
+            if slot.slide_products:
+                # One page per product, so each page can carry that product's photo.
+                slides = slides[: len(slot.slide_products)] if len(slides) >= len(slot.slide_products) else product_slides(slot.slide_products)
             copy["slides"] = slides if len(slides) >= 2 else fallback_slides(kit)
         out.append(copy)
     return out
+
+
+def product_slides(products) -> list[dict]:
+    slides = []
+    for p in products:
+        body = " · ".join(x for x in (p.category, p.price) if x)
+        slides.append({"headline": p.name[:60], "body": body or "Now on our website."})
+    return slides
 
 
 def clean_slides(raw) -> list[dict]:
@@ -216,9 +267,49 @@ def fallback_slides(kit: BrandKit) -> list[dict]:
     return slides
 
 
+def shop_link(kit: BrandKit, p: Product) -> str:
+    url = (p.url or kit.website_url or "").split("?")[0]
+    return url.split("//")[-1].rstrip("/")
+
+
+def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
+    """Template copy for a post that features one real product from the site."""
+    name, brand = p.name, kit.name
+    coll = f" from our {p.category} collection" if p.category else ""
+    price = f" {p.price}." if p.price else ""
+    pillar = slot.pillar.lower()
+    if slot.format == "carousel":
+        n = len(slot.slide_products) + 1
+        headline = f"{n} pieces worth a closer look" if "fashion" in kit.industry.lower() else f"{n} favourites from {brand}"
+        caption = (f"Swipe through a few favourites from {brand}, starting with the {name}{coll}.{price} "
+                   "Which one would you pick?")
+    elif "behind" in pillar:
+        headline = f"The making of the {name}"
+        caption = f"A closer look at the {name}{coll}. Every detail you see in this photo was chosen on purpose.{price}"
+    elif "customer" in pillar:
+        headline = "Everyone's asking about this one"
+        caption = f"The {name}{coll} is the one people keep messaging us about. See why in person.{price}"
+    elif "tip" in pillar:
+        headline = f"How to wear the {name}" if "fashion" in kit.industry.lower() else f"Getting the most from the {name}"
+        caption = f"One idea for the {name}{coll}: keep everything else simple and let it lead.{price}"
+    else:
+        headline = f"New in: {name}"
+        caption = f"New at {brand}: the {name}{coll}.{price} Limited pieces, so don't wait too long."
+    link = shop_link(kit, p)
+    if slot.platform is Platform.INSTAGRAM:
+        cta = "Shop via the link in bio"
+    else:
+        cta = f"Shop it: {link}" if link else f"Shop {brand} online"
+    if slot.platform is Platform.X:
+        caption = caption.split(". ")[0].rstrip(".") + "." + price
+    return {"headline": headline[:60], "caption": caption, "cta": cta}
+
+
 def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
     """Template copy for demo mode (no API key) or failed batches. Deliberately written in
     the generic 'raw LLM draft' style so the humanizer has something to fix in demos."""
+    if slot.product:
+        return fallback_product_copy(kit, slot, slot.product)
     props = [p.strip().rstrip(".") for p in kit.value_props if p.strip()] or [kit.tagline or kit.name]
     vp = props[slot.day % len(props)]
     # Short value props scraped from menus/nav ("Kale Caesar") are products; longer ones are claims.

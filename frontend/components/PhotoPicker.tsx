@@ -9,11 +9,15 @@ export function PhotoPicker({
   onPickStock,
   onPickUpload,
   busy,
+  sitePhotos = [],
+  onPickSite,
 }: {
   defaultQuery: string;
   onPickStock: (p: StockPhoto) => void;
   onPickUpload: (uploadId: string) => void;
   busy: boolean;
+  sitePhotos?: { url: string; label: string }[];
+  onPickSite?: (url: string) => void;
 }) {
   const [q, setQ] = useState(defaultQuery);
   const [results, setResults] = useState<StockPhoto[] | null>(null);
@@ -50,6 +54,21 @@ export function PhotoPicker({
 
   return (
     <div className="space-y-2">
+      {sitePhotos.length > 0 && onPickSite && (
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-medium text-slate-500">From your website</p>
+          <div className="grid max-h-56 grid-cols-4 gap-1.5 overflow-y-auto pr-1 scrollbar-thin">
+            {sitePhotos.map((p) => (
+              <button key={p.url} type="button" disabled={busy} onClick={() => onPickSite(p.url)} title={p.label}
+                className="group relative aspect-[4/5] overflow-hidden rounded-lg bg-slate-100 ring-brand transition hover:ring-2 disabled:opacity-50">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={p.url} alt={p.label} loading="lazy" className="h-full w-full object-cover transition group-hover:scale-105" />
+              </button>
+            ))}
+          </div>
+          <p className="pt-1 text-[11px] font-medium text-slate-500">Or search stock photos</p>
+        </div>
+      )}
       <div className="flex gap-2">
         <form onSubmit={search} className="relative flex-1">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />

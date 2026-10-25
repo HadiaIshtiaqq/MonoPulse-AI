@@ -174,7 +174,58 @@ def swipe_chip(draw, w: int, h: int, m: int, color, text_color) -> None:
 
 def cover_photo(path: str, size: tuple[int, int]) -> Image.Image:
     img = Image.open(path).convert("RGB")
-    return ImageOps.fit(img, size, Image.LANCZOS, centering=(0.5, 0.45))
+    # Product shots are usually portrait with the subject's face near the top; keep it in frame.
+    centering = (0.5, 0.2) if img.height > img.width * 1.15 and size[1] < img.height * size[0] / img.width else (0.5, 0.45)
+    return ImageOps.fit(img, size, Image.LANCZOS, centering=centering)
+
+
+def text_scrim(size: tuple[int, int], anchor: str, tint: tuple[int, int, int]) -> Image.Image:
+    w, h = size
+    overlay = Image.new("RGBA", size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    for y in range(h):
+        t = y / h
+        if anchor == "top":
+            a = max(0.0, 1 - t / 0.45)
+        elif anchor == "center":
+            a = max(0.0, 1 - abs(t - 0.5) / 0.3) * 0.8
+        else:
+            a = max(0.0, (t - 0.55) / 0.45)
+        # A light wash at the top keeps the logo chip and price tag legible on bright photos.
+        a = max(a, max(0.0, 1 - t / 0.18) * 0.35)
+        od.line([(0, y), (w, y)], fill=(*tint, int(225 * a)))
+    return overlay
+
+
+def price_chip(draw: ImageDraw.ImageDraw, price: str, right: int, top: int, size: int, color) -> None:
+    f = font(size)
+    tw = draw.textlength(price, font=f)
+    pad_x, pad_y = int(size * 0.7), int(size * 0.45)
+    draw.rounded_rectangle([right - tw - pad_x * 2, top, right, top + size + pad_y * 2], radius=size, fill=(255, 255, 255))
+    draw.text((right - tw - pad_x, top + pad_y - size * 0.08), price, font=f, fill=shade(color, 0.25) if luminance(color) > 0.5 else color)
+
+
+def photo_split(kit: BrandKit, post: SocialPost, size: tuple[int, int], headline: str, scale: float, price: str) -> Image.Image:
+    """Wide canvas, tall product photo: show the whole photo beside a brand-colour panel."""
+    w, h = size
+    primary, accent = rgb(kit.primary_color), rgb(kit.accent_color)
+    photo_w = int(h * 0.8)
+    img = gradient((w, h), primary, shade(primary, 0.25))
+    img.paste(cover_photo(post.background.path, (photo_w, h)), (w - photo_w, 0))
+    draw = ImageDraw.Draw(img)
+    fg = text_on(primary)
+    m = int(h * 0.09)
+    panel = w - photo_w
+    paste_logo(img, kit, (m, m, m + int(panel * 0.42), m + int(h * 0.15)), on_dark=luminance(primary) < 0.45)
+    fnt, lines, lh = fit_text(draw, headline, panel - 2 * m, int(h * 0.45), int(h * 0.1 * scale), max_lines=4)
+    y = block_y(post.text_position, h, m, lh * len(lines), "center")
+    y = draw_lines(draw, lines, fnt, lh, m, y, fg)
+    draw.rectangle([m, y + 22, m + 120, y + 34], fill=accent)
+    if price:
+        f = font(int(h * 0.055))
+        draw.text((m, y + 60), price, font=f, fill=fg)
+    draw.text((m, h - m), brand_label(kit), font=font(int(h * 0.032), False), fill=fg)
+    return img
 
 
 # --------------------------------------------------------------------------- single post / cover
@@ -191,28 +242,25 @@ def render_cover(kit: BrandKit, post: SocialPost, size: tuple[int, int], carouse
         layout = "bold"
 
     if layout == "photo":
+        price = post.product.price if post.product else ""
+        with Image.open(post.background.path) as probe:
+            portrait_photo = probe.height > probe.width
+        if w > h * 1.2 and portrait_photo:
+            return photo_split(kit, post, size, headline, scale, price)
         img = cover_photo(post.background.path, size).convert("RGBA")
         pos = post.text_position if post.text_position in POSITIONS else "auto"
-        # Darken where the text sits so it stays readable on any photo.
-        overlay = Image.new("RGBA", size, (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
         anchor = "bottom" if pos == "auto" else pos
-        for y in range(h):
-            t = y / h
-            if anchor == "top":
-                a = max(0.0, 1 - t / 0.6)
-            elif anchor == "center":
-                a = max(0.0, 1 - abs(t - 0.5) / 0.45) * 0.85
-            else:
-                a = max(0.0, (t - 0.3) / 0.7)
-            od.line([(0, y), (w, y)], fill=(*shade(primary, 0.08), int(215 * a + 40)))
-        img = Image.alpha_composite(img, overlay).convert("RGB")
+        # Darken only where the text sits, so the product itself stays clearly visible.
+        img = Image.alpha_composite(img, text_scrim(size, anchor, shade(primary, 0.08))).convert("RGB")
         draw = ImageDraw.Draw(img)
-        fnt, lines, lh = fit_text(draw, headline, w - 2 * m, int(h * 0.5), int(min(w, h) * 0.11 * scale))
+        fnt, lines, lh = fit_text(draw, headline, w - 2 * m, int(h * 0.3), int(min(w, h) * 0.095 * scale), max_lines=3)
         y = block_y(pos, h, m, lh * len(lines), "bottom")
         y = draw_lines(draw, lines, fnt, lh, m, y, (255, 255, 255))
         draw.rectangle([m, y + 22, m + 130, y + 34], fill=accent)
-        paste_logo(img, kit, (m, m, m + int(w * 0.26), m + int(h * 0.09)), on_dark=True)
+        logo_box = (m, m, m + int(w * 0.3), m + int(h * 0.1))
+        paste_logo(img, kit, logo_box, on_dark=True)
+        if price:
+            price_chip(draw, price, w - m, m, int(min(w, h) * 0.04), primary)
         draw.text((m, h - m), brand_label(kit), font=font(int(min(w, h) * 0.03), False), fill=(235, 235, 235))
         if carousel:
             swipe_chip(draw, w, h, m, accent, text_on(accent))
@@ -282,6 +330,8 @@ def render_slide(kit: BrandKit, post: SocialPost, index: int, total: int) -> Ima
     primary, secondary, accent = rgb(kit.primary_color), rgb(kit.secondary_color), rgb(kit.accent_color)
     m = int(w * 0.09)
     slide = post.slides[index - 1]
+    if slide.background and Path(slide.background.path).exists():
+        return render_photo_slide(kit, post, slide, index, total)
     img = Image.new("RGB", (w, h), shade(primary, 0.965))
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 0, w, 14], fill=primary)
@@ -301,6 +351,34 @@ def render_slide(kit: BrandKit, post: SocialPost, index: int, total: int) -> Ima
         draw_lines(draw, bl, bf, blh, m, y + 80, shade(secondary, 0.3) if luminance(secondary) < 0.3 else (51, 65, 85))
     draw.text((m, h - m), brand_label(kit), font=font(28, False), fill=(100, 116, 139))
     swipe_chip(draw, w, h, m, primary, text_on(primary))
+    return img
+
+
+def render_photo_slide(kit: BrandKit, post: SocialPost, slide, index: int, total: int) -> Image.Image:
+    """A carousel page built around a real photo (one product per page)."""
+    w, h = CAROUSEL_SIZE
+    primary, accent = rgb(kit.primary_color), rgb(kit.accent_color)
+    m = int(w * 0.08)
+    img = cover_photo(slide.background.path, (w, h)).convert("RGBA")
+    img = Image.alpha_composite(img, text_scrim((w, h), "bottom", shade(primary, 0.08))).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    pill = f"{index + 1} / {total}"
+    pf = font(30)
+    pw = draw.textlength(pill, font=pf)
+    draw.rounded_rectangle([w - m - pw - 44, m, w - m, m + 56], radius=28, fill=(255, 255, 255))
+    draw.text((w - m - pw - 22, m + 11), pill, font=pf, fill=primary if luminance(primary) < 0.6 else (30, 30, 30))
+    paste_logo(img, kit, (m, m, m + int(w * 0.26), m + int(h * 0.08)), on_dark=True)
+    bf, bl, blh = (None, [], 0)
+    if slide.body:
+        bf, bl, blh = fit_text(draw, slide.body, w - 2 * m, int(h * 0.12), 38, minimum=26, max_lines=3, bold=False)
+    hf, hl, hlh = fit_text(draw, slide.headline or post.headline, w - 2 * m, int(h * 0.2), 72, minimum=40, max_lines=3)
+    block = hlh * len(hl) + (blh * len(bl) + 30 if bl else 0)
+    y = h - m - int(h * 0.07) - block
+    y = draw_lines(draw, hl, hf, hlh, m, y, (255, 255, 255))
+    if bl:
+        draw_lines(draw, bl, bf, blh, m, y + 20, (235, 235, 235))
+    draw.text((m, h - m), brand_label(kit), font=font(28, False), fill=(225, 225, 225))
+    swipe_chip(draw, w, h, m, accent, text_on(accent))
     return img
 
 
