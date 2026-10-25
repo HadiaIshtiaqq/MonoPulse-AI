@@ -122,6 +122,8 @@ def fit_text(draw, text: str, max_width: int, max_height: int, start: int, minim
 
 
 def paste_logo(img: Image.Image, kit: BrandKit, box: tuple[int, int, int, int], on_dark: bool) -> bool:
+    """on_dark puts the logo on a white chip. Every brand-coloured or photo background needs
+    one: logos are usually drawn in the brand colour, so they vanish on their own colour."""
     if not kit.logo_path or not Path(kit.logo_path).exists():
         return False
     try:
@@ -216,7 +218,7 @@ def photo_split(kit: BrandKit, post: SocialPost, size: tuple[int, int], headline
     fg = text_on(primary)
     m = int(h * 0.09)
     panel = w - photo_w
-    paste_logo(img, kit, (m, m, m + int(panel * 0.42), m + int(h * 0.15)), on_dark=luminance(primary) < 0.45)
+    paste_logo(img, kit, (m, m, m + int(panel * 0.42), m + int(h * 0.15)), on_dark=True)
     fnt, lines, lh = fit_text(draw, headline, panel - 2 * m, int(h * 0.45), int(h * 0.1 * scale), max_lines=4)
     y = block_y(post.text_position, h, m, lh * len(lines), "center")
     y = draw_lines(draw, lines, fnt, lh, m, y, fg)
@@ -279,7 +281,7 @@ def render_cover(kit: BrandKit, post: SocialPost, size: tuple[int, int], carouse
         y = block_y(post.text_position, h, m, lh * len(lines), "center")
         draw.rectangle([m, y - 40, m + 90, y - 30], fill=accent)
         draw_lines(draw, lines, fnt, lh, m, y, fg)
-        paste_logo(img, kit, (panel_x + m, m, w - m, m + int(h * 0.16)), on_dark=luminance(primary) < 0.45)
+        paste_logo(img, kit, (panel_x + m, m, w - m, m + int(h * 0.16)), on_dark=True)
         draw.text((m, h - m), brand_label(kit), font=font(int(h * 0.035), False), fill=fg)
         return img
 
@@ -310,7 +312,7 @@ def render_cover(kit: BrandKit, post: SocialPost, size: tuple[int, int], carouse
     img = Image.alpha_composite(img.convert("RGBA"), glow).convert("RGB")
     draw = ImageDraw.Draw(img)
     fg = text_on(primary)
-    paste_logo(img, kit, (m, m, m + int(w * 0.28), m + int(h * 0.1)), on_dark=luminance(primary) < 0.45)
+    paste_logo(img, kit, (m, m, m + int(w * 0.28), m + int(h * 0.1)), on_dark=True)
     fnt, lines, lh = fit_text(draw, headline, w - 2 * m, int(h * 0.55), int(min(w, h) * 0.12 * scale))
     y = block_y(post.text_position, h, m, lh * len(lines), "bottom")
     y = draw_lines(draw, lines, fnt, lh, m, y, fg)
@@ -389,7 +391,7 @@ def render_cta(kit: BrandKit, post: SocialPost, total: int) -> Image.Image:
     img = gradient((w, h), primary, shade(primary, 0.2))
     draw = ImageDraw.Draw(img)
     fg = text_on(primary)
-    has_logo = paste_logo(img, kit, (w // 2 - 160, int(h * 0.18), w // 2 + 160, int(h * 0.18) + 150), on_dark=luminance(primary) < 0.45)
+    has_logo = paste_logo(img, kit, (w // 2 - 160, int(h * 0.18), w // 2 + 160, int(h * 0.18) + 150), on_dark=True)
     cta = post.cta or "Follow for more"
     fnt, lines, lh = fit_text(draw, cta, w - 2 * m, int(h * 0.3), 92, minimum=44, max_lines=4)
     y = int(h * 0.42) if has_logo else (h - lh * len(lines)) // 2

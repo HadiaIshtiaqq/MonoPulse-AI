@@ -145,6 +145,7 @@ class SocialPost(BaseModel):
 
 class Campaign(BaseModel):
     id: str = Field(default_factory=new_id)
+    source_input: str = ""  # the website or handle the campaign was created from
     brand: BrandKit | None = None
     target_month: str = ""
     start_date: date

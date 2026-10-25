@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 
 from .. import config
@@ -245,7 +246,7 @@ def product_slides(products) -> list[dict]:
     slides = []
     for p in products:
         body = " · ".join(x for x in (p.category, p.price) if x)
-        slides.append({"headline": p.name[:60], "body": body or "Now on our website."})
+        slides.append({"headline": short_name(p.name), "body": body or "Now on our website."})
     return slides
 
 
@@ -272,9 +273,17 @@ def shop_link(kit: BrandKit, p: Product) -> str:
     return url.split("//")[-1].rstrip("/")
 
 
+def short_name(name: str, max_words: int = 6) -> str:
+    """A product name short enough for an image headline, cut at a natural break rather
+    than mid-word ("3 Piece Printed Cotton Linen Suit with Dupatta" -> "...Linen Suit")."""
+    base = re.split(r"\s+(?:with|for|in|by)\s+|\s+[-|–—:]\s+|\s*\(", name, maxsplit=1, flags=re.I)[0].strip() or name
+    words = base.split()
+    return " ".join(words[:max_words]) if len(words) > max_words else base
+
+
 def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
     """Template copy for a post that features one real product from the site."""
-    name, brand = p.name, kit.name
+    name, brand = short_name(p.name), kit.name
     coll = f" from our {p.category} collection" if p.category else ""
     price = f" {p.price}." if p.price else ""
     pillar = slot.pillar.lower()

@@ -77,11 +77,19 @@ function CampaignPage() {
     try { replacePost(await api.updatePost(p.id, { status: "APPROVED" })); } catch (e) { setError((e as Error).message); }
   }
 
+  async function retry() {
+    if (!campaign?.source_input) return;
+    const { campaign_id, job_id } = await api.createCampaign({
+      input: campaign.source_input, platforms: campaign.platforms, days: campaign.days, research_ids: campaign.research_ids,
+    });
+    window.location.assign(`/campaign/${campaign_id}?job=${job_id}`);
+  }
+
   if (error && !campaign) return <p className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>;
   if (!campaign) return <Loader2 className="mx-auto mt-20 animate-spin text-slate-400" />;
 
   if (generating || (campaign.status === "FAILED" && job)) {
-    return job ? <GenerationProgress job={job} elapsed={elapsed} /> : (
+    return job ? <GenerationProgress job={job} elapsed={elapsed} onRetry={campaign.source_input ? retry : undefined} /> : (
       <div className="card mx-auto mt-10 flex max-w-md items-center gap-3 p-6"><Loader2 className="animate-spin text-brand" /> Generating this campaign…</div>
     );
   }
@@ -89,8 +97,11 @@ function CampaignPage() {
     return (
       <div className="card mx-auto mt-10 max-w-lg p-8 text-center">
         <p className="text-lg font-semibold">This campaign couldn&apos;t be generated</p>
-        <p className="mt-1 text-sm text-slate-500">The website may have blocked our reader. Try the homepage URL, or your Instagram handle.</p>
-        <Link href="/" className="btn-primary mt-5">Try again</Link>
+        <p className="mt-1 text-sm text-slate-500">The website may have blocked our reader. Try again, use the homepage URL, or your Instagram handle.</p>
+        <div className="mt-5 flex justify-center gap-2">
+          {campaign.source_input && <button onClick={retry} className="btn-primary">Try again</button>}
+          <Link href="/" className="btn-ghost">New campaign</Link>
+        </div>
       </div>
     );
   }

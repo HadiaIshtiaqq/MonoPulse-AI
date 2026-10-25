@@ -3,6 +3,7 @@ import asyncio
 import io
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 from bs4 import BeautifulSoup
 from PIL import Image
@@ -128,6 +129,8 @@ def test_slots_feature_varied_products_and_carousels_with_all_platforms():
         assert slot.product.price in copy["caption"]
         if slot.format == "carousel":
             assert [s["headline"] for s in copy["slides"]] == [p.name for p in slot.slide_products]
+    assert strategist.short_name("3 Piece Printed Cotton Linen Suit with Dupatta") == "3 Piece Printed Cotton Linen Suit"
+    assert strategist.short_name("Kurta - Lawn Collection") == "Kurta"
 
 
 def test_site_photos_go_on_posts_and_carousel_pages(monkeypatch, tmp_path):
@@ -157,6 +160,41 @@ def test_site_photos_go_on_posts_and_carousel_pages(monkeypatch, tmp_path):
     for post in (single, carousel, plain):
         pages = renderer.render_pages(kit, post)
         assert pages[0].size == (renderer.CAROUSEL_SIZE if post.format == "carousel" else renderer.SIZES[post.platform])
+
+
+def test_rate_limited_site_is_retried_then_explained(monkeypatch):
+    monkeypatch.setattr(ingestor, "RETRY_DELAYS", (0.01, 0.01))
+    hits = []
+
+    def handler(request):
+        hits.append(request.url)
+        if len(hits) < 3:
+            return httpx.Response(429, headers={"retry-after": "0"})
+        return httpx.Response(200, text="<html><title>Gul Ahmed</title></html>")
+
+    async def run(transport):
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await ingestor.get_page(client, "https://store.example/p/1")
+
+    assert asyncio.run(run(httpx.MockTransport(handler))).status_code == 200 and len(hits) == 3
+    with pytest.raises(ingestor.SiteUnavailable, match="limiting requests"):
+        asyncio.run(run(httpx.MockTransport(lambda r: httpx.Response(429))))
+
+
+SVG_LOGO = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 50"><rect width="200" height="50" fill="#8CC63F"/></svg>'
+
+
+def test_svg_logo_is_rendered_and_partner_logos_are_ignored():
+    png = ingestor.rasterize_svg(SVG_LOGO, width=400)
+    assert Image.open(io.BytesIO(png)).size == (400, 100)
+    assert ingestor._distance(ingestor.dominant_colors_from_image(png)[0], "#8CC63F") < 20
+    assert ingestor.is_svg("https://x/logo.svg?v=1", "", b"") and ingestor.is_svg("https://x/l", "", SVG_LOGO)
+    html = """<html><head><title>Shirt | GulAhmed</title><meta property="og:site_name" content="GulAhmed Ideas"></head><body>
+      <div class="popup"><img src="/files/YANGO-Logo.png" alt="Yango"></div>
+      <footer><img src="/files/Ideas_by_Gul_Ahmed_logo.png" alt="logo"></footer></body></html>"""
+    site = ingestor.parse_html(html, "https://www.gulahmedshop.com/products/shirt")
+    assert not any("YANGO" in u for u in site.logo_candidates)
+    assert any("Gul_Ahmed" in u for u in site.logo_candidates)
 
 
 def test_wide_post_with_tall_product_photo_uses_split(tmp_path):

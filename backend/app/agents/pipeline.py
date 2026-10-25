@@ -12,7 +12,8 @@ from datetime import date, datetime, time as dtime, timedelta, timezone
 
 from .. import config
 from ..schemas import Campaign, CampaignStatus, Job, JobStep, Slide, SocialPost
-from ..scraper.ingestor import ingest
+from ..netguard import UnsafeURL
+from ..scraper.ingestor import SiteUnavailable, ingest
 from ..store import store
 from . import formatter, humanizer, photos, renderer, research, strategist, trends
 
@@ -37,7 +38,7 @@ def start(req) -> tuple[Campaign, Job]:
     Shared by the web API and the MCP server so both behave identically.
     """
     platforms = list(dict.fromkeys(req.platforms)) or list(renderer.SIZES)
-    campaign = Campaign(start_date=req.start_date or date.today(), days=req.days,
+    campaign = Campaign(source_input=req.input.strip(), start_date=req.start_date or date.today(), days=req.days,
                         platforms=platforms, research_ids=list(dict.fromkeys(req.research_ids)))
     job = new_job(campaign.id)
     store.campaigns[campaign.id] = campaign
@@ -106,7 +107,7 @@ async def attach_site_photos(kit, posts: list[SocialPost], slide_products: dict[
     unique = list(dict.fromkeys(u for _, u, _ in wanted))[:MAX_SITE_PHOTOS]
     if not unique:
         return 0
-    sem = asyncio.Semaphore(6)
+    sem = asyncio.Semaphore(3)  # gentle on the store's servers; many rate-limit bursts
 
     async def fetch(url: str):
         async with sem:
@@ -244,7 +245,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
         log.exception("campaign %s failed", campaign.id)
         campaign.status = CampaignStatus.FAILED
         job.status = "error"
-        job.error = f"{type(exc).__name__}: {exc}"[:300]
+        job.error = (str(exc) if isinstance(exc, (SiteUnavailable, UnsafeURL)) else f"{type(exc).__name__}: {exc}")[:300]
     finally:
         campaign.timings["total"] = round(time.perf_counter() - t_start, 2)
         store.save()

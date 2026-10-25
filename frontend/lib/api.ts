@@ -103,6 +103,7 @@ export interface Strategy {
 
 export interface Campaign {
   id: string;
+  source_input: string;
   brand: BrandKit | null;
   start_date: string;
   days: number;

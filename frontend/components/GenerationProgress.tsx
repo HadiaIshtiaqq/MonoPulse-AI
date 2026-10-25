@@ -1,4 +1,8 @@
-import { CheckCircle2, Circle, ExternalLink, Loader2, MinusCircle, XCircle } from "lucide-react";
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { CheckCircle2, Circle, ExternalLink, Loader2, MinusCircle, RotateCcw, XCircle } from "lucide-react";
 import type { Job } from "@/lib/api";
 
 function StepIcon({ status }: { status: string }) {
@@ -9,7 +13,8 @@ function StepIcon({ status }: { status: string }) {
   return <Circle size={18} className="text-slate-200" />;
 }
 
-export function GenerationProgress({ job, elapsed }: { job: Job; elapsed: number }) {
+export function GenerationProgress({ job, elapsed, onRetry }: { job: Job; elapsed: number; onRetry?: () => Promise<void> }) {
+  const [retrying, setRetrying] = useState(false);
   const done = job.steps.filter((s) => s.status === "done" || s.status === "skipped").length;
   const pct = Math.round((done / job.steps.length) * 100);
   const brand = job.brand;
@@ -36,7 +41,20 @@ export function GenerationProgress({ job, elapsed }: { job: Job; elapsed: number
             </li>
           ))}
         </ol>
-        {job.error && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{job.error}</p>}
+        {job.error && (
+          <div className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">
+            <p>{job.error}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {onRetry && (
+                <button className="btn-primary btn-sm" disabled={retrying}
+                  onClick={() => { setRetrying(true); onRetry().catch(() => setRetrying(false)); }}>
+                  {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />} Try again
+                </button>
+              )}
+              <Link href="/" className="btn-ghost btn-sm">New campaign</Link>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="space-y-4 md:col-span-2">
@@ -86,7 +104,7 @@ export function GenerationProgress({ job, elapsed }: { job: Job; elapsed: number
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-sm text-slate-400">Waiting for the Tavily search…</p>
+            <p className="mt-3 text-sm text-slate-400">{job.status === "error" ? "Not reached." : "Waiting for the news search…"}</p>
           )}
         </div>
       </div>

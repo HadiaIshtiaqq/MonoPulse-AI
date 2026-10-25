@@ -10,6 +10,7 @@ import colorsys
 import io
 import logging
 import re
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlparse
@@ -185,7 +186,9 @@ def parse_html(html: str, base_url: str) -> ScrapedSite:
         home_link = img.find_parent("a", href=re.compile(r"^(/|\./|#?$|" + re.escape(base_url) + ")$"))
         if (in_header or home_link) and ("logo" in hay or home_link):
             header_logos.append(urljoin(base_url, src))
-        elif "logo" in hay:
+        elif "logo" in hay and _mentions_brand(hay, site, base_url):
+            # Outside the header, a "logo" may be a partner's (payment, delivery, a pop-up
+            # sponsor); only trust one that names this brand.
             other_logos.append(urljoin(base_url, src))
     logos: list[str] = header_logos[:2]
     touch_icons = [
@@ -209,6 +212,16 @@ def parse_html(html: str, base_url: str) -> ScrapedSite:
     site.products = product_finder.extract_products(soup, base_url)
     site.images = product_finder.extract_site_images(soup, base_url)
     return site
+
+
+GENERIC_WORDS = {"shop", "store", "online", "official", "home", "with", "from", "page", "site", "website", "logo", "welcome"}
+
+
+def _mentions_brand(hay: str, site: ScrapedSite, base_url: str) -> bool:
+    host = urlparse(base_url).netloc.lower().removeprefix("www.").split(".")[0]
+    words = re.findall(r"[a-z0-9]{4,}", f"{site.site_name} {site.title}".lower()) + [host, host.removesuffix("shop").removesuffix("store")]
+    squashed = re.sub(r"[^a-z0-9]", "", hay)
+    return any(w in squashed for w in set(words) - GENERIC_WORDS if len(w) >= 4)
 
 
 def rank_palette(colors: list[str]) -> list[str]:
@@ -308,11 +321,74 @@ def detect_input(raw: str) -> tuple[str, str]:
 # --------------------------------------------------------------------------- fetching
 
 
+RETRY_STATUSES = {429, 502, 503, 504}
+RETRY_DELAYS = (2.0, 5.0, 10.0)  # seconds to wait before each retry
+MAX_RETRY_AFTER = 15.0
+
+
+class SiteUnavailable(RuntimeError):
+    """The website couldn't be read; the message is written for the user."""
+
+
+async def get_page(client: httpx.AsyncClient, url: str) -> httpx.Response:
+    """GET a page, waiting and retrying when the site rate-limits or is briefly down."""
+    resp = None
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        resp = await client.get(url)
+        if resp.status_code not in RETRY_STATUSES or attempt == len(RETRY_DELAYS):
+            break
+        retry_after = resp.headers.get("retry-after", "")
+        delay = float(retry_after) if retry_after.replace(".", "", 1).isdigit() else RETRY_DELAYS[attempt]
+        await asyncio.sleep(min(delay, MAX_RETRY_AFTER))
+    host = urlparse(url).netloc
+    if resp.status_code == 429:
+        raise SiteUnavailable(f"{host} is limiting requests right now (429 Too Many Requests). Wait a minute and try again.")
+    if resp.status_code in (401, 403):
+        raise SiteUnavailable(f"{host} blocked automated access ({resp.status_code}). Try the site's homepage, or create the campaign from its Instagram handle.")
+    if resp.status_code == 404:
+        raise SiteUnavailable(f"That page wasn't found on {host} (404). Check the link, or use the site's homepage.")
+    if resp.status_code >= 400:
+        raise SiteUnavailable(f"{host} returned an error ({resp.status_code}). Try again shortly, or use the site's homepage.")
+    return resp
+
+
+PAGE_CACHE_SECONDS = 600
+# url -> (fetched at, html, final url). Re-running a campaign for the same site shouldn't hit
+# it again: stores rate-limit bursts, and a second campaign right after the first is common.
+_page_cache: dict[str, tuple[float, str, str]] = {}
+
+
+async def fetch_html(client: httpx.AsyncClient, url: str) -> tuple[str, str]:
+    hit = _page_cache.get(url)
+    if hit and time.monotonic() - hit[0] < PAGE_CACHE_SECONDS:
+        return hit[1], hit[2]
+    try:
+        resp = await get_page(client, url)
+    except httpx.TimeoutException as exc:
+        raise SiteUnavailable(f"{urlparse(url).netloc} took too long to respond. Try again shortly.") from exc
+    except httpx.ConnectError as exc:
+        raise SiteUnavailable(f"Couldn't connect to {urlparse(url).netloc}. Check the address.") from exc
+    _page_cache[url] = (time.monotonic(), resp.text, str(resp.url))
+    return resp.text, str(resp.url)
+
+
 async def fetch_site(url: str, client: httpx.AsyncClient) -> ScrapedSite:
-    resp = await client.get(url)
-    resp.raise_for_status()
-    site = parse_html(resp.text, str(resp.url))
-    # Pull a couple of external stylesheets for colour data; most sites keep brand colours there.
+    html, final_url = await fetch_html(client, url)
+    site = parse_html(html, final_url)
+    if len(site.products) < 3 and ("cdn.shopify.com" in html or "Shopify.shop" in html):
+        origin = f"{urlparse(site.url).scheme}://{urlparse(site.url).netloc}"
+        try:
+            r = await client.get(f"{origin}/products.json?limit=24", timeout=8)
+            if r.status_code == 200:
+                site.products = product_finder.shopify_products(r.json(), origin, product_finder.shopify_currency(html)) or site.products
+        except (httpx.HTTPError, UnsafeURL, ValueError):
+            pass
+    return site
+
+
+async def stylesheet_colors(site: ScrapedSite, client: httpx.AsyncClient) -> list[str]:
+    """Colours from a few external stylesheets. Only needed when the logo doesn't give any,
+    so a site isn't sent five extra requests it doesn't need to answer."""
     async def css(u: str) -> str:
         try:
             r = await client.get(u, timeout=6)
@@ -321,36 +397,47 @@ async def fetch_site(url: str, client: httpx.AsyncClient) -> ScrapedSite:
             return ""
 
     sheets = await asyncio.gather(*(css(u) for u in rank_stylesheets(site.stylesheets)[:5]))
-    site.colors += extract_colors("\n".join(sheets))
-    if len(site.products) < 3 and ("cdn.shopify.com" in resp.text or "Shopify.shop" in resp.text):
-        origin = f"{urlparse(site.url).scheme}://{urlparse(site.url).netloc}"
-        try:
-            r = await client.get(f"{origin}/products.json?limit=24", timeout=8)
-            if r.status_code == 200:
-                site.products = product_finder.shopify_products(r.json(), origin, product_finder.shopify_currency(resp.text)) or site.products
-        except (httpx.HTTPError, UnsafeURL, ValueError):
-            pass
-    return site
+    return extract_colors("\n".join(sheets))
 
 
 async def download_logo(candidates: list[str], client: httpx.AsyncClient, brand_id: str) -> tuple[str | None, str | None, bytes | None]:
     for url in candidates[:5]:
-        if url.lower().split("?")[0].endswith(".svg"):
-            continue  # Pillow can't rasterise SVG; try the next candidate.
         try:
             r = await client.get(url, timeout=8)
             if r.status_code != 200 or len(r.content) < 200:
                 continue
-            img = Image.open(io.BytesIO(r.content))
+            data = r.content
+            if is_svg(url, r.headers.get("content-type", ""), data):
+                data = rasterize_svg(data)
+            img = Image.open(io.BytesIO(data))
             img.load()
             if min(img.size) < 32:
                 continue
             path = config.MEDIA_DIR / f"logo_{brand_id}.png"
             img.convert("RGBA").save(path)
-            return url, str(path), r.content
+            return url, str(path), data
         except Exception:  # noqa: BLE001 - any broken image just means "try the next one"
             continue
     return (candidates[0] if candidates else None), None, None
+
+
+MAX_SVG_BYTES = 1_000_000
+
+
+def is_svg(url: str, content_type: str, data: bytes) -> bool:
+    head = data[:300].lstrip().lower()
+    return ("svg" in content_type.lower() or url.lower().split("?")[0].endswith(".svg")
+            or head.startswith(b"<svg") or (head.startswith(b"<?xml") and b"<svg" in data[:2000].lower()))
+
+
+def rasterize_svg(data: bytes, width: int = 800) -> bytes:
+    """Render an SVG logo to PNG (many modern sites ship their logo only as SVG)."""
+    import resvg_py
+
+    if len(data) > MAX_SVG_BYTES:
+        raise ValueError("SVG too large")
+    png = resvg_py.svg_to_bytes(svg_string=data.decode("utf-8", errors="replace"), width=width)
+    return bytes(png)
 
 
 # --------------------------------------------------------------------------- LLM enrichment
@@ -469,7 +556,7 @@ async def ingest(raw_input: str, search_fn=None) -> BrandKit:
                         site = await fetch_site(site_url, client)
                         kit.website_url = site.url
                         return await _finish_site_kit(kit, site, client, extra_text=research)
-                    except (httpx.HTTPError, UnsafeURL):
+                    except (httpx.HTTPError, UnsafeURL, SiteUnavailable):
                         pass
             kit.description = research[:400]
             kit = heuristic_kit(ScrapedSite(url="", description=research), kit)
@@ -491,6 +578,8 @@ async def _finish_site_kit(kit: BrandKit, site: ScrapedSite, client: httpx.Async
     kit.products, kit.images = site.products, site.images
 
     logo_colors = dominant_colors_from_image(logo_bytes) if logo_bytes else []
+    if not logo_colors and not (site.theme_color and is_brand_like(site.theme_color)):
+        site.colors += await stylesheet_colors(site, client)
     palette = choose_palette(site.theme_color, logo_colors, site.colors)
     kit = apply_palette(kit, palette, ink=ink_color_from_image(logo_bytes) if logo_bytes and logo_colors else None)
     return heuristic_kit(site, kit)
