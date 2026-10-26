@@ -609,7 +609,9 @@ def offerings_from(site: ScrapedSite, name: str) -> list[str]:
         if not (1 <= len(words) <= 5) or JUNK_TEXT.search(h) or NOT_OFFERINGS.search(h) \
                 or any(w in h.lower() for w in brand_words) or h.endswith((".", "?", "!", ":")):
             continue
-        out.append(h[0].upper() + h[1:].lower() if h.isupper() else h)
+        h = product_finder.strip_codes(h)
+        if h:
+            out.append(h[0].upper() + h[1:].lower() if h.isupper() else h)
     return list(dict.fromkeys(out))[:6]
 
 

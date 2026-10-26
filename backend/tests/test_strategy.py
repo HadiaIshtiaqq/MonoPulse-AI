@@ -120,3 +120,11 @@ def test_sale_products_get_sale_copy():
     assert copy["headline"] == "30% off: Power for men"
     assert "Now Rs.4,199, was Rs.5,999." in copy["caption"]
     assert strategist.short_name("Bubble Gummers - Toddler (2 Years - 5 Years)") == "Bubble Gummers for toddler"
+
+
+def test_headlines_drop_product_codes_and_keep_whole_words():
+    assert strategist.fit_headline("Meet our Sandstone - 3 Pc (WU3PPBS26-LI1F67)") == "Meet our Sandstone - 3 Pc"
+    assert strategist.fit_headline("Verdant - 3 Pc WU3PPBS26-LI2M72") == "Verdant - 3 Pc"
+    cut = strategist.fit_headline("Bonanza Satrangi's vibrant Pakistani fashion, offering unstitched, stitched clothing")
+    assert cut == "Bonanza Satrangi's vibrant Pakistani fashion"
+    assert strategist.fit_headline("New in: 2-Piece Co-ord Set") == "New in: 2-Piece Co-ord Set"

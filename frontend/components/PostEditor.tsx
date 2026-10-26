@@ -78,6 +78,7 @@ export function PostEditor({
   onNext,
   versions = [],
   onSwitch,
+  onApproveNext,
 }: {
   post: SocialPost;
   brand: BrandKit | null;
@@ -88,6 +89,8 @@ export function PostEditor({
   onNext?: () => void;
   versions?: SocialPost[];
   onSwitch?: (id: string) => void;
+  /** Approve every draft version of this post, then open the next post. */
+  onApproveNext?: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<Tab>("design");
   const [headline, setHeadline] = useState(post.headline);
@@ -118,10 +121,18 @@ export function PostEditor({
       if ((e.target as HTMLElement)?.tagName?.match(/INPUT|TEXTAREA|SELECT/)) return;
       if (e.key === "ArrowLeft" && onPrev) onPrev();
       if (e.key === "ArrowRight" && onNext) onNext();
+      if (e.key.toLowerCase() === "a" && !e.metaKey && !e.ctrlKey && !e.altKey && onApproveNext) approveNext();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onPrev, onNext]);
+  });
+
+  async function approveNext() {
+    if (!onApproveNext || busy) return;
+    setBusy("approve-next");
+    try { await onApproveNext(); } catch (e) { setNotice({ kind: "err", text: (e as Error).message }); } finally { setBusy(null); }
+  }
+  const allApproved = versions.length ? versions.every((v) => v.status !== "DRAFT") : post.status !== "DRAFT";
 
   async function run(key: string, fn: () => Promise<SocialPost | void>, ok?: string) {
     setBusy(key);
@@ -230,7 +241,17 @@ export function PostEditor({
           <span className={`chip ${post.status === "APPROVED" ? "bg-emerald-50 text-emerald-700" : post.status === "PUBLISHED" ? "bg-brand-soft text-brand-700" : "bg-slate-100 text-slate-600"}`}>
             {post.status.toLowerCase()}
           </span>
-          <button onClick={onClose} className="ml-auto rounded-lg p-2 hover:bg-slate-100" aria-label="Close"><X size={18} /></button>
+          <div className="ml-auto flex items-center gap-1.5">
+            {onApproveNext && (
+              <button onClick={approveNext} disabled={!!busy} title={allApproved ? "Next post (A)" : "Approve every platform version and open the next post (A)"}
+                className={`${allApproved ? "btn-ghost" : "btn-primary"} btn-sm`}>
+                {busy === "approve-next" ? <Loader2 size={14} className="animate-spin" /> : allApproved ? <ChevronRight size={14} /> : <Check size={14} />}
+                <span className="hidden sm:inline">{allApproved ? "Next post" : "Approve & next"}</span>
+                <kbd className={`kbd hidden md:inline-grid ${allApproved ? "" : "border-white/30 bg-white/15 text-white shadow-none"}`}>A</kbd>
+              </button>
+            )}
+            <button onClick={onClose} className="rounded-lg p-2 hover:bg-slate-100" aria-label="Close"><X size={18} /></button>
+          </div>
         </div>
 
         <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[1fr_1.05fr] md:overflow-hidden">

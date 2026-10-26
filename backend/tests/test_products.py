@@ -85,6 +85,15 @@ def test_shopify_products_json():
     assert (p.name, p.price, p.url, p.category) == ("Linen Shirt", "$49", "https://store.example/products/linen-shirt", "Shirts")
 
 
+def test_product_names_drop_stock_codes():
+    data = {"products": [{"title": "Sandstone - 3 Pc (WU3PPBS26-LI1F67)", "handle": "sandstone",
+                          "variants": [{"price": "4990"}], "images": [{"src": "https://cdn.shopify.com/s/s.jpg"}]},
+                         {"title": "12-PCS Gift Box", "handle": "gift",
+                          "variants": [{"price": "20"}], "images": [{"src": "https://cdn.shopify.com/s/g.jpg"}]}]}
+    names = [p.name for p in shopify_products(data, "https://store.example", "USD")]
+    assert names == ["Sandstone - 3 Pc", "12-PCS Gift Box"]
+
+
 def _logo_bytes() -> bytes:
     img = Image.new("RGB", (200, 120), "white")
     for x in range(30, 170):

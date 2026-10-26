@@ -5,19 +5,32 @@ import Link from "next/link";
 import { Plus, Search } from "lucide-react";
 import { api, type CampaignSummary } from "@/lib/api";
 import { CampaignCard } from "@/components/CampaignCard";
+import { useFeedback } from "@/components/Feedback";
 
 export default function CampaignsPage() {
   const [list, setList] = useState<CampaignSummary[] | null>(null);
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
+  const { toast, confirm } = useFeedback();
 
   useEffect(() => { api.campaigns().then(setList).catch((e) => setError(e.message)); }, []);
 
   async function remove(id: string) {
     const c = list?.find((x) => x.id === id);
-    if (!confirm(`Delete the ${c?.name ?? ""} campaign and all its posts?`)) return;
-    await api.deleteCampaign(id);
-    setList((l) => l?.filter((x) => x.id !== id) ?? null);
+    const ok = await confirm({
+      title: `Delete ${c?.name ?? "this"} campaign?`,
+      body: "All of its posts, images and schedule go with it. This can't be undone.",
+      confirm: "Delete campaign",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.deleteCampaign(id);
+      setList((l) => l?.filter((x) => x.id !== id) ?? null);
+      toast(`Deleted ${c?.name ?? "the campaign"}`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't delete the campaign", "error");
+    }
   }
 
   const shown = (list ?? []).filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.website ?? "").includes(q.toLowerCase()));

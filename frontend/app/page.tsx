@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowRight, BadgeCheck, CalendarClock, FlaskConical, Globe, Images, Loader2, Newspaper, PenLine, Sparkles, Wand2,
+  ArrowRight, BadgeCheck, CalendarClock, ChevronDown, FlaskConical, Globe, Images, Loader2, Newspaper, PenLine, Sparkles, Wand2,
 } from "lucide-react";
 import { api, fmtDay, media, type CampaignSummary, type Platform, type ResearchTask, type SocialPost } from "@/lib/api";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
@@ -38,11 +38,12 @@ export default function CreatePage() {
   const [recent, setRecent] = useState<CampaignSummary[]>([]);
   const [research, setResearch] = useState<ResearchTask[]>([]);
   const [researchIds, setResearchIds] = useState<string[]>([]);
+  const [showResearch, setShowResearch] = useState(false);
   const [upcoming, setUpcoming] = useState<{ campaign_id: string; brand: string; post: SocialPost }[]>([]);
 
   useEffect(() => {
     const preselect = new URLSearchParams(window.location.search).get("research");
-    if (preselect) setResearchIds([preselect]);
+    if (preselect) { setResearchIds([preselect]); setShowResearch(true); }
     api.researchTasks().then((t) => setResearch(t.filter((x) => x.status === "completed").slice(0, 8))).catch(() => {});
     api.campaigns().then(setRecent).catch(() => setError("Can't reach the API. Is the backend running on port 8000?"));
     api.upcoming(7).then(setUpcoming).catch(() => {});
@@ -127,18 +128,28 @@ export default function CreatePage() {
               )}
             </div>
             {research.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-2 pb-1 pt-3">
-                <span className="flex items-center gap-1 text-xs font-medium text-slate-500"><FlaskConical size={12} /> Use research:</span>
-                {research.map((r) => {
-                  const on = researchIds.includes(r.id);
-                  return (
-                    <button type="button" key={r.id} title={r.topic}
-                      onClick={() => setResearchIds((ids) => (on ? ids.filter((x) => x !== r.id) : ids.length < 3 ? [...ids, r.id] : ids))}
-                      className={`chip max-w-[220px] truncate border ${on ? "border-brand bg-brand-soft text-brand-700" : "border-transparent bg-slate-100 text-slate-600"}`}>
-                      {r.topic}
-                    </button>
-                  );
-                })}
+              <div className="border-t border-slate-100 px-2 pb-1 pt-3">
+                <button type="button" onClick={() => setShowResearch((s) => !s)} aria-expanded={showResearch}
+                  className="flex items-center gap-1.5 text-xs font-medium text-slate-500 transition hover:text-ink">
+                  <FlaskConical size={12} />
+                  {researchIds.length ? `Using ${researchIds.length} research ${researchIds.length === 1 ? "brief" : "briefs"}` : `Attach research (${research.length})`}
+                  <ChevronDown size={13} className={`transition-transform duration-300 ${showResearch ? "rotate-180" : ""}`} />
+                </button>
+                {showResearch && (
+                  <div className="stagger mt-2 flex flex-wrap gap-2">
+                    {research.map((r) => {
+                      const on = researchIds.includes(r.id);
+                      return (
+                        <button type="button" key={r.id} title={r.topic}
+                          onClick={() => setResearchIds((ids) => (on ? ids.filter((x) => x !== r.id) : ids.length < 3 ? [...ids, r.id] : ids))}
+                          className={`chip max-w-[220px] truncate border ${on ? "border-brand bg-brand-soft text-brand-700" : "border-transparent bg-slate-100 text-slate-600"}`}>
+                          {r.topic}
+                        </button>
+                      );
+                    })}
+                    <span className="self-center text-[11px] text-slate-400">up to 3</span>
+                  </div>
+                )}
               </div>
             )}
           </form>

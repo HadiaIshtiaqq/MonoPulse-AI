@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { FlaskConical, LayoutGrid, Menu, Plus, Wand2, X } from "lucide-react";
+import { FlaskConical, LayoutGrid, Menu, Plus, Search, Wand2, X } from "lucide-react";
+import { useCommandPalette } from "./CommandPalette";
 
 const NAV = [
   { href: "/campaigns", label: "Campaigns", icon: LayoutGrid, match: (p: string) => p.startsWith("/campaign") },
@@ -54,6 +55,18 @@ function Nav({ pathname }: { pathname: string }) {
   );
 }
 
+function SearchButton() {
+  const openPalette = useCommandPalette();
+  return (
+    <button onClick={openPalette}
+      className="flex w-full items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-400 transition hover:border-slate-300 hover:text-slate-600 hover:shadow-sm">
+      <Search size={15} />
+      Search
+      <span className="ml-auto flex gap-0.5"><kbd className="kbd">Ctrl</kbd><kbd className="kbd">K</kbd></span>
+    </button>
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -64,6 +77,7 @@ export function Sidebar() {
       <Link href="/" className={`btn-gradient group w-full py-2.5 ${pathname === "/" ? "ring-4 ring-brand-100" : ""}`}>
         <Plus size={16} className="transition-transform duration-300 group-hover:rotate-90" /> New campaign
       </Link>
+      <SearchButton />
       <Nav pathname={pathname} />
     </div>
   );

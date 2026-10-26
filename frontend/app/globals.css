@@ -69,8 +69,14 @@
   .btn-ghost {
     @apply btn border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50 hover:shadow-sm;
   }
+  .btn-danger {
+    @apply btn bg-red-600 text-white shadow-sm hover:-translate-y-px hover:bg-red-700 focus-visible:ring-red-300;
+  }
   .btn-sm {
     @apply px-3 py-1.5 text-xs;
+  }
+  .kbd {
+    @apply inline-grid min-w-[1.4rem] place-items-center rounded-md border border-slate-200 bg-white px-1.5 py-px font-sans text-[10px] font-semibold text-slate-500 shadow-[0_1px_0_rgba(14,16,34,.06)];
   }
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors duration-200;
@@ -89,6 +95,15 @@
   }
   .seg > button[data-active="true"] {
     @apply bg-white text-ink shadow-sm;
+  }
+
+  /* Soft edges on sideways-scrolling rows, so cut-off items read as "more this way". */
+  .fade-x {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 28px), transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 28px), transparent 100%);
+  }
+  @media (min-width: 640px) {
+    .fade-x { -webkit-mask-image: none; mask-image: none; }
   }
 
   /* Tabs whose underline grows in from the centre. */

@@ -99,6 +99,19 @@ def _clean(text: str, limit: int = 120) -> str:
     return " ".join(str(text or "").split())[:limit]
 
 
+# "(WU3PPBS26-LI1F67)" or a bare "WU3PPBS26-LI2M72": stock codes, not words.
+PRODUCT_CODE_RE = re.compile(r"\s*\((?=[^)\s]*\d)(?=[^)\s]*[A-Za-z])[A-Za-z0-9/_.-]{5,}\)|\s*\b(?=[A-Z]*\d)(?=\d*[A-Z])[A-Z0-9]{4,}[-/][A-Z0-9-]{3,}\b")
+
+
+def strip_codes(text: str) -> str:
+    """"Sandstone - 3 Pc (WU3PPBS26-LI1F67)" -> "Sandstone - 3 Pc": SKUs mean nothing to followers."""
+    return re.sub(r"\s{2,}", " ", PRODUCT_CODE_RE.sub("", text)).strip(" -–—|")
+
+
+def _name(text: str) -> str:
+    return strip_codes(_clean(text)) or _clean(text)
+
+
 # --------------------------------------------------------------------------- JSON-LD / microdata
 
 
@@ -140,7 +153,7 @@ def jsonld_products(soup: BeautifulSoup, base: str) -> list[Product]:
             types = types if isinstance(types, list) else [types]
             if "Product" in types and node.get("name"):
                 image = _ld_image(node.get("image"))
-                out.append(Product(name=_clean(node["name"]), price=_ld_price(node.get("offers")),
+                out.append(Product(name=_name(node["name"]), price=_ld_price(node.get("offers")),
                                    url=urljoin(base, str(node.get("url") or "")) if node.get("url") else "",
                                    image_url=urljoin(base, image) if image else "", category=_clean(node.get("category") or "", 60)))
             for key in ("@graph", "itemListElement", "item", "mainEntity"):
@@ -163,7 +176,7 @@ def microdata_products(soup: BeautifulSoup, base: str) -> list[Product]:
         cur = (currency.get("content") or currency.get_text(strip=True)) if currency else ""
         img = prop("image")
         image = (img.get("content") or img.get("src") or img.get("href") or "") if img else image_of(el, base)
-        out.append(Product(name=_clean(name.get("content") or name.get_text(" ", strip=True)),
+        out.append(Product(name=_name(name.get("content") or name.get_text(" ", strip=True)),
                            price=format_price(amount, cur) or _displayed_price(el),
                            url=_link_of(el, base), image_url=urljoin(base, image) if image else ""))
     return out
@@ -191,7 +204,7 @@ def data_attr_products(soup: BeautifulSoup, base: str) -> list[Product]:
                 continue
             if not isinstance(data, dict) or not data.get("name"):
                 continue
-            out.append(Product(name=_clean(data["name"]), price=_displayed_price(el) or format_price(data.get("price"), str(data.get("currency") or "")),
+            out.append(Product(name=_name(data["name"]), price=_displayed_price(el) or format_price(data.get("price"), str(data.get("currency") or "")),
                                url=_link_of(el, base), image_url=image_of(el, base), category=_clean(data.get("category") or "", 60)))
             break
     return out
@@ -252,7 +265,7 @@ def card_products(soup: BeautifulSoup, base: str) -> list[Product]:
         image = image_of(img, base)
         if name and image:
             price, was = sale_prices(text)
-            out.append(Product(name=name, price=price, was_price=was, url=urljoin(base, link["href"]), image_url=image))
+            out.append(Product(name=_name(name), price=price, was_price=was, url=urljoin(base, link["href"]), image_url=image))
     return out
 
 
@@ -265,7 +278,7 @@ def shopify_products(data: dict, origin: str, currency: str = "") -> list[Produc
         images = p.get("images") or [{}]
         was = variants[0].get("compare_at_price")
         on_sale = was and currency and _amount(was) > _amount(variants[0].get("price"))
-        out.append(Product(name=_clean(p["title"]), price=format_price(variants[0].get("price"), currency) if currency else "",
+        out.append(Product(name=_name(p["title"]), price=format_price(variants[0].get("price"), currency) if currency else "",
                            was_price=format_price(was, currency) if on_sale else "",
                            url=f"{origin}/products/{p.get('handle', '')}", image_url=str(images[0].get("src") or ""),
                            category=_clean(p.get("product_type") or "", 60)))

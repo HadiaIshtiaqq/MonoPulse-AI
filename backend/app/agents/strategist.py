@@ -16,6 +16,7 @@ from datetime import date, timedelta
 
 from .. import config
 from ..llm import LLMError, router
+from ..scraper.products import strip_codes
 from ..schemas import BrandKit, CampaignStrategy, ContentPillar, Platform, Product, TrendItem
 from . import calendar, variety
 from .calendar import COUNTRY_NAMES
@@ -447,7 +448,7 @@ def fallback_slides(kit: BrandKit) -> list[dict]:
     """Demo-mode carousel pages built from the brand's own value props."""
     props = [p.rstrip(".") for p in (kit.value_props or [])][:3] or [kit.tagline or kit.name]
     site = (kit.website_url or "").split("//")[-1].strip("/") or "our page"
-    slides = [{"headline": p[:60], "body": f"Ask about {p if len(p.split()) <= 4 else 'this'} next time you're in, or see more at {site}."}
+    slides = [{"headline": fit_headline(p), "body": f"Ask about {p if len(p.split()) <= 4 else 'this'} next time you're in, or see more at {site}."}
               for p in props]
     slides.append({"headline": "Save this for later", "body": f"Questions about any of these? Ask the {kit.name} team, we read every message."})
     return slides
@@ -517,7 +518,7 @@ def headline_options(kit: BrandKit, slot: Slot) -> list[str]:
         fields = headline_fields(kit, slot, p)
         for family in ("new", "craft", "customer", "tip" if is_wearable(kit) else "tip_other", "comfort"):
             out += [h.format(**fields) for h in variety.PRODUCT_HEADLINES[family] if "{name}" in h]
-    return [h[:60] for h in dict.fromkeys(out)]
+    return [fit_headline(h) for h in dict.fromkeys(out)]
 
 
 def product_angle(kit: BrandKit, slot: Slot, p: Product) -> tuple[str, str]:
@@ -574,7 +575,7 @@ def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
         caption = f"What's new at {kit.name}: {idea[0].lower()}{idea[1:]}.{price}\n\n{close}"
     else:
         caption, cta = f"{idea}.{price}", link or kit.name
-    return {"headline": headline[:60], "caption": caption, "cta": cta}
+    return {"headline": fit_headline(headline), "caption": caption, "cta": cta}
 
 
 def adapt_to_platform(kit: BrandKit, slot: Slot, caption: str, kind: str = "") -> tuple[str, str]:
@@ -608,6 +609,21 @@ def theme_moment(theme: str) -> str:
 TRAILING_SMALL_WORDS = {"on", "at", "the", "for", "and", "with", "of", "to", "in", "a", "an", "our", "your", "by", "from", "featuring"}
 
 
+def fit_headline(text: str, limit: int = 60) -> str:
+    """Trim an image headline to whole words (never "…offering unsti")."""
+    text = strip_codes(" ".join(text.split()))
+    if len(text) <= limit:
+        return text
+    words = text[: limit + 1].split()[:-1] or [text[:limit]]
+    while len(words) > 2 and words[-1].lower().strip(",.;:") in TRAILING_SMALL_WORDS:
+        words.pop()
+    out = " ".join(words)
+    head, comma, tail = out.rpartition(",")
+    if comma and len(tail.split()) <= 2 and len(head.split()) >= 3:
+        out = head  # "...fashion, offering" -> "...fashion"
+    return out.rstrip(",;:-–—")
+
+
 def short_claim(text: str, max_words: int = 9) -> str:
     """A brand claim short enough for a quote graphic, cut at a comma or a full word, never
     ending on a dangling "on" / "the" / "and"."""
@@ -633,7 +649,7 @@ def quote_copy(kit: BrandKit, slot: Slot) -> dict:
     claims = brand_claims(kit)
     claim = claims[slot.nth % len(claims)]
     caption, cta = adapt_to_platform(kit, slot, f"{claim}.", "quote")
-    return {"headline": short_claim(claim)[:60], "caption": caption, "cta": cta}
+    return {"headline": fit_headline(short_claim(claim)), "caption": caption, "cta": cta}
 
 
 def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
@@ -674,4 +690,4 @@ def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
         headline = variety.pick(H["spotlight" if food else "spotlight_other"], slot.nth)
         caption = f"{Item} at {name}.{claim}"
     caption, cta = adapt_to_platform(kit, slot, caption, kind)
-    return {"headline": headline.format(**fields)[:60], "caption": caption, "cta": cta}
+    return {"headline": fit_headline(headline.format(**fields)), "caption": caption, "cta": cta}

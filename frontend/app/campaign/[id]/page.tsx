@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, CalendarClock, CalendarDays, CheckCheck, Download, Grid3x3, Layers, Lightbulb, List, Loader2, Palette, Send } from "lucide-react";
-import { api, fmtDay, fmtTime, groupKey, groupPosts, logoSrc, type Campaign, type Job, type PublishingStatus, type SocialPost } from "@/lib/api";
+import { api, fmtDay, fmtTime, groupKey, groupPosts, logoSrc, type Campaign, type Job, type Platform, type PostStatus, type PublishingStatus, type SocialPost } from "@/lib/api";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { CalendarView } from "@/components/CalendarView";
 import { QueueList } from "@/components/QueueList";
@@ -14,8 +14,11 @@ import { PostEditor } from "@/components/PostEditor";
 import { StrategyPanel } from "@/components/StrategyPanel";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 import { CountUp } from "@/components/Motion";
+import { useFeedback } from "@/components/Feedback";
 
 type Tab = "plan" | "feed" | "brand" | "strategy";
+type StatusFilter = "all" | PostStatus;
+const STATUS_FILTERS: [StatusFilter, string][] = [["all", "All"], ["DRAFT", "To review"], ["APPROVED", "Approved"], ["PUBLISHED", "Posted"]];
 
 function CampaignPage() {
   const { id } = useParams<{ id: string }>();
@@ -29,6 +32,9 @@ function CampaignPage() {
   const [view, setView] = useState<"calendar" | "list">("calendar");
   const [openId, setOpenId] = useState<string | null>(params.get("post"));
   const [elapsed, setElapsed] = useState(0);
+  const [hidden, setHidden] = useState<Platform[]>([]);
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const { toast } = useFeedback();
   const t0 = useRef(Date.now());
 
   const load = useCallback(() => api.campaign(id).then(setCampaign).catch((e) => setError(e.message)), [id]);
@@ -73,12 +79,24 @@ function CampaignPage() {
       const old = new Date(v.publish_at);
       const publish_at = new Date(y, m - 1, d, old.getHours(), old.getMinutes()).toISOString();
       replacePost({ ...v, publish_at });
-      try { replacePost(await api.updatePost(v.id, { publish_at })); } catch (e) { replacePost(v); setError((e as Error).message); }
-    }));
+      try { replacePost(await api.updatePost(v.id, { publish_at })); } catch (e) { replacePost(v); throw e; }
+    })).then(
+      () => toast(`Moved to ${fmtDay(new Date(y, m - 1, d).toISOString(), { weekday: "short", month: "short", day: "numeric" })}`),
+      (e) => toast((e as Error).message, "error"),
+    );
   }
 
   async function approve(p: SocialPost) {
-    try { replacePost(await api.updatePost(p.id, { status: "APPROVED" })); } catch (e) { setError((e as Error).message); }
+    try { replacePost(await api.updatePost(p.id, { status: "APPROVED" })); toast("Post approved"); } catch (e) { toast((e as Error).message, "error"); }
+  }
+
+  async function approveAll() {
+    if (!campaign) return;
+    try {
+      const drafts = campaign.posts.filter((p) => p.status === "DRAFT").length;
+      setCampaign(await api.approveAll(campaign.id));
+      toast(`Approved ${drafts} ${drafts === 1 ? "version" : "versions"}: your calendar is ready`);
+    } catch (e) { toast((e as Error).message, "error"); }
   }
 
   async function retry() {
@@ -119,6 +137,23 @@ function CampaignPage() {
   const gi = open ? groups.findIndex((g) => g.some((v) => v.id === open.id)) : -1;
   // Previous / next move between posts, staying on the same platform when that post has it.
   const sibling = (g: SocialPost[]) => (g.find((v) => v.platform === open?.platform) ?? g[0]).id;
+  // Approve the open post's draft versions, then step to the next post still to review (or close after the last one).
+  async function approveNext() {
+    if (gi < 0) return;
+    const drafts = groups[gi].filter((v) => v.status === "DRAFT");
+    const done = await Promise.all(drafts.map((v) => api.updatePost(v.id, { status: "APPROVED" })));
+    done.forEach(replacePost);
+    const later = groups.slice(gi + 1).find((g) => g.some((v) => v.status === "DRAFT")) ?? groups[gi + 1];
+    if (drafts.length) toast(drafts.length > 1 ? `Approved all ${drafts.length} platform versions` : "Post approved");
+    if (later) setOpenId(sibling(later));
+    else { setOpenId(null); toast("That was the last post: everything is reviewed", "info"); }
+  }
+  const platformsShown = campaign.platforms.filter((p) => !hidden.includes(p));
+  const shownPosts = campaign.posts.filter((p) => !hidden.includes(p.platform));
+  const filtered = shownPosts.filter((p) => status === "all" || p.status === status);
+  const counts = Object.fromEntries(STATUS_FILTERS.map(([k]) => [k, shownPosts.filter((p) => k === "all" || p.status === k).length]));
+  // Keep at least one platform on.
+  const togglePlatform = (p: Platform) => setHidden((h) => (h.includes(p) ? h.filter((x) => x !== p) : platformsShown.length > 1 ? [...h, p] : h));
   const anyConnected = !!pub && (Object.values(pub.connected).some(Boolean) || pub.webhook);
 
   return (
@@ -147,12 +182,18 @@ function CampaignPage() {
               <span className={`relative h-5 w-9 rounded-full transition-colors duration-300 ${pub?.auto_publish ? "bg-brand" : "bg-slate-300"}`}>
                 <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all duration-300 ease-spring ${pub?.auto_publish ? "left-[18px]" : "left-0.5"}`} />
               </span>
-              <input type="checkbox" className="sr-only" checked={!!pub?.auto_publish} onChange={async (e) => setPub(await api.setAutoPublish(e.target.checked))} />
+              <input type="checkbox" className="sr-only" checked={!!pub?.auto_publish} onChange={async (e) => {
+                const on = e.target.checked;
+                try {
+                  setPub(await api.setAutoPublish(on));
+                  toast(on ? "Approved posts will go out on schedule" : "Auto-posting paused", "info");
+                } catch (err) { toast((err as Error).message, "error"); }
+              }} />
               Auto-post approved
             </label>
           )}
-          <a href={api.exportUrl(campaign.id)} className="btn-ghost"><Download size={16} /> Export</a>
-          <button onClick={async () => setCampaign(await api.approveAll(campaign.id))} disabled={approved === campaign.posts.length} className="btn-primary">
+          <a href={api.exportUrl(campaign.id)} onClick={() => toast("Downloading your campaign: images, captions and schedule", "info")} className="btn-ghost"><Download size={16} /> Export</a>
+          <button onClick={approveAll} disabled={approved === campaign.posts.length} className="btn-primary">
             <CheckCheck size={16} /> Approve all
           </button>
         </div>
@@ -198,7 +239,7 @@ function CampaignPage() {
       </div>
 
       <div className="flex items-end justify-between gap-3 border-b border-slate-200">
-        <div className="no-scrollbar flex gap-1 overflow-x-auto overflow-y-hidden">
+        <div className="no-scrollbar fade-x flex gap-1 overflow-x-auto overflow-y-hidden">
           {([["plan", "Schedule", CalendarDays], ["feed", "Feed preview", Grid3x3], ["brand", "Brand kit", Palette], ["strategy", "Strategy", Lightbulb]] as const).map(([key, label, Icon]) => (
             <button key={key} onClick={() => setTab(key)} data-active={tab === key} className="tab">
               <Icon size={15} /> {label}
@@ -214,15 +255,47 @@ function CampaignPage() {
       </div>
 
       {error && <p className="animate-slide-down rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {tab === "plan" && (
+        <div className="flex flex-wrap items-center gap-2">
+          {campaign.platforms.length > 1 && (
+            <div className="flex items-center gap-1" role="group" aria-label="Show platforms">
+              {campaign.platforms.map((p) => {
+                const on = !hidden.includes(p);
+                return (
+                  <button key={p} onClick={() => togglePlatform(p)} aria-pressed={on} title={`${on ? "Hide" : "Show"} ${PLATFORM_META[p].label}`}
+                    className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95 ${
+                      on ? "border-slate-300 bg-white text-ink shadow-sm" : "border-dashed border-slate-200 bg-transparent text-slate-400"}`}>
+                    <span className={on ? "" : "opacity-40 grayscale"}><PlatformIcon platform={p} size={12} /></span>
+                    <span className="hidden sm:inline">{PLATFORM_META[p].label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="seg no-scrollbar max-w-full overflow-x-auto sm:ml-auto">
+            {STATUS_FILTERS.map(([k, label]) => (
+              <button key={k} data-active={status === k} onClick={() => setStatus(k)} className="flex items-center gap-1.5 whitespace-nowrap">
+                {label}
+                <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${status === k ? "bg-brand-soft text-brand-700" : "bg-slate-200/70 text-slate-500"}`}>{counts[k]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div key={`${tab}-${view}`} className="animate-fade-up">
-      {tab === "plan" && (view === "list" ? (
-        <QueueList posts={campaign.posts} onOpen={(p) => setOpenId(p.id)} onApprove={approve} />
+      {tab === "plan" && filtered.length === 0 ? (
+        <div className="card animate-scale-in p-10 text-center">
+          <p className="font-semibold">{status === "DRAFT" ? "Nothing left to review" : status === "PUBLISHED" ? "Nothing posted yet" : "No posts match these filters"}</p>
+          <button onClick={() => { setStatus("all"); setHidden([]); }} className="btn-ghost mt-4">Show all posts</button>
+        </div>
+      ) : tab === "plan" && (view === "list" ? (
+        <QueueList posts={filtered} onOpen={(p) => setOpenId(p.id)} onApprove={approve} />
       ) : (
         <>
-          <div className="sm:hidden"><QueueList posts={campaign.posts} onOpen={(p) => setOpenId(p.id)} onApprove={approve} /></div>
+          <div className="sm:hidden"><QueueList posts={filtered} onOpen={(p) => setOpenId(p.id)} onApprove={approve} /></div>
           <div className="hidden sm:block">
-            <p className="mb-3 text-xs text-slate-500">Each post has a version for every platform; click a platform icon to open that version. Drag a post to another day to move every version.</p>
-            <CalendarView posts={campaign.posts} startDate={campaign.start_date} days={campaign.days} onOpen={(p) => setOpenId(p.id)} onMove={move} />
+            <p className="mb-3 text-xs text-slate-500">Each post has a version for every platform; click a platform icon to open that version. Drag a post to another day to move every version. Open a post and press A to approve it and move on.</p>
+            <CalendarView posts={filtered} startDate={campaign.start_date} days={campaign.days} onOpen={(p) => setOpenId(p.id)} onMove={move} />
           </div>
         </>
       ))}
@@ -240,6 +313,7 @@ function CampaignPage() {
           onChange={replacePost}
           versions={gi >= 0 ? groups[gi] : [open]}
           onSwitch={setOpenId}
+          onApproveNext={approveNext}
           onPrev={gi > 0 ? () => setOpenId(sibling(groups[gi - 1])) : undefined}
           onNext={gi >= 0 && gi < groups.length - 1 ? () => setOpenId(sibling(groups[gi + 1])) : undefined}
         />
