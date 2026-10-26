@@ -97,7 +97,7 @@ export function StrategyPanel({ campaign }: { campaign: Campaign }) {
   const s = campaign.strategy;
   const b = campaign.brand;
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
+    <div className="stagger grid gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
         {s && (
           <div className="card space-y-4 p-5">
@@ -141,7 +141,7 @@ export function StrategyPanel({ campaign }: { campaign: Campaign }) {
           </div>
         )}
       </div>
-      <div className="space-y-4">
+      <div className="stagger space-y-4">
         {campaign.competitor_task_id && <CompetitorInsights taskId={campaign.competitor_task_id} />}
         {campaign.content_mix && campaign.content_mix.posts > 0 && <ContentMixCard mix={campaign.content_mix} />}
         {campaign.research_ids?.length > 0 && <ResearchUsed ids={campaign.research_ids} />}

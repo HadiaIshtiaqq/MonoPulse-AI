@@ -43,8 +43,8 @@ export function AccessGate({ children }: { children: React.ReactNode }) {
   if (state === "open") return <>{children}</>;
   return (
     <div className="grid min-h-screen place-items-center bg-[#F7F7FB] p-4">
-      <form onSubmit={unlock} className="card w-full max-w-sm p-6 text-center">
-        <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-brand-gradient text-white"><KeyRound size={20} /></span>
+      <form onSubmit={unlock} className="card w-full max-w-sm animate-scale-in p-6 text-center shadow-pop">
+        <span className="mx-auto grid h-12 w-12 place-items-center animate-pop-in rounded-2xl bg-brand-gradient text-white shadow-glow"><KeyRound size={20} /></span>
         <h1 className="mt-4 text-xl font-bold">Unlock MonoPlus</h1>
         <p className="mt-1 text-sm text-slate-500">Enter the access key for this workspace.</p>
         <input autoFocus type="password" className="input mt-5" placeholder="Access key" value={key} onChange={(e) => setKey(e.target.value)} />

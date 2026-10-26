@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { Bookmark, ChevronLeft, ChevronRight, Heart, MessageCircle, MoreHorizontal, Repeat2, Send, Share2, ThumbsUp } from "lucide-react";
-import { media, type BrandKit, type SocialPost } from "@/lib/api";
+import { logoSrc, media, type BrandKit, type SocialPost } from "@/lib/api";
 
 function Avatar({ brand }: { brand: BrandKit | null }) {
   if (brand?.logo_url) {
-    const src = brand.logo_url.startsWith("/") ? media(brand.logo_url) : brand.logo_url;
+    const src = logoSrc(brand) ?? "";
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={src} alt="" className="h-9 w-9 rounded-full border border-slate-200 bg-white object-contain p-0.5" />;
   }

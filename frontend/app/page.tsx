@@ -9,6 +9,7 @@ import {
 import { api, fmtDay, media, type CampaignSummary, type Platform, type ResearchTask, type SocialPost } from "@/lib/api";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 import { CampaignCard } from "@/components/CampaignCard";
+import { Reveal, useCycle } from "@/components/Motion";
 
 const ALL_PLATFORMS: Platform[] = ["instagram", "linkedin", "x", "facebook"];
 const EXAMPLES = ["tartinebakery.com", "sweetgreen.com", "@bluebottlecoffee", "basecamp.com"];
@@ -47,6 +48,8 @@ export default function CreatePage() {
     api.upcoming(7).then(setUpcoming).catch(() => {});
   }, []);
 
+  const placeholder = useCycle(EXAMPLES);
+
   const toggle = (p: Platform) =>
     setPlatforms((cur) => (cur.includes(p) ? (cur.length > 1 ? cur.filter((x) => x !== p) : cur) : [...cur, p]));
 
@@ -66,32 +69,39 @@ export default function CreatePage() {
 
   return (
     <div className="space-y-10">
-      <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 bg-white px-5 py-10 shadow-card sm:px-10 sm:py-14">
-        <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-brand-gradient opacity-[0.12] blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-32 -left-16 h-72 w-72 rounded-full bg-pop opacity-[0.08] blur-3xl" />
+      <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 bg-white px-5 py-10 shadow-card sm:px-10 sm:py-16">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-96 w-96 animate-float rounded-full bg-brand-gradient opacity-[0.14] blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 -left-16 h-80 w-80 animate-float-slow rounded-full bg-pop opacity-[0.10] blur-3xl" />
+        <div className="pointer-events-none absolute left-1/3 top-10 h-40 w-40 animate-float-slow rounded-full bg-brand opacity-[0.06] blur-2xl" />
+        {/* A faint dot grid that fades out towards the edges. */}
+        <div className="pointer-events-none absolute inset-0 opacity-[0.35] [background-image:radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:22px_22px] [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_75%)]" />
         <div className="relative mx-auto max-w-3xl text-center">
-          <span className="chip bg-brand-soft text-brand-700"><Sparkles size={12} /> Your social media team, in one input</span>
-          <h1 className="mt-4 text-4xl font-extrabold leading-[1.1] tracking-tight sm:text-5xl">
-            A month of posts that sound like <span className="bg-brand-gradient bg-clip-text text-transparent">you</span>
+          <span className="chip animate-fade-up border border-brand-100 bg-white/80 text-brand-700 shadow-sm backdrop-blur">
+            <Sparkles size={12} className="animate-pulse" /> Your social media team, in one input
+          </span>
+          <h1 className="delay-1 mt-5 animate-fade-up text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-6xl">
+            A month of posts that sound like <span className="gradient-text">you</span>
           </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-base text-slate-600">
+          <p className="delay-2 mx-auto mt-5 max-w-2xl animate-fade-up text-base text-slate-600 sm:text-lg">
             Paste your website or Instagram handle. MonoPlus learns your brand, checks what&apos;s happening in your industry today,
             and designs a ready-to-post calendar of captions, graphics and carousels.
           </p>
 
-          <form onSubmit={submit} className="mx-auto mt-8 max-w-2xl rounded-2xl border border-slate-200 bg-white p-2 text-left shadow-lift">
+          <form onSubmit={submit}
+            className="delay-3 group/form mx-auto mt-9 max-w-2xl animate-scale-in rounded-2xl border border-slate-200 bg-white/90 p-2 text-left shadow-lift backdrop-blur transition-all duration-300 focus-within:border-brand-200 focus-within:shadow-glow-lg">
             <div className="flex items-center gap-2">
-              <Globe className="ml-3 shrink-0 text-slate-400" size={20} />
+              <Globe className="ml-3 shrink-0 text-slate-400 transition-colors duration-300 group-focus-within/form:text-brand" size={20} />
               <input
                 autoFocus
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="yourbusiness.com or @yourhandle"
+                placeholder={`Try ${placeholder}`}
+                aria-label="Your website or social handle"
                 className="h-12 min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-slate-400"
               />
-              <button className="btn-gradient h-11 shrink-0 px-5" disabled={busy || !input.trim()}>
-                {busy ? <Loader2 className="animate-spin" size={16} /> : <ArrowRight size={16} />}
-                <span className="hidden sm:inline">Create campaign</span>
+              <button className="btn-gradient group h-11 shrink-0 px-5" disabled={busy || !input.trim()}>
+                {busy ? <Loader2 className="animate-spin" size={16} /> : <ArrowRight size={16} className="transition-transform duration-300 group-hover:translate-x-1" />}
+                <span className="hidden sm:inline">{busy ? "Starting…" : "Create campaign"}</span>
               </button>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-100 px-2 pb-1 pt-3">
@@ -99,7 +109,7 @@ export default function CreatePage() {
                 const on = platforms.includes(p);
                 return (
                   <button type="button" key={p} onClick={() => toggle(p)} aria-pressed={on}
-                    className={`chip border transition ${on ? "border-slate-300 bg-white text-ink shadow-sm" : "border-transparent bg-slate-100 text-slate-400"}`}>
+                    className={`chip border transition-all duration-200 active:scale-95 ${on ? "border-slate-300 bg-white text-ink shadow-sm" : "border-transparent bg-slate-100 text-slate-400 hover:text-slate-600"}`}>
                     <PlatformIcon platform={p} size={12} /> {PLATFORM_META[p].label}
                   </button>
                 );
@@ -132,8 +142,8 @@ export default function CreatePage() {
               </div>
             )}
           </form>
-          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
-          <p className="mt-4 text-xs text-slate-500">
+          {error && <p className="mt-3 animate-slide-down text-sm text-red-600">{error}</p>}
+          <p className="delay-4 mt-4 animate-fade-in text-xs text-slate-500">
             Try:{" "}
             {EXAMPLES.map((x, i) => (
               <span key={x}>
@@ -142,33 +152,41 @@ export default function CreatePage() {
               </span>
             ))}
           </p>
-          <ul className="mt-6 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-slate-600">
+          <ul className="stagger mt-7 flex flex-wrap justify-center gap-x-5 gap-y-2 text-xs text-slate-600">
             {PROMISES.map((p) => <li key={p} className="flex items-center gap-1.5"><BadgeCheck size={14} className="text-emerald-500" /> {p}</li>)}
           </ul>
         </div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {STEPS.map(({ icon: Icon, title, body }, i) => (
-          <div key={title} className="card relative p-5">
-            <span className="absolute right-4 top-4 font-display text-3xl font-extrabold text-slate-100">{i + 1}</span>
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand"><Icon size={18} /></span>
-            <h3 className="mt-3 font-semibold">{title}</h3>
-            <p className="mt-1 text-sm text-slate-600">{body}</p>
-          </div>
-        ))}
-      </section>
+      <Reveal>
+        <section className="stagger grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {STEPS.map(({ icon: Icon, title, body }, i) => (
+            <div key={title} className="card card-hover group relative overflow-hidden p-5">
+              <span className="absolute right-4 top-3 font-display text-4xl font-extrabold text-slate-100 transition-colors duration-500 group-hover:text-brand-100">{i + 1}</span>
+              <span className="relative grid h-10 w-10 place-items-center rounded-xl bg-brand-soft text-brand transition-all duration-500 group-hover:rotate-[-8deg] group-hover:scale-110 group-hover:bg-brand group-hover:text-white group-hover:shadow-glow">
+                <Icon size={18} />
+              </span>
+              <h3 className="relative mt-3 font-semibold">{title}</h3>
+              <p className="relative mt-1 text-sm text-slate-600">{body}</p>
+              <span className="absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-0 bg-brand-gradient transition-transform duration-500 group-hover:scale-x-100" />
+            </div>
+          ))}
+        </section>
+      </Reveal>
 
       {upcoming.length > 0 && (
-        <section>
+        <Reveal>
+          <section>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-lg font-bold"><CalendarClock size={18} className="text-brand" /> Up next this week</h2>
           </div>
-          <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+          <div className="stagger flex gap-3 overflow-x-auto pb-2 pt-1 scrollbar-thin">
             {upcoming.slice(0, 12).map(({ campaign_id, brand, post }) => (
-              <Link key={post.id} href={`/campaign/${campaign_id}?post=${post.id}`} className="card w-44 shrink-0 overflow-hidden transition hover:shadow-lift">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={media(post.image_url)} alt="" className="aspect-square w-full bg-slate-100 object-contain" />
+              <Link key={post.id} href={`/campaign/${campaign_id}?post=${post.id}`} className="card card-hover group w-44 shrink-0 overflow-hidden">
+                <span className="block overflow-hidden">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={media(post.image_url)} alt="" className="zoom-on-hover aspect-square w-full bg-slate-100 object-contain" />
+                </span>
                 <div className="p-2.5">
                   <p className="flex items-center gap-1 text-[11px] text-slate-500">
                     <PlatformIcon platform={post.platform} size={11} />
@@ -179,24 +197,29 @@ export default function CreatePage() {
               </Link>
             ))}
           </div>
-        </section>
+          </section>
+        </Reveal>
       )}
 
       {recent.length > 0 && (
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-bold">Recent campaigns</h2>
-            <Link href="/campaigns" className="text-sm font-medium text-brand hover:underline">View all →</Link>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {recent.slice(0, 3).map((c) => <CampaignCard key={c.id} c={c} />)}
-          </div>
-        </section>
+        <Reveal>
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-bold">Recent campaigns</h2>
+              <Link href="/campaigns" className="group text-sm font-medium text-brand">
+                View all <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">→</span>
+              </Link>
+            </div>
+            <div className="stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {recent.slice(0, 3).map((c) => <CampaignCard key={c.id} c={c} />)}
+            </div>
+          </section>
+        </Reveal>
       )}
 
       {recent.length === 0 && !error && (
-        <section className="card flex flex-col items-center gap-2 p-8 text-center">
-          <Wand2 className="text-brand" />
+        <section className="card flex animate-fade-up flex-col items-center gap-2 p-8 text-center">
+          <Wand2 className="animate-float text-brand" />
           <p className="font-semibold">Your campaigns will show up here</p>
           <p className="max-w-md text-sm text-slate-500">Start with your website above. A full 30-day calendar takes about half a minute.</p>
         </section>

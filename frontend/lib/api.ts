@@ -25,6 +25,7 @@ export interface BrandKit {
   accent_color: string;
   palette: string[];
   logo_url: string | null;
+  logo_path?: string | null;
   website_url: string | null;
   brand_voice_prompt: string;
   source_type: string;
@@ -412,6 +413,15 @@ export async function streamEvents(path: string, onEvent: (ev: any) => void, sig
 }
 
 export const media = (path: string | null | undefined) => (path ? `${API_URL}${path}` : "");
+
+/** The brand's logo as MonoPlus saved it (rendered to PNG, the same copy posts use), else the site's URL. */
+export function logoSrc(b: { logo_url: string | null; logo_path?: string | null } | null | undefined): string | null {
+  if (!b) return null;
+  const file = b.logo_path?.split(/[\\/]/).pop();
+  if (file) return media(`/media/${file}`);
+  if (!b.logo_url) return null;
+  return b.logo_url.startsWith("/") ? media(b.logo_url) : b.logo_url;
+}
 
 export const PLATFORM_ORDER: Platform[] = ["instagram", "facebook", "linkedin", "x"];
 export const groupKey = (p: SocialPost) => p.group_id || p.id;

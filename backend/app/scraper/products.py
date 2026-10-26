@@ -27,8 +27,13 @@ MAX_PRODUCTS = 24
 MAX_IMAGES = 16
 
 
+TINY_SIZE_RE = re.compile(r"[?&](?:width|w|sw)=(\d{1,2})(?:&|$)", re.I)
+
+
 def _usable(url: str) -> bool:
     low = url.lower().split("?")[0]
+    if TINY_SIZE_RE.search(url):  # lazy-loading placeholders ("?width=1"), not real photos
+        return False
     return bool(url) and not url.startswith("data:") and not low.endswith((".svg", ".gif", ".ico")) and not SKIP_IMG.search(low.rsplit("/", 1)[-1])
 
 
@@ -323,4 +328,12 @@ def extract_site_images(soup: BeautifulSoup, base: str) -> list[str]:
         m = BG_URL_RE.search(el["style"])
         if m and _usable(m.group(1)):
             urls.append(urljoin(base, m.group(1)))
-    return list(dict.fromkeys(urls))[:MAX_IMAGES]
+    # The same photo often appears at several sizes; keep one of each (the first, usually the largest).
+    seen: set[str] = set()
+    unique = []
+    for u in urls:
+        key = u.split("?")[0]
+        if key not in seen:
+            seen.add(key)
+            unique.append(u)
+    return unique[:MAX_IMAGES]

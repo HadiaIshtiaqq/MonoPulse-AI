@@ -11,12 +11,12 @@ const PLATFORM_LABEL: Record<string, string> = {
 function CompetitorCard({ c, isBrand = false }: { c: CompetitorProfile; isBrand?: boolean }) {
   const host = c.url ? c.url.split("//")[1]?.split("/")[0] : "";
   return (
-    <div className={`flex flex-col overflow-hidden rounded-xl border ${isBrand ? "border-brand bg-brand-soft/40" : "border-slate-200 bg-white"}`}>
+    <div className={`group flex flex-col overflow-hidden rounded-xl border transition-all duration-300 hover:-translate-y-1 hover:shadow-lift ${isBrand ? "border-brand bg-brand-soft/40" : "border-slate-200 bg-white"}`}>
       {c.sample_products.length > 0 && (
-        <div className="grid grid-cols-3 gap-px bg-slate-100">
+        <div className="grid grid-cols-3 gap-px overflow-hidden bg-slate-100">
           {c.sample_products.slice(0, 3).map((p, i) => (
             // eslint-disable-next-line @next/next/no-img-element
-            <img key={i} src={p.image_url} alt={p.name} loading="lazy" className="aspect-[3/4] w-full object-cover" />
+            <img key={i} src={p.image_url} alt={p.name} loading="lazy" className="zoom-on-hover aspect-[3/4] w-full object-cover" />
           ))}
         </div>
       )}
@@ -75,14 +75,14 @@ export function CompetitorReportView({ report }: { report: CompetitorReport }) {
 
       <div>
         <p className="label mb-2">Brands compared</p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {report.brand && <CompetitorCard c={report.brand} isBrand />}
           {report.competitors.map((c) => <CompetitorCard key={c.url || c.name} c={c} />)}
         </div>
         {report.competitors.length === 0 && <p className="text-sm text-slate-500">No competitor sites could be found or read this time.</p>}
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="stagger grid gap-3 lg:grid-cols-3">
         <Facts title="Where you stand" items={report.position} icon={<Target size={14} />} tone="text-slate-800" />
         <Facts title="Your strengths" items={report.strengths} icon={<CheckCircle2 size={14} />} tone="text-emerald-700" />
         <Facts title="Gaps to close" items={report.gaps} icon={<AlertTriangle size={14} />} tone="text-amber-700" />
@@ -91,9 +91,9 @@ export function CompetitorReportView({ report }: { report: CompetitorReport }) {
       {report.recommendations.length > 0 && (
         <div>
           <p className="label mb-2 flex items-center gap-1"><TrendingUp size={12} /> Recommended strategy</p>
-          <ol className="grid gap-3 md:grid-cols-2">
+          <ol className="stagger grid gap-3 md:grid-cols-2">
             {report.recommendations.map((r, i) => (
-              <li key={r.title} className="rounded-xl border border-slate-200 bg-white p-4">
+              <li key={r.title} className="rounded-xl border border-slate-200 bg-white p-4 transition-all duration-300 hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-lift">
                 <p className="flex items-baseline gap-2 font-semibold"><span className="text-brand">{i + 1}.</span>{r.title}</p>
                 {r.why && <p className="mt-1 text-sm text-slate-600"><span className="font-medium text-slate-700">Why: </span>{r.why}</p>}
                 {r.how && <p className="mt-1 text-sm text-slate-600"><span className="font-medium text-slate-700">How: </span>{r.how}</p>}
@@ -106,7 +106,7 @@ export function CompetitorReportView({ report }: { report: CompetitorReport }) {
       {report.plan.length > 0 && (
         <div>
           <p className="label mb-2 flex items-center gap-1"><CalendarRange size={12} /> 4-week plan</p>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className="stagger grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {report.plan.map((w) => (
               <div key={w.week} className="rounded-xl border border-slate-200 bg-white p-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-brand">Week {w.week}</p>

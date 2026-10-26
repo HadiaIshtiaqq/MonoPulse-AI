@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, CalendarClock, CalendarDays, CheckCheck, Download, Grid3x3, Layers, Lightbulb, List, Loader2, Palette, Send } from "lucide-react";
-import { api, fmtDay, fmtTime, groupKey, groupPosts, media, type Campaign, type Job, type PublishingStatus, type SocialPost } from "@/lib/api";
+import { api, fmtDay, fmtTime, groupKey, groupPosts, logoSrc, type Campaign, type Job, type PublishingStatus, type SocialPost } from "@/lib/api";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { CalendarView } from "@/components/CalendarView";
 import { QueueList } from "@/components/QueueList";
@@ -13,6 +13,7 @@ import { BrandKitPanel } from "@/components/BrandKitPanel";
 import { PostEditor } from "@/components/PostEditor";
 import { StrategyPanel } from "@/components/StrategyPanel";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
+import { CountUp } from "@/components/Motion";
 
 type Tab = "plan" | "feed" | "brand" | "strategy";
 
@@ -88,8 +89,8 @@ function CampaignPage() {
     window.location.assign(`/campaign/${campaign_id}?job=${job_id}`);
   }
 
-  if (error && !campaign) return <p className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>;
-  if (!campaign) return <Loader2 className="mx-auto mt-20 animate-spin text-slate-400" />;
+  if (error && !campaign) return <p className="animate-scale-in rounded-xl bg-red-50 p-4 text-red-700">{error}</p>;
+  if (!campaign) return <CampaignSkeleton />;
 
   if (generating || (campaign.status === "FAILED" && job)) {
     return job ? <GenerationProgress job={job} elapsed={elapsed} onRetry={campaign.source_input ? retry : undefined} /> : (
@@ -98,7 +99,7 @@ function CampaignPage() {
   }
   if (campaign.status === "FAILED" || !campaign.brand) {
     return (
-      <div className="card mx-auto mt-10 max-w-lg p-8 text-center">
+      <div className="card mx-auto mt-10 max-w-lg animate-scale-in p-8 text-center">
         <p className="text-lg font-semibold">This campaign couldn&apos;t be generated</p>
         <p className="mt-1 text-sm text-slate-500">The website may have blocked our reader. Try again, use the homepage URL, or your Instagram handle.</p>
         <div className="mt-5 flex justify-center gap-2">
@@ -123,13 +124,15 @@ function CampaignPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-4">
-        <Link href="/campaigns" className="rounded-xl p-2 hover:bg-slate-200/70" aria-label="Back to campaigns"><ArrowLeft size={18} /></Link>
+        <Link href="/campaigns" className="group rounded-xl p-2 transition hover:bg-slate-200/70" aria-label="Back to campaigns">
+          <ArrowLeft size={18} className="transition-transform duration-300 group-hover:-translate-x-0.5" />
+        </Link>
         {b.logo_url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={b.logo_url.startsWith("/") ? media(b.logo_url) : b.logo_url} alt={`${b.name} logo`}
-            className="h-14 w-14 shrink-0 rounded-2xl border border-slate-200 bg-white object-contain p-1.5 shadow-lift" />
+          <img src={logoSrc(b) ?? ""} alt={`${b.name} logo`}
+            className="h-14 w-14 shrink-0 animate-pop-in rounded-2xl border border-slate-200 bg-white object-contain p-1.5 shadow-lift" />
         ) : (
-          <span className="h-14 w-14 shrink-0 rounded-2xl shadow-lift" style={{ background: `linear-gradient(135deg, ${b.primary_color}, ${b.accent_color})` }} />
+          <span className="h-14 w-14 shrink-0 animate-pop-in rounded-2xl shadow-lift" style={{ background: `linear-gradient(135deg, ${b.primary_color}, ${b.accent_color})` }} />
         )}
         <div className="min-w-0">
           <h1 className="truncate text-2xl font-bold">{b.name}</h1>
@@ -140,9 +143,9 @@ function CampaignPage() {
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {anyConnected && (
-            <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" title="Approved posts are published automatically at their scheduled time">
-              <span className={`relative h-5 w-9 rounded-full transition ${pub?.auto_publish ? "bg-brand" : "bg-slate-300"}`}>
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${pub?.auto_publish ? "left-[18px]" : "left-0.5"}`} />
+            <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm transition hover:border-slate-300" title="Approved posts are published automatically at their scheduled time">
+              <span className={`relative h-5 w-9 rounded-full transition-colors duration-300 ${pub?.auto_publish ? "bg-brand" : "bg-slate-300"}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all duration-300 ease-spring ${pub?.auto_publish ? "left-[18px]" : "left-0.5"}`} />
               </span>
               <input type="checkbox" className="sr-only" checked={!!pub?.auto_publish} onChange={async (e) => setPub(await api.setAutoPublish(e.target.checked))} />
               Auto-post approved
@@ -163,14 +166,17 @@ function CampaignPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="stagger grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
           {
-            label: "Posts", value: groups.length, icon: Layers,
+            label: "Posts", value: <CountUp value={groups.length} />, icon: Layers,
             sub: campaign.platforms.length > 1 ? `× ${campaign.platforms.length} platforms = ${campaign.posts.length} versions` : `over ${campaign.days} days`,
           },
-          { label: "Approved", value: `${approved}/${campaign.posts.length}`, sub: approved === campaign.posts.length ? "all set" : `${campaign.posts.length - approved} to review`, icon: CheckCheck },
-          { label: "Posted", value: published, sub: published ? "live on your channels" : "nothing posted yet", icon: Send },
+          {
+            label: "Approved", value: <><CountUp value={approved} /><span className="text-slate-400">/{campaign.posts.length}</span></>,
+            sub: approved === campaign.posts.length ? "all set" : `${campaign.posts.length - approved} to review`, icon: CheckCheck,
+          },
+          { label: "Posted", value: <CountUp value={published} />, sub: published ? "live on your channels" : "nothing posted yet", icon: Send },
           {
             label: "Next post",
             value: next ? fmtDay(next.publish_at, { month: "short", day: "numeric" }) : "–",
@@ -178,8 +184,10 @@ function CampaignPage() {
             icon: CalendarClock,
           },
         ].map(({ label, value, sub, icon: Icon }) => (
-          <div key={label} className="card flex items-center gap-3 px-4 py-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand"><Icon size={18} /></span>
+          <div key={label} className="card card-hover group flex items-center gap-3 px-4 py-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-soft text-brand transition-all duration-500 group-hover:scale-110 group-hover:bg-brand group-hover:text-white group-hover:shadow-glow">
+              <Icon size={18} />
+            </span>
             <div className="min-w-0">
               <p className="label">{label}</p>
               <p className="text-xl font-bold leading-tight">{value}</p>
@@ -192,8 +200,7 @@ function CampaignPage() {
       <div className="flex items-end justify-between gap-3 border-b border-slate-200">
         <div className="no-scrollbar flex gap-1 overflow-x-auto overflow-y-hidden">
           {([["plan", "Schedule", CalendarDays], ["feed", "Feed preview", Grid3x3], ["brand", "Brand kit", Palette], ["strategy", "Strategy", Lightbulb]] as const).map(([key, label, Icon]) => (
-            <button key={key} onClick={() => setTab(key)}
-              className={`-mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium ${tab === key ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-ink"}`}>
+            <button key={key} onClick={() => setTab(key)} data-active={tab === key} className="tab">
               <Icon size={15} /> {label}
             </button>
           ))}
@@ -206,7 +213,8 @@ function CampaignPage() {
         )}
       </div>
 
-      {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {error && <p className="animate-slide-down rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      <div key={`${tab}-${view}`} className="animate-fade-up">
       {tab === "plan" && (view === "list" ? (
         <QueueList posts={campaign.posts} onOpen={(p) => setOpenId(p.id)} onApprove={approve} />
       ) : (
@@ -221,6 +229,7 @@ function CampaignPage() {
       {tab === "feed" && <FeedGrid posts={campaign.posts} brand={b} platforms={campaign.platforms} onOpen={(p) => setOpenId(p.id)} />}
       {tab === "brand" && <BrandKitPanel campaign={campaign} onSaved={setCampaign} />}
       {tab === "strategy" && <StrategyPanel campaign={campaign} />}
+      </div>
 
       {open && (
         <PostEditor
@@ -239,9 +248,30 @@ function CampaignPage() {
   );
 }
 
+function CampaignSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true" aria-label="Loading campaign">
+      <div className="flex items-center gap-4">
+        <div className="skeleton h-14 w-14 rounded-2xl" />
+        <div className="space-y-2">
+          <div className="skeleton h-6 w-56" />
+          <div className="skeleton h-3 w-36" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton h-[74px] rounded-2xl" />)}
+      </div>
+      <div className="skeleton h-10 w-96 max-w-full" />
+      <div className="grid grid-cols-7 gap-2">
+        {Array.from({ length: 14 }).map((_, i) => <div key={i} className="skeleton aspect-[3/4] rounded-xl" />)}
+      </div>
+    </div>
+  );
+}
+
 export default function Page() {
   return (
-    <Suspense fallback={<Loader2 className="mx-auto mt-20 animate-spin text-slate-400" />}>
+    <Suspense fallback={<CampaignSkeleton />}>
       <CampaignPage />
     </Suspense>
   );

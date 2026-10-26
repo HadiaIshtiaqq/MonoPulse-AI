@@ -76,7 +76,7 @@ export function CalendarView({
         ))}
       </div>
       <div className="grid grid-cols-7">
-        {cells.map((d) => {
+        {cells.map((d, ci) => {
           const k = dateKey(d);
           const inRange = d >= start && d <= rangeEnd;
           const list = byDay.get(k) || [];
@@ -96,13 +96,14 @@ export function CalendarView({
                 const post = posts.find((p) => p.id === id);
                 if (post && dateKey(new Date(post.publish_at)) !== k) onMove(post, k);
               }}
-              className={`min-h-[132px] border-b border-r border-slate-100 p-1.5 transition ${
+              style={{ animationDelay: `${Math.min(ci, 41) * 12}ms` }}
+              className={`min-h-[132px] animate-fade-in border-b border-r border-slate-100 p-1.5 transition-colors duration-200 ${
                 inRange ? "bg-white" : "bg-slate-50/60"
               } ${dragOver === k ? "bg-indigo-50 ring-2 ring-inset ring-brand" : ""}`}
             >
               <div className="mb-1 flex items-center justify-between px-1">
                 <span
-                  className={`text-xs ${k === today ? "rounded-full bg-brand px-1.5 font-semibold text-white" : inRange ? "text-slate-600" : "text-slate-300"}`}
+                  className={`text-xs ${k === today ? "animate-pulse-ring rounded-full bg-brand px-1.5 font-semibold text-white" : inRange ? "text-slate-600" : "text-slate-300"}`}
                 >
                   {d.getDate() === 1 || k === dateKey(start) ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : d.getDate()}
                 </span>
@@ -123,12 +124,13 @@ export function CalendarView({
                       }}
                       onClick={() => onOpen(p)}
                       onKeyDown={(e) => { if (e.key === "Enter") onOpen(p); }}
-                      className={`group block w-full cursor-grab overflow-hidden rounded-lg bg-white text-left ring-2 transition hover:shadow-pop active:cursor-grabbing ${STATUS_RING[groupStatus(g)]}`}
+                      className={`group block w-full cursor-grab animate-scale-in overflow-hidden rounded-lg bg-white text-left ring-2 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-pop active:scale-[.98] active:cursor-grabbing ${STATUS_RING[groupStatus(g)]}`}
+                      style={{ animationDelay: `${Math.min(ci, 41) * 12 + 80}ms` }}
                     >
                       {p.image_url && (
-                        <span className="relative block">
+                        <span className="relative block overflow-hidden">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={media(p.image_url)} alt={p.alt_text} className="aspect-square w-full bg-slate-100 object-contain" draggable={false} />
+                          <img src={media(p.image_url)} alt={p.alt_text} className="zoom-on-hover aspect-square w-full bg-slate-100 object-contain" draggable={false} />
                           {g.some((v) => v.format === "carousel") && (
                             <span className="absolute right-1 top-1 flex items-center gap-0.5 rounded-md bg-black/60 px-1 py-0.5 text-[9px] font-semibold text-white">
                               <Layers size={9} /> {Math.max(...g.map((v) => v.image_urls.length))}

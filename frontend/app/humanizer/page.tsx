@@ -44,7 +44,7 @@ export default function HumanizerLab() {
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="stagger grid gap-4 lg:grid-cols-2">
         <div className="card flex flex-col p-4">
           <div className="mb-2 flex items-center justify-between">
             <p className="label">Your text</p>
@@ -86,7 +86,7 @@ export default function HumanizerLab() {
       </div>
 
       {result && (
-        <div className="grid gap-4 lg:grid-cols-5">
+        <div className="stagger grid gap-4 lg:grid-cols-5">
           <div className="card p-4 lg:col-span-2">
             <p className="font-semibold">Patterns found</p>
             <p className="text-xs text-slate-500">From Wikipedia&apos;s &ldquo;Signs of AI writing&rdquo;, via blader/humanizer.</p>

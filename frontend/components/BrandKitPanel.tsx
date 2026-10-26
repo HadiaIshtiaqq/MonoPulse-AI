@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ImageUp, Loader2, RefreshCw, Trash2 } from "lucide-react";
-import { api, media, type BrandKit, type Campaign } from "@/lib/api";
+import { api, logoSrc, type BrandKit, type Campaign } from "@/lib/api";
 
 type Form = Pick<BrandKit, "name" | "tagline" | "primary_color" | "secondary_color" | "accent_color" | "brand_voice_prompt">;
 
@@ -60,10 +60,10 @@ export function BrandKitPanel({ campaign, onSaved }: { campaign: Campaign; onSav
     }
   }
 
-  const logoSrc = brand.logo_url ? (brand.logo_url.startsWith("/") ? media(brand.logo_url) : brand.logo_url) : null;
+  const logo = logoSrc(brand);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
+    <div className="stagger grid gap-4 lg:grid-cols-3">
       <div className="card space-y-4 p-5 lg:col-span-2">
         <div>
           <h2 className="text-lg font-bold">Brand kit</h2>
@@ -114,7 +114,7 @@ export function BrandKitPanel({ campaign, onSaved }: { campaign: Campaign; onSav
           <p className="label mb-3">Logo</p>
           <div className="grid h-32 place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            {logoSrc ? <img src={logoSrc} alt="Logo" className="max-h-24 max-w-[80%] object-contain" /> : <span className="text-sm text-slate-400">No logo</span>}
+            {logo ? <img src={logo} alt="Logo" className="max-h-24 max-w-[80%] object-contain" /> : <span className="text-sm text-slate-400">No logo</span>}
           </div>
           <div className="mt-3 flex gap-2">
             <button className="btn-ghost btn-sm flex-1" onClick={() => fileRef.current?.click()} disabled={busy !== null}>
@@ -143,13 +143,13 @@ export function BrandKitPanel({ campaign, onSaved }: { campaign: Campaign; onSav
             <h3 className="font-bold">Products found on your site</h3>
             <span className="text-xs text-slate-500">{brand.products.length} products · your posts feature these, with their real photos and prices</span>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+          <div className="stagger grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
             {brand.products.map((p, i) => (
               <a key={`${p.url}-${i}`} href={p.url || undefined} target="_blank" rel="noreferrer"
-                className="group overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:shadow-lift">
+                className="group overflow-hidden rounded-xl border border-slate-200 bg-white transition-all duration-300 hover:-translate-y-1 hover:shadow-lift">
                 {p.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.image_url} alt={p.name} loading="lazy" className="aspect-[3/4] w-full bg-slate-100 object-cover" />
+                  <img src={p.image_url} alt={p.name} loading="lazy" className="zoom-on-hover aspect-[3/4] w-full bg-slate-100 object-cover" />
                 ) : (
                   <div className="grid aspect-[3/4] place-items-center bg-slate-100 text-xs text-slate-400">No photo</div>
                 )}

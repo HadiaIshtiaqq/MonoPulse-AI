@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Loader2, Plus, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { api, type CampaignSummary } from "@/lib/api";
 import { CampaignCard } from "@/components/CampaignCard";
 
@@ -39,14 +39,25 @@ export default function CampaignsPage() {
       </div>
       {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
       {list === null ? (
-        <Loader2 className="animate-spin text-slate-400" />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true" aria-label="Loading campaigns">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="card overflow-hidden">
+              <div className="skeleton aspect-[16/5] rounded-none" />
+              <div className="space-y-3 p-4">
+                <div className="skeleton h-4 w-2/3" />
+                <div className="skeleton h-3 w-1/2" />
+                <div className="skeleton h-1.5 w-full" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : shown.length === 0 ? (
-        <div className="card p-10 text-center">
+        <div className="card animate-scale-in p-10 text-center">
           <p className="font-semibold">{list.length ? "No campaigns match that search" : "No campaigns yet"}</p>
           <Link href="/" className="btn-primary mt-4">Create your first campaign</Link>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div key={q ? "search" : "all"} className="stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {shown.map((c) => <CampaignCard key={c.id} c={c} onDelete={remove} />)}
         </div>
       )}

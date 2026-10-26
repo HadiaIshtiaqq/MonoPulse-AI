@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Layers } from "lucide-react";
-import { fmtDay, media, type BrandKit, type Platform, type SocialPost } from "@/lib/api";
+import { fmtDay, logoSrc, media, type BrandKit, type Platform, type SocialPost } from "@/lib/api";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 
 /** Instagram-profile-style grid, so you can judge how the month looks as a feed. */
@@ -15,7 +15,7 @@ export function FeedGrid({ posts, brand, platforms, onOpen }: { posts: SocialPos
         <div className="flex items-center gap-3">
           {brand?.logo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={brand.logo_url.startsWith("/") ? media(brand.logo_url) : brand.logo_url} alt="" className="h-12 w-12 rounded-full border border-slate-200 bg-white object-contain p-1" />
+            <img src={logoSrc(brand) ?? ""} alt="" className="h-12 w-12 rounded-full border border-slate-200 bg-white object-contain p-1" />
           ) : (
             <span className="h-12 w-12 rounded-full" style={{ background: `linear-gradient(135deg, ${brand?.primary_color}, ${brand?.accent_color})` }} />
           )}
@@ -36,7 +36,7 @@ export function FeedGrid({ posts, brand, platforms, onOpen }: { posts: SocialPos
         {shown.map((p) => (
           <button key={p.id} onClick={() => onOpen(p)} className="group relative aspect-[4/5] overflow-hidden bg-slate-100">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={media(p.image_url)} alt={p.alt_text} className="h-full w-full object-cover transition group-hover:scale-[1.03]" />
+            <img src={media(p.image_url)} alt={p.alt_text} className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.05]" />
             {p.format === "carousel" && <Layers size={16} className="absolute right-2 top-2 text-white drop-shadow" />}
             <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent px-2 pb-1.5 pt-6 text-left text-[11px] text-white opacity-0 transition group-hover:opacity-100">
               {fmtDay(p.publish_at, { month: "short", day: "numeric" })} · {p.status === "PUBLISHED" ? "posted" : p.status.toLowerCase()}

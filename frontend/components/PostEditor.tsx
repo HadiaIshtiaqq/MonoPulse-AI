@@ -195,8 +195,8 @@ export function PostEditor({
   const images = post.image_urls?.length ? post.image_urls : post.image_url ? [post.image_url] : [];
 
   return (
-    <div className="fixed inset-0 z-40 flex items-stretch justify-center bg-ink/40 backdrop-blur-sm sm:p-4" onClick={onClose}>
-      <div className="flex h-full w-full max-w-6xl flex-col overflow-hidden bg-white shadow-pop sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-40 flex animate-fade-in items-stretch justify-center bg-ink/40 backdrop-blur-md sm:p-4" onClick={onClose}>
+      <div className="flex h-full w-full max-w-6xl animate-scale-in flex-col overflow-hidden bg-white shadow-pop sm:rounded-3xl" onClick={(e) => e.stopPropagation()}>
         {/* header */}
         <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
           <div className="flex items-center gap-1">
@@ -208,7 +208,7 @@ export function PostEditor({
               {versions.map((v) => (
                 <button key={v.id} role="tab" aria-selected={v.id === post.id} onClick={() => onSwitch(v.id)}
                   title={`${PLATFORM_META[v.platform].label} version · ${v.status.toLowerCase()}`}
-                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-all duration-200 active:scale-95 ${
                     v.id === post.id ? "bg-white text-ink shadow-sm" : "text-slate-500 hover:text-ink"}`}>
                   <PlatformIcon platform={v.platform} size={12} />
                   <span className="hidden lg:inline">{PLATFORM_META[v.platform].label}</span>
@@ -236,7 +236,7 @@ export function PostEditor({
         <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[1fr_1.05fr] md:overflow-hidden">
           {/* preview */}
           <div className="flex flex-col items-center gap-3 bg-[radial-gradient(circle_at_top,#EFEDFF,transparent_60%)] p-5 md:overflow-y-auto">
-            <div style={{ width: previewWidth(post) }}>
+            <div key={post.id} className="animate-scale-in" style={{ width: previewWidth(post) }}>
               <PostPreview post={{ ...post, caption: showDraft && post.original_caption ? post.original_caption : caption, hashtags: hashtags.split(/\s+/).filter(Boolean) }} brand={brand} />
             </div>
             {post.background?.credit && post.background.source === "stock" && (
@@ -256,14 +256,13 @@ export function PostEditor({
           <div className="flex min-h-0 flex-col border-l border-slate-100">
             <div className="flex gap-1 border-b border-slate-100 px-4 pt-3">
               {([["design", "Design", Palette], ["copy", "Caption", PenLine], ["publish", "Post", Rocket]] as const).map(([key, label, Icon]) => (
-                <button key={key} onClick={() => setTab(key)}
-                  className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium ${tab === key ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-ink"}`}>
+                <button key={key} onClick={() => setTab(key)} data-active={tab === key} className="tab px-3 py-2">
                   <Icon size={14} /> {label}
                 </button>
               ))}
             </div>
 
-            <div className="flex-1 space-y-5 overflow-y-auto p-5">
+            <div key={tab} className="flex-1 animate-fade-up space-y-5 overflow-y-auto p-5">
               {tab === "design" && (
                 <>
                   <section>
@@ -571,7 +570,8 @@ export function PostEditor({
             </div>
 
             {notice && (
-              <div className={`mx-5 mb-4 rounded-xl px-3 py-2 text-sm ${notice.kind === "ok" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{notice.text}</div>
+              <div key={notice.text} role="status"
+                className={`mx-5 mb-4 animate-slide-down rounded-xl px-3 py-2 text-sm ${notice.kind === "ok" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>{notice.text}</div>
             )}
           </div>
         </div>

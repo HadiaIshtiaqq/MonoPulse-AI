@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CalendarDays, Download, Trash2 } from "lucide-react";
 import { api, media, timeAgo, type CampaignSummary } from "@/lib/api";
@@ -9,20 +10,28 @@ export function CampaignCard({ c, onDelete }: { c: CampaignSummary; onDelete?: (
   const pct = c.posts ? Math.round((c.approved / c.posts) * 100) : 0;
   const failed = c.status === "FAILED";
   const generating = c.status === "GENERATING";
+  const [filled, setFilled] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setFilled(true), 250); return () => clearTimeout(t); }, []);
   return (
-    <div className="card group flex flex-col overflow-hidden transition hover:shadow-lift">
-      <Link href={`/campaign/${c.id}`} className="relative grid grid-cols-4 gap-0.5 bg-slate-100">
+    <div className="card card-hover group flex flex-col overflow-hidden">
+      <Link href={`/campaign/${c.id}`} className="relative grid grid-cols-4 gap-0.5 overflow-hidden bg-slate-100">
         {c.thumbnails.length ? (
           c.thumbnails.slice(0, 4).map((t, i) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img key={i} src={media(t)} alt="" className="aspect-[4/5] h-full w-full object-cover object-left" />
+            <span key={i} className="block overflow-hidden">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={media(t)} alt="" className="zoom-on-hover aspect-[4/5] h-full w-full object-cover object-left" style={{ transitionDelay: `${i * 40}ms` }} />
+            </span>
           ))
         ) : (
           <div className="col-span-4 grid aspect-[16/5] place-items-center text-sm text-slate-400"
             style={{ background: c.primary_color ? `linear-gradient(135deg, ${c.primary_color}, ${c.accent_color ?? c.primary_color})` : undefined }}>
-            <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-slate-600">{generating ? "Generating…" : failed ? "Failed" : "No posts"}</span>
+            <span className="flex items-center gap-1.5 rounded-full bg-white/85 px-3 py-1 text-xs font-medium text-slate-600 backdrop-blur">
+              {generating && <span className="h-1.5 w-1.5 animate-pulse-ring rounded-full bg-brand" />}
+              {generating ? "Generating…" : failed ? "Failed" : "No posts"}
+            </span>
           </div>
         )}
+        <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-ink/20 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
       </Link>
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-start gap-3">
@@ -43,7 +52,7 @@ export function CampaignCard({ c, onDelete }: { c: CampaignSummary; onDelete?: (
             <span>{pct}%</span>
           </div>
           <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
-            <div className="h-full rounded-full bg-brand-gradient" style={{ width: `${pct}%` }} />
+            <div className="h-full rounded-full bg-brand-gradient transition-[width] duration-1000 ease-out" style={{ width: `${filled ? pct : 0}%` }} />
           </div>
         </div>
         <div className="mt-4 flex items-center gap-2">
