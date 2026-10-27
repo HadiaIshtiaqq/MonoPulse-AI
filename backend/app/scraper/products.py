@@ -108,6 +108,13 @@ def strip_codes(text: str) -> str:
     return re.sub(r"\s{2,}", " ", PRODUCT_CODE_RE.sub("", text)).strip(" -–—|")
 
 
+def looks_like_menu(text: str) -> bool:
+    """Navigation scraped as a sentence: "New In New In New In Ready To Wear Tailored Fabrics"."""
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    pairs = list(zip(words, words[1:]))
+    return len(words) >= 4 and (len(pairs) != len(set(pairs)) or max(words.count(w) for w in set(words)) >= 3)
+
+
 def _name(text: str) -> str:
     return strip_codes(_clean(text)) or _clean(text)
 

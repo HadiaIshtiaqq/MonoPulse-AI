@@ -25,8 +25,8 @@ SIZES = {
     Platform.X: (1600, 900),
 }
 CAROUSEL_SIZE = (1080, 1350)
-LAYOUTS = ["bold", "split", "quote", "photo", "frame", "duo"]
-PHOTO_LAYOUTS = {"photo", "frame", "duo"}  # need a background photo (duo also needs a second one)
+LAYOUTS = ["bold", "split", "quote", "photo", "frame", "poster", "minimal", "duo"]
+PHOTO_LAYOUTS = {"photo", "frame", "poster", "minimal", "duo"}  # need a background photo (duo also needs a second one)
 POSITIONS = ["auto", "top", "center", "bottom"]
 
 FONT_CANDIDATES = {
@@ -273,6 +273,83 @@ def render_frame(kit: BrandKit, post: SocialPost, size: tuple[int, int], headlin
     return img
 
 
+def render_poster(kit: BrandKit, post: SocialPost, size: tuple[int, int], headline: str, scale: float, carousel: bool) -> Image.Image:
+    """The full photo with the headline on a tilted brand-colour ribbon, like a shop-window poster."""
+    w, h = size
+    primary, accent = rgb(kit.primary_color), rgb(kit.accent_color)
+    s = min(w, h)
+    m = int(s * 0.07)
+    img = cover_photo(post.background.path, size).convert("RGBA")
+    probe = ImageDraw.Draw(img)
+    fnt, lines, lh = fit_text(probe, headline, int(w * 0.8), int(h * 0.22), int(s * 0.085 * scale), max_lines=3)
+    band_h = lh * len(lines) + int(s * 0.09)
+    band = Image.new("RGBA", (int(w * 1.4), band_h), (*primary, 245))
+    bd = ImageDraw.Draw(band)
+    bd.rectangle([0, 0, band.width, int(s * 0.012)], fill=(*accent, 255))
+    tx = (band.width - w) // 2 + m
+    y = int(s * 0.045)
+    for line in lines:
+        bd.text((tx, y), line, font=fnt, fill=(*text_on(primary), 255))
+        y += lh
+    band = band.rotate(4, expand=True, resample=Image.BICUBIC)
+    pos = post.text_position if post.text_position in ("top", "center") else "bottom"
+    # "top" sits below where a model's face usually is, so the ribbon never covers it.
+    cy = {"top": int(h * 0.42), "center": int(h * 0.56)}.get(pos, int(h * 0.74))
+    img.alpha_composite(band, ((w - band.width) // 2, cy - band.height // 2))
+    paste_logo(img, kit, (m, m, m + int(w * 0.28), m + int(h * 0.09)), on_dark=True)
+    draw = ImageDraw.Draw(img)
+    price = post.product.price if post.product else ""
+    if post.kind == "sale" and sale_pct(post.product):
+        d = int(s * 0.2)
+        sale_badge(img, sale_pct(post.product), (w - m - d, m), d, accent)
+    elif price:
+        price_chip(draw, price[:-3] if price.endswith(".00") else price, w - m, m, int(s * 0.04), primary)
+    label = brand_label(kit)
+    lf = font(int(s * 0.03), False)
+    lw = draw.textlength(label, font=lf)
+    shade_layer = Image.new("RGBA", size, (0, 0, 0, 0))  # a see-through backing so the label reads on any photo
+    ImageDraw.Draw(shade_layer).rounded_rectangle([m - 14, h - m - int(s * 0.03) - 12, m + lw + 14, h - m + 12], radius=20, fill=(0, 0, 0, 110))
+    img.alpha_composite(shade_layer)
+    draw = ImageDraw.Draw(img)
+    draw.text((m, h - m - int(s * 0.03)), label, font=lf, fill=(255, 255, 255))
+    if carousel:
+        swipe_chip(draw, w, h, m, accent, text_on(accent))
+    return img.convert("RGB")
+
+
+def render_minimal(kit: BrandKit, post: SocialPost, size: tuple[int, int], headline: str, scale: float) -> Image.Image:
+    """A quiet, gallery-like look: the photo on a paper background with small, dark type."""
+    w, h = size
+    primary = rgb(kit.primary_color)
+    paper = tuple(int(250 + (c - 250) * 0.06) for c in primary)
+    ink = rgb(kit.secondary_color) if luminance(rgb(kit.secondary_color)) < 0.2 else (28, 28, 34)
+    img = Image.new("RGB", size, paper)
+    draw = ImageDraw.Draw(img)
+    s = min(w, h)
+    m = int(s * 0.07)
+    price = post.product.price if post.product else ""
+    price = price[:-3] if price.endswith(".00") else price
+    if w > h * 1.2:  # wide: photo on the right, words on the left
+        pw = int(w * 0.48)
+        photo = rounded_photo(post.background.path, (pw - m, h - 2 * m), int(m * 0.4))
+        img.paste(photo, (w - pw, m), photo)
+        tx, tw, top = m, w - pw - 2 * m, int(h * 0.3)
+    else:
+        ph = int(h * (0.66 if h > w else 0.6))
+        photo = rounded_photo(post.background.path, (w - 2 * m, ph), int(m * 0.4))
+        img.paste(photo, (m, m), photo)
+        tx, tw, top = m, w - 2 * m, m + ph + int(m * 0.6)
+    kicker = (kit.name.upper() + ("  ·  " + price if price else ""))
+    draw.text((tx, top), kicker, font=font(int(s * 0.026)), fill=primary if luminance(primary) < 0.5 else ink)
+    fnt, lines, lh = fit_text(draw, headline, tw, int(h - top - m * 1.6), int(s * 0.06 * scale), minimum=24, max_lines=3)
+    y = draw_lines(draw, lines, fnt, lh, tx, top + int(s * 0.05), ink)
+    draw.rectangle([tx, y + 12, tx + 60, y + 16], fill=primary)
+    if post.kind == "sale" and sale_pct(post.product):
+        d = int(s * 0.16)
+        sale_badge(img, sale_pct(post.product), (w - m - d - 10, m + 10), d, primary)
+    return img
+
+
 def render_duo(kit: BrandKit, post: SocialPost, size: tuple[int, int]) -> Image.Image:
     """"This or that": two products side by side, lettered A and B, for a vote in the comments."""
     w, h = size
@@ -355,6 +432,10 @@ def render_cover(kit: BrandKit, post: SocialPost, size: tuple[int, int], carouse
         return render_duo(kit, post, size)
     if layout == "frame":
         return render_frame(kit, post, size, headline, scale)
+    if layout == "poster":
+        return render_poster(kit, post, size, headline, scale, carousel)
+    if layout == "minimal":
+        return render_minimal(kit, post, size, headline, scale)
 
     if layout == "photo":
         price = post.product.price if post.product else ""

@@ -116,6 +116,7 @@ class ReelScene(BaseModel):
 
 class ReelRequest(BaseModel):
     scenes: list[ReelScene] | None = None  # omitted: write a new script from scratch
+    style: str | None = None  # cinematic | punch | showcase | magazine | scrapbook; omitted: pick one
 
 
 class Slide(BaseModel):
@@ -154,6 +155,7 @@ class SocialPost(BaseModel):
     video_url: str | None = None  # a 9:16 reel made from the post (Instagram Reels, Shorts, TikTok)
     video_poster: str | None = None
     reel_scenes: list[ReelScene] = []  # the reel's script and photos, so it can be edited and re-rendered
+    reel_style: str = ""  # the reel's visual style, so a campaign's reels rotate through different looks
     publish_at: datetime
     status: PostStatus = PostStatus.DRAFT
     published_via: str | None = None  # direct | webhook | manual

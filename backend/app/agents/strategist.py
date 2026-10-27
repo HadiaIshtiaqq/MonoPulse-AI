@@ -16,7 +16,7 @@ from datetime import date, timedelta
 
 from .. import config
 from ..llm import LLMError, router
-from ..scraper.products import strip_codes
+from ..scraper.products import looks_like_menu, strip_codes
 from ..schemas import BrandKit, CampaignStrategy, ContentPillar, Platform, Product, TrendItem
 from . import calendar, variety
 from .calendar import COUNTRY_NAMES
@@ -314,8 +314,9 @@ Never invent products, prices, discounts or claims that aren't in the brief.
 Follow each slot's "post_type": a "This or that" post asks people to choose between "product" and "compare_with"; a
 "Sale" post leads with the saving; a "Brand quote" is one short line from the brand's own claims; a "Styling tip" gives
 one concrete tip; a "Seasonal moment" ties the product to the weekly theme's date.
-No two posts may feel the same: never reuse a headline, never open two captions the same way, and vary the shape
-(a question, a number, a short statement, a mini story) and the length from post to post.
+No two posts may feel the same: never reuse a headline, never open two captions the same way, and vary the length.
+Write each caption in its slot's "caption_shape" (a plain statement, a hook line first, a short fact list, a tiny story,
+a closing question, or one punchy line), so neighbouring posts and a post's platform versions read differently.
 Return a JSON array, one object per slot, in the same order:
 [{"slot": <slot index>, "headline": "<= 7 words for the image overlay", "caption": "...", "cta": "short call to action",
   "slides": [{"headline": "...", "body": "..."}]  // carousel slots only
@@ -326,7 +327,8 @@ async def write_batch(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slo
     slot_desc = []
     for j, s in enumerate(slots):
         entry = {"slot": offset + j, "group": s.group, "platform": s.platform.value, "format": s.format, "pillar": s.pillar,
-                 "post_type": variety.KIND_LABELS.get(effective_kind(s), s.kind), "weekly_theme": s.theme}
+                 "post_type": variety.KIND_LABELS.get(effective_kind(s), s.kind), "weekly_theme": s.theme,
+                 "caption_shape": variety.SHAPE_HINTS[variety.caption_shape(s.group, s.platform.value)]}
         if s.compare:
             entry["compare_with"] = product_brief(s.compare)
         if s.trend:
@@ -499,11 +501,30 @@ def effective_kind(slot: Slot) -> str:
     return "spotlight" if slot.kind == "carousel" and slot.format != "carousel" else slot.kind
 
 
+def collection_name(p: Product) -> str:
+    """"Khaas: Floral Radiance" -> "Floral Radiance": the part of a category that names the collection."""
+    return (p.category or "").rsplit(":", 1)[-1].strip()
+
+
+def display_name(kit: BrandKit, p: Product) -> str:
+    """The name a post calls a product. When several products share a generic name ("3-Piece
+    Co-ord Set"), the collection tells them apart: "Floral Radiance 3-Piece"."""
+    name = short_name(p.name)
+    twins = sum(short_name(x.name).lower() == name.lower() for x in kit.products)
+    coll = collection_name(p)
+    if twins > 1 and len(coll.split()) >= 2 and coll.lower() not in name.lower():
+        first = name.split()[0]
+        return f"{coll} {first}" if re.search(r"\d", first) else f"{coll} {name}"
+    return name
+
+
 def headline_fields(kit: BrandKit, slot: Slot, p: Product) -> dict:
+    name = display_name(kit, p)
+    named_coll = collection_name(p) and collection_name(p).lower() in name.lower()
     return {
-        "name": short_name(p.name), "coll": f" from our {p.category} collection" if p.category else "", "brand": kit.name,
+        "name": name, "coll": f" from our {p.category} collection" if p.category and not named_coll else "", "brand": kit.name,
         "pct": sale_percent(p), "price": tidy_price(p.price), "moment": theme_moment(slot.theme) or "the season",
-        "n": len(slot.slide_products) + 1, "a": short_name(p.name), "b": short_name(slot.compare.name) if slot.compare else "",
+        "n": len(slot.slide_products) + 1, "a": name, "b": display_name(kit, slot.compare) if slot.compare else "",
     }
 
 
@@ -555,26 +576,64 @@ def closer(slot: Slot, kind: str, category: str) -> str:
     return variety.pick(options, slot.group).format(category=category)
 
 
+def flavour(kit: BrandKit) -> str:
+    industry = (kit.industry or "").lower()
+    return "wear" if is_wearable(kit) else "food" if "food" in industry or "restaurant" in industry else "other"
+
+
+def shaped_caption(kit: BrandKit, slot: Slot, p: Product, headline: str, idea: str, price: str, shape: str) -> str:
+    """The post's idea told in one of several shapes (see variety.CAPTION_SHAPES)."""
+    # A shape comes round every len(CAPTION_SHAPES) posts: count its uses, so its lines rotate too.
+    f, g = flavour(kit), slot.group // len(variety.CAPTION_SHAPES) + variety.PLATFORM_ORDER.index(slot.platform.value)
+    price = price.strip()
+    tail = f" {price}" if price else ""
+    if shape == "hook":
+        return f"{variety.pick(variety.HOOKS[f], g)}\n\n{idea}.{tail}"
+    if shape == "details":
+        site = (kit.website_url or "").split("//")[-1].split("/")[0].removeprefix("www.")
+        city = (kit.location or "").split(",")[0].strip()
+        facts = [f"From the {collection_name(p)} collection" if collection_name(p) and collection_name(p).lower() not in display_name(kit, p).lower() else "",
+                 price.rstrip("."), f"Online at {site}" if site else f"In store in {city}" if city else ""]
+        return display_name(kit, p) + "\n" + "\n".join(f"– {x}" for x in facts if x)
+    if shape == "story":
+        return f"{variety.pick(variety.STORY_OPENERS[f], g)} {idea}.{tail}"
+    if shape == "question":
+        asks = variety.CLOSERS["instagram_duo"] if effective_kind(slot) == "duo" else variety.QUESTIONS[f]
+        return f"{idea}.{tail} {variety.pick(asks, g)}"
+    if shape == "short":
+        end = "" if headline.endswith(("?", "!", ".")) else "."
+        return f"{headline}{end}{tail}"
+    return f"{idea}.{tail}"
+
+
 def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
-    """Template copy for a post that features one real product, written for its platform."""
+    """Template copy for a post that features one real product, written for its platform, in a
+    shape that changes from post to post so captions never read like one template."""
     headline, idea = product_angle(kit, slot, p)
     kind = effective_kind(slot)
     if kind == "duo" and slot.compare:
-        price = "".join(f" {short_name(x.name)}: {tidy_price(x.price)}." for x in (p, slot.compare) if x.price)
+        price = "".join(f" {display_name(kit, x)}: {tidy_price(x.price)}." for x in (p, slot.compare) if x.price)
     else:
         price = price_line(p)
     link = shop_link(kit, p)
     close = closer(slot, kind, playbook_for(kit.industry).category)
     cta_family = "instagram" if slot.platform is Platform.INSTAGRAM else "linkedin" if slot.platform is Platform.LINKEDIN else "linked"
     cta = variety.pick(variety.CTAS[cta_family], slot.group).format(link=link) if (link or cta_family == "instagram") else f"Shop {kit.name} online"
-    if slot.platform is Platform.INSTAGRAM:
-        caption = f"{idea}.{price}\n\n{close}"
-    elif slot.platform is Platform.FACEBOOK:
-        caption = f"{idea}.{price} {close}"
-    elif slot.platform is Platform.LINKEDIN:
-        caption = f"What's new at {kit.name}: {idea[0].lower()}{idea[1:]}.{price}\n\n{close}"
+    shape = variety.caption_shape(slot.group, slot.platform.value)
+    if kind == "duo" and shape == "details":
+        shape = "question"  # a fact list doesn't fit a "pick one" post
+    if slot.platform is Platform.X:
+        shape = "short" if shape in ("details", "story", "hook", "statement") else shape
+        return {"headline": fit_headline(headline), "caption": shaped_caption(kit, slot, p, headline, idea, price, shape), "cta": link or kit.name}
+    body = shaped_caption(kit, slot, p, headline, idea, price, shape)
+    if slot.platform is Platform.LINKEDIN and shape == "statement":
+        body = f"What's new at {kit.name}: {idea[0].lower()}{idea[1:]}.{price}"
+    if shape == "question":
+        caption = body  # it already ends by asking the reader something
+    elif slot.platform is Platform.FACEBOOK and shape != "details":
+        caption = f"{body} {close}"
     else:
-        caption, cta = f"{idea}.{price}", link or kit.name
+        caption = f"{body}\n\n{close}"
     return {"headline": fit_headline(headline), "caption": caption, "cta": cta}
 
 
@@ -643,14 +702,16 @@ def short_claim(text: str, max_words: int = 9) -> str:
 def brand_claims(kit: BrandKit) -> list[str]:
     """Everything the brand says about itself, each said once: value props, then the tagline."""
     out = [c.rstrip(".…") for c in kit.value_props if c.strip()] + ([kit.tagline.rstrip(".…")] if kit.tagline else [])
-    return list(dict.fromkeys(out))
+
+    return list(dict.fromkeys(c for c in out if not looks_like_menu(c)))
 
 
 def quote_copy(kit: BrandKit, slot: Slot) -> dict:
     claims = brand_claims(kit)
     claim = claims[slot.nth % len(claims)]
-    caption, cta = adapt_to_platform(kit, slot, f"{claim}.", "quote")
-    return {"headline": fit_headline(short_claim(claim)), "caption": caption, "cta": cta}
+    caption, cta = adapt_to_platform(kit, slot, f"{claim[0].upper()}{claim[1:]}.", "quote")
+    headline = fit_headline(short_claim(claim))
+    return {"headline": headline[:1].upper() + headline[1:], "caption": caption, "cta": cta}
 
 
 def fallback_copy(kit: BrandKit, slot: Slot) -> dict:

@@ -46,8 +46,11 @@ const LAYOUTS: { id: Layout; label: string }[] = [
   { id: "quote", label: "Quote" },
   { id: "photo", label: "Photo" },
   { id: "frame", label: "Frame" },
+  { id: "poster", label: "Poster" },
+  { id: "minimal", label: "Minimal" },
   { id: "duo", label: "Duo" },
 ];
+const NEEDS_PHOTO = new Set<Layout>(["photo", "frame", "poster", "minimal"]);
 const POSITIONS: { id: TextPosition; label: string }[] = [
   { id: "auto", label: "Auto" },
   { id: "top", label: "Top" },
@@ -296,10 +299,10 @@ export function PostEditor({
                 <>
                   <section>
                     <p className="label mb-2">Template</p>
-                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                    <div className="grid grid-cols-4 gap-2">
                       {LAYOUTS.filter((l) => l.id !== "duo" || post.gallery?.length).map((l) => (
-                        <button key={l.id} disabled={busy !== null || ((l.id === "photo" || l.id === "frame") && !post.background)}
-                          title={(l.id === "photo" || l.id === "frame") && !post.background ? "Pick a photo below first" : ""}
+                        <button key={l.id} disabled={busy !== null || (NEEDS_PHOTO.has(l.id) && !post.background)}
+                          title={NEEDS_PHOTO.has(l.id) && !post.background ? "Pick a photo below first" : ""}
                           onClick={() => update({ layout: l.id }, undefined, "layout")}
                           className={`rounded-xl border px-2 py-2 text-xs font-medium transition disabled:opacity-40 ${post.layout === l.id ? "border-brand bg-brand-soft text-brand-700" : "border-slate-200 hover:border-slate-300"}`}>
                           {l.label}

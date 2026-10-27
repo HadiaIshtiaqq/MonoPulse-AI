@@ -443,13 +443,18 @@ async def make_reel(post_id: str, req: ReelRequest | None = None) -> dict:
     leave them out to write a fresh script."""
     campaign, post = _post(post_id)
     try:
-        info = await reels.make_reel(campaign, post, req.scenes if req else None)
+        info = await reels.make_reel(campaign, post, req.scenes if req else None, req.style if req else None)
     except reels.ReelEditError as exc:
         raise HTTPException(422, str(exc)) from exc
     except reels.ReelError as exc:
         raise HTTPException(503, str(exc)) from exc
     store.save()
     return {"post": post, **info}
+
+
+@app.get("/api/reel-styles")
+def reel_styles() -> list[dict]:
+    return reels.style_list()
 
 
 @app.get("/api/posts/{post_id}/reel/photos")

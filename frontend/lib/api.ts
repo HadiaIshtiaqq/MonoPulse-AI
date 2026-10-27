@@ -5,9 +5,10 @@ export type ReelSceneKind = "hook" | "product" | "fact" | "cta";
 /** One scene of a reel as the owner edits it; `photo` is a /media/… path or one of the brand's web photos. */
 export type ReelScene = { kind: ReelSceneKind; text: string; sub: string; photo: string };
 export type ReelPhoto = { url: string; label: string; price: string; remote: boolean };
+export type ReelStyle = { key: string; label: string; blurb: string };
 
 export type PostStatus = "DRAFT" | "APPROVED" | "PUBLISHED";
-export type Layout = "bold" | "split" | "quote" | "photo" | "frame" | "duo";
+export type Layout = "bold" | "split" | "quote" | "photo" | "frame" | "poster" | "minimal" | "duo";
 export type PostKind = "spotlight" | "carousel" | "duo" | "tip" | "quote" | "sale" | "moment" | "question";
 export const KIND_LABELS: Record<PostKind, string> = {
   spotlight: "Spotlight", carousel: "Carousel", duo: "This or that", tip: "Tip", quote: "Brand quote",
@@ -99,6 +100,7 @@ export interface SocialPost {
   video_url?: string | null;
   video_poster?: string | null;
   reel_scenes?: ReelScene[];
+  reel_style?: string;
   publish_at: string;
   status: PostStatus;
   published_via: string | null;
@@ -365,9 +367,10 @@ export const api = {
   humanizePost: (id: string, mode: HumanizeMode = "standard") =>
     req<HumanizeResult & { post: SocialPost }>(`/api/posts/${id}/humanize`, json("POST", { mode })),
   rewritePost: (id: string, tone: string) => req<SocialPost>(`/api/posts/${id}/rewrite`, json("POST", { tone })),
-  makeReel: (id: string, scenes?: ReelScene[]) =>
-    req<{ post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number }>(
-      `/api/posts/${id}/reel`, scenes ? json("POST", { scenes }) : { method: "POST" }),
+  makeReel: (id: string, scenes?: ReelScene[], style?: string) =>
+    req<{ post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string }>(
+      `/api/posts/${id}/reel`, json("POST", { scenes: scenes ?? null, style: style ?? null })),
+  reelStyles: () => req<ReelStyle[]>("/api/reel-styles"),
   reelPhotos: (id: string) => req<ReelPhoto[]>(`/api/posts/${id}/reel/photos`),
   share: (id: string) =>
     req<{ platform: Platform; url: string; caption: string; image_url: string | null; image_urls: string[]; note: string }>(`/api/posts/${id}/share`),

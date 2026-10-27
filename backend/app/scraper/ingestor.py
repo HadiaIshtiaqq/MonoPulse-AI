@@ -669,7 +669,8 @@ def value_props_from(site: ScrapedSite) -> list[str]:
     sentences: list[str] = []
     for sentence in re.split(r"(?<=[.!?])\s+", site.description.strip()):
         sentence = re.sub(r"^(discover|explore|shop online or|welcome to|browse)\s+", "", sentence.strip(), flags=re.I).rstrip(".")
-        if 4 <= len(sentence.split()) <= 30 and not JUNK_TEXT.search(sentence) and not sentence.lower().startswith(("shop", "visit")):
+        if 4 <= len(sentence.split()) <= 30 and not JUNK_TEXT.search(sentence) and not sentence.lower().startswith(("shop", "visit")) \
+                and not product_finder.looks_like_menu(sentence):
             sentences.append(sentence[0].upper() + sentence[1:])
     claims: list[str] = []
     for rx, label in CLAIMS:
@@ -689,7 +690,7 @@ def heuristic_kit(site: ScrapedSite, kit: BrandKit) -> BrandKit:
     if not site.products:
         kit.offerings = kit.offerings or offerings_from(site, kit.name)
     if not kit.value_props:
-        kit.value_props = value_props_from(site) or [first_sentence(p) for p in site.paragraphs[:3] if not JUNK_TEXT.search(p)]
+        kit.value_props = value_props_from(site) or [first_sentence(p) for p in site.paragraphs[:3] if not JUNK_TEXT.search(p) and not product_finder.looks_like_menu(p)]
     if not kit.keywords:
         words = re.findall(r"[a-zA-Z]{5,}", blob.lower())
         stop = {"about", "their", "there", "which", "would", "these", "other", "every", "where", "while", "cookies",

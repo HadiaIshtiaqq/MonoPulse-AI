@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowDown, ArrowUp, Check, Clapperboard, Copy, Download, Film, ImageOff, ImagePlus, Loader2, Pause, Play, Plus,
-  RefreshCw, Share2, Sparkles, Trash2, Undo2, Upload, Volume2, Wand2,
+  RefreshCw, Share2, Shuffle, Sparkles, Trash2, Undo2, Upload, Volume2, Wand2,
 } from "lucide-react";
-import { api, logoSrc, media, type BrandKit, type ReelPhoto, type ReelScene, type SocialPost } from "@/lib/api";
+import { api, logoSrc, media, type BrandKit, type ReelPhoto, type ReelScene, type ReelStyle, type SocialPost } from "@/lib/api";
 import { canShareVideo, copyText, downloadVideo, shareVideo } from "@/lib/share";
 import { useCycle } from "@/components/Motion";
 import { useFeedback } from "@/components/Feedback";
@@ -151,6 +151,108 @@ function PhotoGrid({ photos, current, allowNone, onPick, onUpload, uploading }: 
   );
 }
 
+const FALLBACK_STYLES: ReelStyle[] = [
+  { key: "cinematic", label: "Cinematic", blurb: "Full-screen photos, slow zooms, words that rise in, soft crossfades" },
+  { key: "punch", label: "Fast cuts", blurb: "Quick cuts with a zoom punch and a flash, bold caption blocks that pop in" },
+  { key: "showcase", label: "Showcase", blurb: "Each photo slides in on a floating card over your brand colours" },
+  { key: "magazine", label: "Magazine", blurb: "An editorial page: a photo panel, numbered pages, words that write themselves on" },
+  { key: "scrapbook", label: "Scrapbook", blurb: "Polaroids that drop onto a pile, with sticker prices" },
+];
+
+/** A tiny drawing of each style with the post's own photo and brand colours, so the looks can be compared at a glance. */
+function StyleThumb({ style, photo, brand }: { style: string; photo: string; brand: BrandKit | null }) {
+  const primary = brand?.primary_color ?? "#5B47FB";
+  const accent = brand?.accent_color ?? "#FF5C8A";
+  const img = photo ? <img src={photoSrc(photo)} alt="" className="h-full w-full object-cover" /> : <span className="block h-full w-full" style={{ background: primary }} />;
+  const bar = (w: string, c = "white") => <span className="block h-[3px] rounded-full" style={{ width: w, background: c }} />;
+  if (style === "punch") {
+    return (
+      <span className="relative block h-full w-full overflow-hidden">
+        {img}
+        <span className="absolute inset-x-1.5 top-[55%] space-y-0.5">
+          <span className="mx-auto block h-2 w-9 -rotate-3 rounded-sm bg-white" />
+          <span className="mx-auto block h-2 w-7 rotate-2 rounded-sm" style={{ background: accent }} />
+        </span>
+        <span className="absolute right-1 top-[30%] h-3.5 w-3.5 rounded-full border border-white" style={{ background: accent }} />
+      </span>
+    );
+  }
+  if (style === "showcase") {
+    return (
+      <span className="relative block h-full w-full overflow-hidden" style={{ background: `linear-gradient(180deg, ${primary}, color-mix(in srgb, ${primary} 40%, black))` }}>
+        <span className="absolute left-2 top-2.5 space-y-0.5">{bar("26px")}{bar("18px")}</span>
+        <span className="absolute inset-x-2 bottom-3 top-[34%] overflow-hidden rounded-md border-2 border-white shadow">{img}</span>
+      </span>
+    );
+  }
+  if (style === "magazine") {
+    return (
+      <span className="relative block h-full w-full overflow-hidden" style={{ background: "#FAF7F2" }}>
+        <span className="block h-[55%] overflow-hidden">{img}</span>
+        <span className="absolute inset-x-2 top-[61%] space-y-1">{bar("100%", primary)}{bar("70%", "#1f2937")}{bar("50%", "#1f2937")}</span>
+        <span className="absolute bottom-1 right-1.5 text-[5px] font-bold text-slate-400">01/05</span>
+      </span>
+    );
+  }
+  if (style === "scrapbook") {
+    return (
+      <span className="relative block h-full w-full overflow-hidden" style={{ backgroundColor: "#FFFBF5", backgroundImage: `radial-gradient(${primary}33 1.2px, transparent 1.2px)`, backgroundSize: "7px 7px" }}>
+        <span className="absolute left-1.5 top-[24%] h-[52%] w-[70%] rotate-6 bg-white p-1 pb-3 shadow" />
+        <span className="absolute left-2.5 top-[20%] h-[56%] w-[72%] -rotate-6 bg-white p-1 pb-3.5 shadow-md">
+          <span className="block h-full overflow-hidden">{img}</span>
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="relative block h-full w-full overflow-hidden">
+      {img}
+      <span className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+      <span className="absolute bottom-3 left-2 space-y-0.5">{bar("30px")}{bar("20px")}{bar("12px", accent)}</span>
+      <span className="absolute inset-x-0 top-0 h-[2px]" style={{ background: accent }} />
+    </span>
+  );
+}
+
+function StylePicker({ styles, value, current, auto, onPick, photo, brand, disabled }: {
+  styles: ReelStyle[]; value: string; current: string; auto: boolean; onPick: (key: string) => void;
+  photo: string; brand: BrandKit | null; disabled: boolean;
+}) {
+  const active = styles.find((s) => s.key === value);
+  return (
+    <section>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <p className="label">Look</p>
+        <p className="truncate text-[11px] text-slate-500">
+          {value ? active?.blurb : "A different look from your other reels, picked for you"}
+        </p>
+      </div>
+      <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+        {auto && (
+          <button type="button" onClick={() => onPick("")} disabled={disabled} aria-pressed={!value}
+            className={`flex w-[68px] shrink-0 flex-col items-center gap-1 rounded-xl p-1 text-[10px] font-medium transition ${!value ? "bg-brand-soft text-brand-700 ring-2 ring-brand" : "text-slate-600 hover:bg-slate-100"}`}>
+            <span className="grid aspect-[9/16] w-full place-items-center rounded-lg bg-brand-gradient text-white"><Shuffle size={16} /></span>
+            Surprise me
+          </button>
+        )}
+        {styles.map((s) => {
+          const on = s.key === value;
+          return (
+            <button type="button" key={s.key} onClick={() => onPick(s.key)} disabled={disabled} aria-pressed={on} title={s.blurb}
+              className={`group flex w-[68px] shrink-0 flex-col items-center gap-1 rounded-xl p-1 text-[10px] font-medium transition ${on ? "bg-brand-soft text-brand-700 ring-2 ring-brand" : "text-slate-600 hover:bg-slate-100"}`}>
+              <span className="relative block aspect-[9/16] w-full overflow-hidden rounded-lg border border-slate-200 transition-transform duration-300 group-hover:-translate-y-0.5">
+                <StyleThumb style={s.key} photo={photo} brand={brand} />
+                {s.key === current && <span className="absolute left-1 top-1 rounded bg-black/55 px-1 text-[7px] font-semibold uppercase text-white">Now</span>}
+              </span>
+              {s.label}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   post: SocialPost; brand: BrandKit | null; caption: string; onChange: (p: SocialPost) => void;
   onPreview: (scene: ReelScene | null) => void;
@@ -164,8 +266,12 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   const [picking, setPicking] = useState<number | null>(null);
   const [photos, setPhotos] = useState<ReelPhoto[] | null>(null);
   const [shareable, setShareable] = useState(false);
+  const [styles, setStyles] = useState<ReelStyle[]>(FALLBACK_STYLES);
+  const [look, setLook] = useState(post.reel_style ?? "");  // "" = pick a different one automatically
   const step = useCycle(busy === "render" ? EDIT_STEPS : STEPS, 4500);
   useEffect(() => setShareable(canShareVideo()), []);
+  useEffect(() => { api.reelStyles().then(setStyles).catch(() => {}); }, []);
+  useEffect(() => setLook(post.reel_style ?? ""), [post.reel_style, post.group_id]);
 
   const saved = JSON.stringify(post.reel_scenes ?? []);
   useEffect(() => { setDraft(JSON.parse(saved)); setFocus(null); setPicking(null); }, [saved]);
@@ -176,7 +282,9 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
     if (picking !== null && photos === null) api.reelPhotos(post.id).then(setPhotos).catch(() => setPhotos([]));
   }, [picking, photos, post.id]);
 
-  const dirty = JSON.stringify(draft) !== saved;
+  const styleChanged = !!post.reel_scenes?.length && !!look && look !== post.reel_style;
+  const dirty = JSON.stringify(draft) !== saved || styleChanged;
+  const styleLabel = (key: string) => styles.find((s) => s.key === key)?.label ?? key;
   const fileBase = `${brandName.replace(/[^\w]+/g, "-").toLowerCase() || "post"}-${post.publish_at.slice(0, 10)}`;
 
   async function make(scenes?: ReelScene[]) {
@@ -186,11 +294,12 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
     }
     setBusy(scenes ? "render" : "make");
     try {
-      const res = await api.makeReel(post.id, scenes);
+      // A fresh script without a chosen look gets a new one; edits keep the look picked above.
+      const res = await api.makeReel(post.id, scenes, scenes ? look || undefined : (look && look !== post.reel_style ? look : undefined));
       onChange(res.post);
       setInfo(res);
       setFocus(null);
-      toast(scenes ? "Reel updated with your edits" : `Your ${Math.round(res.seconds)}-second reel is ready`);
+      toast(scenes ? `Reel updated · ${styleLabel(res.style)}` : `Your ${Math.round(res.seconds)}-second ${styleLabel(res.style)} reel is ready`);
     } catch (e) {
       toast((e as Error).message, "error");
     } finally {
@@ -278,6 +387,10 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
               </p>
             </div>
           </div>
+          <div className="mt-4">
+            <StylePicker styles={styles} value={look} current="" auto onPick={setLook} disabled={busy !== null}
+              photo={post.background?.thumb_url || ""} brand={brand} />
+          </div>
           <button onClick={() => make()} disabled={busy !== null} className="btn-gradient mt-4 w-full">
             {busy === "make" ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {busy === "make" ? "Making your reel…" : post.video_url ? "Make a new version" : "Make reel"}
@@ -292,6 +405,11 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
           </div>
           <p key={step} className="animate-fade-in text-xs text-slate-500">{step} This takes about 20 seconds.</p>
         </div>
+      )}
+
+      {draft.length > 0 && (
+        <StylePicker styles={styles} value={look} current={post.reel_style ?? ""} auto={false} onPick={setLook} disabled={busy !== null}
+          photo={draft.find((s) => s.kind === "product" && s.photo)?.photo || draft[0]?.photo || ""} brand={brand} />
       )}
 
       {draft.length > 0 && (
@@ -368,7 +486,7 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
               <button onClick={() => make(draft)} disabled={busy !== null} className="btn-primary flex-1">
                 {busy === "render" ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Render my changes
               </button>
-              <button onClick={() => { setDraft(JSON.parse(saved)); setFocus(null); setPicking(null); }} disabled={busy !== null} className="btn-ghost">
+              <button onClick={() => { setDraft(JSON.parse(saved)); setLook(post.reel_style ?? ""); setFocus(null); setPicking(null); }} disabled={busy !== null} className="btn-ghost">
                 <Undo2 size={15} /> Undo
               </button>
             </div>

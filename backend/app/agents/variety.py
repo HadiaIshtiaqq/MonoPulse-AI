@@ -68,21 +68,70 @@ PRODUCT_HEADLINES = {
                  "The edit: {n} pieces we love", "{n} ways to shop {brand} now"],
 }
 PRODUCT_IDEAS = {
-    "new": ["The {name}{coll} is new at {brand}", "Fresh in at {brand}: the {name}{coll}", "Here's the {name}{coll}, just added at {brand}"],
+    "new": ["The {name}{coll} is new at {brand}", "Fresh in at {brand}: the {name}{coll}", "Here's the {name}{coll}, just added at {brand}",
+            "Just in: the {name}{coll}", "Meet the newest arrival at {brand}, the {name}{coll}"],
     "craft": ["Every detail of the {name}{coll} was chosen on purpose", "Look closely at the {name}{coll}: the finish is the point",
-              "The {name}{coll} is all in the details"],
+              "It's all in the details with the {name}{coll}", "Zoom in on the {name}{coll} and you'll see why it took time",
+              "Made slowly and carefully: the {name}{coll}"],
     "comfort": ["The {name}{coll} is built for comfort from the first wear", "Comfortable from morning to night: the {name}{coll}",
-                "The {name}{coll} is made to be worn, not just looked at"],
+                "Made to be worn, not just looked at: the {name}{coll}", "Easy all day, every day: the {name}{coll}"],
     "customer": ["The {name}{coll} is the one people keep asking us about", "Customers keep coming back for the {name}{coll}",
-                 "The {name}{coll} has been a favourite in store and online"],
+                 "A favourite in store and online: the {name}{coll}", "If you've asked us about the {name}{coll}, here it is"],
     "tip": ["Keep everything else simple and let the {name}{coll} lead", "Pair the {name}{coll} with one statement piece and stop there",
-            "Dress the {name}{coll} up for an event or down for the weekend"],
+            "Dress the {name}{coll} up for an event or down for the weekend", "Start with the {name}{coll} and build the look around it"],
     "sale": ["The {name}{coll} is {pct}% off right now", "Good news if you've had your eye on the {name}{coll}: it's on sale",
-             "The {name}{coll} just dropped in price"],
+             "Price drop on the {name}{coll}", "Now's the time for the {name}{coll}: {pct}% off"],
     "moment": ["{moment} is coming up, and the {name}{coll} is ready for it", "Planning for {moment}? Start with the {name}{coll}",
-               "One for {moment}: the {name}{coll}"],
-    "carousel": ["A few favourites from {brand}, starting with the {name}{coll}", "Swipe through a few picks from {brand}, beginning with the {name}{coll}"],
-    "duo": ["The {a} or the {b}? Both are at {brand}", "Two picks from {brand}: the {a} and the {b}"],
+               "One for {moment}: the {name}{coll}", "Counting down to {moment} with the {name}{coll}"],
+    "carousel": ["A few favourites from {brand}, starting with the {name}{coll}", "Swipe through a few picks from {brand}, beginning with the {name}{coll}",
+                 "From the {name}{coll} onwards, here's what we're loving at {brand}", "Our shortlist this week opens with the {name}{coll}"],
+    "duo": ["The {a} or the {b}? Both are at {brand}", "Two picks from {brand}: the {a} and the {b}",
+            "Can't decide between the {a} and the {b}? Neither can we"],
+}
+
+# --------------------------------------------------------------------------- caption shapes
+# Captions take different shapes from post to post (and from platform to platform within a
+# post), so a feed reads like a person wrote it, not like one template filled in thirty times.
+
+CAPTION_SHAPES = ["statement", "hook", "details", "story", "question", "short"]
+SHAPE_HINTS = {
+    "statement": "one or two plain sentences",
+    "hook": "a short hook line on its own, then the details",
+    "details": "the product name, then 2 or 3 facts, one per line, each starting with an en dash",
+    "story": "a tiny moment or story in 2 or 3 sentences",
+    "question": "a short description that ends by asking the reader a question",
+    "short": "one punchy line of under 15 words",
+}
+PLATFORM_ORDER = ["instagram", "facebook", "linkedin", "x"]
+
+
+def caption_shape(group: int, platform: str) -> str:
+    """Neighbouring posts get different shapes, and so do the platform versions of one post."""
+    offset = PLATFORM_ORDER.index(platform) * 2 if platform in PLATFORM_ORDER else 0
+    return CAPTION_SHAPES[(group + offset) % len(CAPTION_SHAPES)]
+
+
+HOOKS = {
+    "wear": ["Okay, this one's special.", "Your next outfit, sorted.", "We've been waiting to show you this.", "Saving the best for this week.",
+             "This is the one.", "Hear us out."],
+    "food": ["Hungry? Keep scrolling.", "Okay, this one's special.", "Your next craving, sorted.", "We've been waiting to show you this.",
+             "This is the one.", "Hear us out."],
+    "other": ["Okay, this one's special.", "We've been waiting to show you this.", "Quick one for your list.", "This is the one.",
+              "Something new for you.", "Hear us out."],
+}
+# Scene-setting only: openers imagine a moment, they never claim facts about the brand.
+STORY_OPENERS = {
+    "wear": ["Picture it: an evening out, and everyone asks where it's from.", "Some pieces feel right the moment you put them on.",
+             "Imagine the invite arrives tomorrow. You'd be ready.", "Picture a slow Sunday, coffee in hand, dressed in this."],
+    "food": ["Picture it: a long day, then the first bite.", "Some things are worth the wait.",
+             "Imagine Friday night, friends over, and this on the table.", "Picture the first bite. Now stop picturing and order."],
+    "other": ["Picture it: the moment you finally find exactly what you needed.", "Some things just feel right the moment you see them.",
+              "Imagine ticking this off your list today.", "Picture next week, sorted."],
+}
+QUESTIONS = {
+    "wear": ["Would you wear it?", "Day look or evening look?", "Yes or no?", "Who would you wear it with?", "How would you style it?"],
+    "food": ["Would you try it?", "Sharing or all for you?", "Yes or no?", "Who are you bringing?", "Lunch or dinner?"],
+    "other": ["Would you try it?", "Yes or no?", "Who would you share this with?", "What do you think?"],
 }
 
 CLOSERS = {
@@ -95,12 +144,12 @@ CLOSERS = {
                  "Tag a friend who'd love this.", "Yes or no? Let us know in the comments."],
     "facebook_duo": ["Which would you pick? Tell us in the comments.", "A or B? We want to know."],
     "linkedin": ["We'd love to hear what you think of it.", "Thoughts? We read every comment.",
-                 "What do you look for when you choose {category}?"],
+                 "What do you look for when you choose {category}?", "Proud of how this one turned out."],
 }
 CTAS = {
-    "instagram": ["Shop via the link in bio", "Tap the link in bio to shop", "Link in bio"],
-    "linked": ["Shop it here: {link}", "See it here: {link}", "Find it at {link}"],
-    "linkedin": ["See the collection: {link}", "More at {link}", "See it here: {link}"],
+    "instagram": ["Shop via the link in bio", "Tap the link in bio to shop", "Link in bio", "Find it through our bio", "Yours via the link in bio"],
+    "linked": ["Shop it here: {link}", "See it here: {link}", "Find it at {link}", "Get yours: {link}", "Take a closer look: {link}"],
+    "linkedin": ["See the collection: {link}", "More at {link}", "See it here: {link}", "Explore it: {link}"],
 }
 
 GENERIC_HEADLINES = {

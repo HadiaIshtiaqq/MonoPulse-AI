@@ -94,3 +94,27 @@ def test_owner_edits_text_and_photos_then_rerenders(client, monkeypatch):  # noq
     bad = [dict(edited[1], photo="https://evil.example/x.jpg")]
     assert client.post(f"/api/posts/{post.id}/reel", json={"scenes": bad}).status_code == 422
     assert client.post(f"/api/posts/{post.id}/reel", json={"scenes": []}).status_code == 422
+
+
+def test_reels_in_a_campaign_rotate_through_different_styles():
+    c = Campaign(start_date=date(2026, 11, 1), days=6, platforms=[Platform.INSTAGRAM], brand=_kit())
+    c.posts = [_post(c.id, f"g{i}", i, None, None) for i in range(6)]
+    seen = []
+    for p in c.posts[:5]:
+        p.reel_style = reels.choose_style(c, p).key
+        seen.append(p.reel_style)
+    assert sorted(seen) == sorted(reels.STYLES)  # five reels, five different looks
+    # A fresh script never keeps the look the reel already had.
+    assert reels.choose_style(c, c.posts[0], avoid=c.posts[0].reel_style).key != c.posts[0].reel_style
+
+
+def test_every_style_renders_and_can_be_picked(client, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(reels, "FPS", 3)
+    c = _campaign_with_posts(days=2)
+    post = c.posts[0]
+    for key in reels.STYLES:
+        r = client.post(f"/api/posts/{post.id}/reel", json={"style": key})
+        assert r.status_code == 200, (key, r.text)
+        assert r.json()["post"]["reel_style"] == key and r.json()["style"] == key
+    assert client.post(f"/api/posts/{post.id}/reel", json={"style": "sparkles"}).status_code == 422
+    assert [s["key"] for s in client.get("/api/reel-styles").json()] == list(reels.STYLES)

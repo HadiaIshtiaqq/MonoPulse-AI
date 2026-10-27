@@ -146,7 +146,9 @@ async def attach_site_photos(kit, posts: list[SocialPost], slide_products: dict[
 
 
 # Looks for photo posts, rotated so neighbouring posts never look alike: (layout, text position).
-PHOTO_LOOKS = [("photo", "auto"), ("frame", "auto"), ("photo", "top"), ("frame", "auto"), ("photo", "auto"), ("photo", "top")]
+PHOTO_LOOKS = [("photo", "auto"), ("poster", "auto"), ("frame", "auto"), ("photo", "top"), ("minimal", "auto"),
+               ("poster", "center"), ("photo", "center"), ("frame", "auto"), ("minimal", "auto")]
+COVER_LOOKS = [("photo", "auto"), ("poster", "auto"), ("photo", "top"), ("poster", "center")]  # carousel covers
 
 
 def assign_layouts(posts: list[SocialPost]) -> None:
@@ -155,7 +157,7 @@ def assign_layouts(posts: list[SocialPost]) -> None:
     ideas: dict[str, list[SocialPost]] = {}
     for p in posts:
         ideas.setdefault(p.group_id or p.id, []).append(p)
-    photo_i = graphic_i = 0
+    photo_i = graphic_i = cover_i = 0
     last = None
     for versions in ideas.values():
         first = versions[0]
@@ -174,9 +176,12 @@ def assign_layouts(posts: list[SocialPost]) -> None:
             graphic_i += 1
             if look == last:
                 look, graphic_i = (GRAPHIC_LAYOUTS[graphic_i % len(GRAPHIC_LAYOUTS)], "auto"), graphic_i + 1
+        cover = COVER_LOOKS[cover_i % len(COVER_LOOKS)]
+        if has_photo and any(p.format == "carousel" for p in versions):
+            cover_i += 1
         for p in versions:
-            # A carousel cover keeps the plain photo look; its pages carry the variety.
-            p.layout, p.text_position = ("photo", "auto") if (p.format == "carousel" and has_photo) else look
+            # Carousel covers rotate through their own looks (with room for the swipe chip).
+            p.layout, p.text_position = cover if (p.format == "carousel" and has_photo) else look
         last = look
 
 

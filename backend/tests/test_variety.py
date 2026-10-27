@@ -108,3 +108,52 @@ def test_layouts_rotate_and_new_layouts_render(tmp_path):
             assert img.size == renderer.SIZES[platform]
     report = variety.variety_report(posts)
     assert report["posts"] == 7 and len(report["types"]) == 6 and report["repeated_headlines"] == 0
+
+
+def test_captions_take_different_shapes_and_openings():
+    slots, copies = month_of_copy(store_kit(), platforms=(Platform.INSTAGRAM, Platform.FACEBOOK))
+    ig = [c["caption"] for s, c in zip(slots, copies) if s.platform is Platform.INSTAGRAM]
+    openings = Counter(" ".join(c.split()[:3]).lower() for c in ig)
+    assert openings.most_common(1)[0][1] <= 3, openings.most_common(3)
+    assert sum("\n– " in c for c in ig) >= 2  # some posts are short fact lists
+    assert sum(c.rstrip().endswith("?") for c in ig) >= 2  # some end by asking the reader
+    # A post's Instagram and Facebook versions are told differently, not copy-pasted.
+    by_group = {}
+    for s, c in zip(slots, copies):
+        by_group.setdefault(s.group, {})[s.platform] = c["caption"]
+    differ = sum(v[Platform.INSTAGRAM].split("\n")[0] != v[Platform.FACEBOOK].split("\n")[0] for v in by_group.values())
+    assert differ >= len(by_group) * 0.8
+
+
+def test_look_alike_products_are_named_by_their_collection():
+    kit = BrandKit(source_input="x", name="Khaadi", industry="Fashion & Apparel", products=[
+        Product(name="3-Piece Co-ord Set", category="Khaas: Floral Radiance"),
+        Product(name="3-Piece Co-ord Set", category="Artisanal Block In Gold"),
+        Product(name="Dupatta", category="Shawls")])
+    assert [strategist.display_name(kit, p) for p in kit.products] == ["Floral Radiance 3-Piece", "Artisanal Block In Gold 3-Piece", "Dupatta"]
+
+
+def test_feed_rotates_through_photo_layouts(tmp_path):
+    path = tmp_path / "p.jpg"
+    Image.new("RGB", (800, 1000), "teal").save(path)
+    posts = [SocialPost(campaign_id="c", group_id=f"g{i}", day=i, platform=Platform.INSTAGRAM, kind="spotlight",
+                        background=Background(source="website", path=str(path)), publish_at=datetime.now(timezone.utc)) for i in range(9)]
+    pipeline.assign_layouts(posts)
+    assert {p.layout for p in posts} >= {"photo", "poster", "frame", "minimal"}
+    assert all((a.layout, a.text_position) != (b.layout, b.text_position) for a, b in zip(posts, posts[1:]))
+    for layout in ("poster", "minimal"):
+        for platform in Platform:
+            post = posts[0].model_copy(update={"layout": layout, "platform": platform, "headline": "A new favourite for the season"})
+            assert renderer.render(store_kit(), post).size == renderer.SIZES[platform]
+
+
+def test_menu_text_is_not_a_brand_quote():
+    kit = BrandKit(source_input="x", name="Khaadi", value_props=["NEW IN NEW IN NEW IN READY TO WEAR", "Hand-finished in our own studio"])
+    assert strategist.brand_claims(kit) == ["Hand-finished in our own studio"]
+
+
+def test_navigation_menus_run_together_are_not_brand_claims():
+    kit = BrandKit(source_input="x", name="Khaadi", value_props=[
+        "New In New In New In Ready To Wear Tailored Fabrics Chapter 2 Accessories", "Ready To Wear Ready To Wear Essentials 1 Piece 2 Piece",
+        "Our latest drop this season, bringing together classic and contemporary silhouettes"])
+    assert strategist.brand_claims(kit) == ["Our latest drop this season, bringing together classic and contemporary silhouettes"]
