@@ -434,6 +434,23 @@ export function PostEditor({
                         {charCount}{post.platform === "x" ? " / 280" : ""} characters
                       </span>
                     </div>
+                    {(post.caption_history?.length ?? 0) > 0 && (
+                      <details className="mt-2 rounded-xl border border-slate-200 px-3 py-2 text-xs">
+                        <summary className="cursor-pointer font-medium text-slate-600">Earlier versions ({post.caption_history!.length})</summary>
+                        <ul className="mt-2 space-y-2">
+                          {post.caption_history!.map((c, i) => (
+                            <li key={i} className="flex items-start gap-2 rounded-lg bg-slate-50 p-2">
+                              <p className="line-clamp-3 min-w-0 flex-1 whitespace-pre-wrap text-slate-600">{c}</p>
+                              <button onClick={() => { setShowDraft(false); setCaption(c); }} disabled={c === caption}
+                                className="shrink-0 font-medium text-brand hover:underline disabled:text-slate-400 disabled:no-underline">
+                                {c === caption ? "In use" : "Restore"}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="mt-2 text-slate-400">Restoring puts it in the box above; save to keep it.</p>
+                      </details>
+                    )}
                   </section>
 
                   <section className="rounded-2xl border border-slate-200 p-4">

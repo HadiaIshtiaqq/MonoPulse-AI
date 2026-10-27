@@ -128,6 +128,7 @@ export interface SocialPost {
   remote_url: string | null;
   is_humanized: boolean;
   original_caption: string | null;
+  caption_history?: string[];
   ai_tell_before: number | null;
   ai_tell_after: number | null;
 }

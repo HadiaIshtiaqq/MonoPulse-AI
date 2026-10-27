@@ -414,6 +414,16 @@ def _post(post_id: str) -> tuple[Campaign, SocialPost]:
     return found
 
 
+CAPTION_HISTORY = 8
+
+
+def _set_caption(post: SocialPost, text: str) -> None:
+    """Change the caption, keeping the one it replaces in the post's history."""
+    if text != post.caption and post.caption.strip():
+        post.caption_history = [post.caption, *[c for c in post.caption_history if c not in (post.caption, text)]][:CAPTION_HISTORY]
+    post.caption = text
+
+
 async def _rerender(campaign: Campaign, post: SocialPost) -> None:
     if campaign.brand:
         await asyncio.to_thread(renderer.render_post, campaign.brand, post)
@@ -444,7 +454,7 @@ async def update_post(post_id: str, req: UpdatePostRequest) -> SocialPost:
             post.layout = "bold"
         rerender = True
     if req.caption is not None:
-        post.caption = req.caption
+        _set_caption(post, req.caption)
         post.ai_tell_after = humanizer.ai_tell_score(req.caption)
     if req.cta is not None:
         post.cta, rerender = req.cta[:120], rerender or post.format == "carousel"
@@ -506,7 +516,8 @@ async def humanize_post(post_id: str, req: PostHumanizeRequest | None = None):
     res = await humanizer.humanize(post.caption, voice=kit.brand_voice_prompt if kit else "", threshold=0, mode=mode,
                                    protect=[kit.name] if kit else None)
     post.original_caption = post.original_caption or post.caption
-    post.caption, post.ai_tell_after, post.is_humanized = res.text, res.after, True
+    _set_caption(post, res.text)
+    post.ai_tell_after, post.is_humanized = res.after, True
     store.save(campaign)
     return {"post": post, "used_llm": res.used_llm, "before": res.before, "after": res.after,
             "patterns_before": res.patterns_before, "patterns_after": res.patterns_after,
@@ -535,7 +546,8 @@ async def rewrite_post(post_id: str, req: RewriteRequest) -> SocialPost:
     except (LLMError, AttributeError) as exc:
         raise HTTPException(502, f"rewrite failed: {exc}") from exc
     res = await humanizer.humanize(caption, voice=kit.brand_voice_prompt, use_llm=False, protect=[kit.name])
-    post.caption, post.ai_tell_after = res.text, res.after
+    _set_caption(post, res.text)
+    post.ai_tell_after = res.after
     post.hashtags = normalize_hashtags(post.hashtags, HASHTAG_COUNT[post.platform])
     enforce_limits(post)
     if headline != post.headline:
@@ -666,16 +678,17 @@ async def caption_language(post_id: str, req: CaptionLanguageRequest) -> dict:
                                               f"Caption:\n{base}", temperature=0.7, max_tokens=900)
             text = str(data.get("caption") or "").strip() if isinstance(data, dict) else ""
             if text and not humanizer.missing_facts(base, text, [kit.name]):
-                post.caption, rewritten = humanizer.rule_pass(text) if req.language != "ur" else text, True
+                _set_caption(post, humanizer.rule_pass(text) if req.language != "ur" else text)
+                rewritten = True
         except (LLMError, AttributeError) as exc:
             logging.getLogger(__name__).info("caption language rewrite fell back: %s", exc)
     if not rewritten:
         p = lang.pools(req.language)
         if p == "en":
-            post.caption = base
+            _set_caption(post, base)
         else:
             seed = sum(map(ord, post.id))
-            post.caption = f"{variety.pick(lang.OPENERS[p], seed)}\n\n{base}\n\n{variety.pick(lang.CLOSERS[p], seed)}"
+            _set_caption(post, f"{variety.pick(lang.OPENERS[p], seed)}\n\n{base}\n\n{variety.pick(lang.CLOSERS[p], seed)}")
     post.original_caption = post.original_caption or base
     store.save(campaign)
     return {"post": post, "rewritten": rewritten}

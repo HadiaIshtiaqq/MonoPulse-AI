@@ -182,6 +182,7 @@ class SocialPost(BaseModel):
     remote_url: str | None = None
     is_humanized: bool = False
     original_caption: str | None = None
+    caption_history: list[str] = []  # earlier captions, newest first, so a rewrite can be undone
     ai_tell_before: float | None = None
     ai_tell_after: float | None = None
 

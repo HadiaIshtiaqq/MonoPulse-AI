@@ -445,3 +445,17 @@ def test_redraw_undo_approve_and_media_cleanup(client, monkeypatch):
     os.utime(upload, (weeks_ago, weeks_ago))
     media_gc.cleanup()
     assert not upload.exists()
+
+
+def test_earlier_captions_are_kept_so_a_rewrite_can_be_undone(client):
+    post = _campaign_with_posts(days=1).posts[0]
+    first = post.caption
+    client.patch(f"/api/posts/{post.id}", json={"caption": "Second try"})
+    client.post(f"/api/posts/{post.id}/caption-language", json={"language": "roman"})
+    body = client.patch(f"/api/posts/{post.id}", json={"caption": "Second try"}).json()
+    assert body["caption"] == "Second try"
+    roman, original = body["caption_history"]  # newest first; the caption in use isn't repeated
+    assert original == first and roman not in (first, "Second try")
+    for i in range(12):
+        client.patch(f"/api/posts/{post.id}", json={"caption": f"Version {i}"})
+    assert len(client.patch(f"/api/posts/{post.id}", json={"caption": "Last"}).json()["caption_history"]) == 8
