@@ -20,6 +20,7 @@ from app.social import browser
 pytestmark = pytest.mark.skipif(not browser.available(), reason="Playwright isn't installed")
 
 PAGE = """<!doctype html><html><body>
+<div id="pop">Remember password? <button onclick="document.getElementById('pop').remove()">Not now</button></div>
 <button onclick="document.getElementById('modal').hidden=false">Start a post</button>
 <div id="modal" hidden>
   <button aria-label="Add media" onclick="document.getElementById('f').click()">Add media</button>
@@ -138,3 +139,17 @@ def test_a_browser_that_wont_start_is_reported_calmly(monkeypatch):
     with TestClient(app) as client:
         body = client.get("/api/browser").json()
     assert body["available"] and "Close every MonoPlus browser window" in body["error"]
+
+
+def test_switching_on_browser_posting_switches_on_auto_posting():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.store import store
+
+    store.settings.auto_publish = False
+    with TestClient(app) as client:
+        body = client.put("/api/browser/scheduled", json={"enabled": True}).json()
+        assert body == {"scheduled": True, "auto_publish": True} and store.settings.auto_publish
+        client.put("/api/browser/scheduled", json={"enabled": False})
+    store.settings.browser_publish = store.settings.auto_publish = False

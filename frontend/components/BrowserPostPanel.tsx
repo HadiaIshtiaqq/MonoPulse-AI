@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Clapperboard, Globe, Loader2, LogIn, LogOut, MousePointerClick, RefreshCw, Rocket } from "lucide-react";
 import { api, type SocialPost } from "@/lib/api";
 import { PLATFORM_META } from "@/components/PlatformIcon";
@@ -25,11 +25,33 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
   }, []);
   useEffect(() => { check(); }, [check]);
 
+  // After "Sign in", watch for the sign-in to land (every 4 s, up to 5 minutes), so the post
+  // buttons appear by themselves once you've signed in in the browser window.
+  const [waiting, setWaiting] = useState(false);
+  const stopAt = useRef(0);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const s = await api.browserStatus();
+        setStatus(s);
+        if (s.signed_in[post.platform]) {
+          setWaiting(false);
+          toast(`Signed in to ${label}. You can post now.`, "success");
+        }
+      } catch {}
+      if (Date.now() > stopAt.current) setWaiting(false);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [waiting, post.platform, label, toast]);
+
   async function signIn() {
     setBusy("login");
     try {
       const res = await api.browserLogin(post.platform);
       toast(res.note, "info");
+      stopAt.current = Date.now() + 5 * 60_000;
+      setWaiting(true);
     } catch (e) { toast((e as Error).message, "error"); }
     finally { setBusy(null); }
   }
@@ -74,7 +96,8 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
     try {
       const res = await api.browserScheduled(enabled);
       setStatus((s) => (s ? { ...s, scheduled: res.scheduled } : s));
-      toast(enabled ? "Approved posts will go out at their time through MonoPlus's browser" : "Scheduled browser posting is off", "info");
+      toast(enabled ? "Auto-posting is on: approved posts go out at their time through MonoPlus's browser while MonoPlus is running"
+        : "Scheduled browser posting is off", "info");
     } catch (e) { toast((e as Error).message, "error"); }
     finally { setBusy(null); }
   }
@@ -122,7 +145,13 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
             <button onClick={signIn} disabled={busy !== null} className="btn-primary mt-3 w-full">
               {busy === "login" ? <Loader2 size={15} className="animate-spin" /> : <LogIn size={15} />} Sign in to {label}
             </button>
-          ) : (
+          ) : null}
+          {!signedIn && waiting && (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+              <Loader2 size={12} className="animate-spin" /> Waiting for you to finish signing in to {label} in the browser window…
+            </p>
+          )}
+          {!signedIn ? null : (
             <>
               {canReel && (
                 <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-slate-600">
@@ -143,7 +172,7 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
 
           <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs text-slate-600">
             <input type="checkbox" checked={status.scheduled} disabled={busy !== null} onChange={(e) => toggleScheduled(e.target.checked)} className="mt-0.5 accent-brand" />
-            <span>Post approved posts automatically at their scheduled time through this browser (when auto-posting is on and MonoPlus is running).</span>
+            <span>Post approved posts automatically at their scheduled time through this browser (while MonoPlus is running). Only <b>approved</b> posts go out.</span>
           </label>
           <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
             Your passwords stay with the platforms: you sign in inside the browser window, never in MonoPlus. Platforms discourage

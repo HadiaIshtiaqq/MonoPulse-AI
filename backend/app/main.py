@@ -764,7 +764,8 @@ async def browser_status() -> dict:
     except Exception as exc:  # noqa: BLE001 - e.g. a window already open, or no display on a server
         return {"available": True, "error": browser.explain(exc), "signed_in": browser.poster.signed_in,
                 "scheduled": store.settings.browser_publish}
-    return {"available": True, "signed_in": signed_in, "scheduled": store.settings.browser_publish}
+    return {"available": True, "signed_in": signed_in,
+            "scheduled": store.settings.browser_publish and store.settings.auto_publish}
 
 
 @app.post("/api/browser/login/{platform}")
@@ -798,10 +799,13 @@ async def browser_sign_out() -> dict:
 
 @app.put("/api/browser/scheduled")
 def browser_scheduled(req: BrowserSettingRequest) -> dict:
-    """Let approved posts go out at their scheduled time through the signed-in browser."""
+    """Let approved posts go out at their scheduled time through the signed-in browser. Turning it on
+    turns on auto-posting too: ticking "post automatically" and having nothing happen helps no one."""
     store.settings.browser_publish = req.enabled
+    if req.enabled:
+        store.settings.auto_publish = True
     store.save()
-    return {"scheduled": store.settings.browser_publish}
+    return {"scheduled": store.settings.browser_publish, "auto_publish": store.settings.auto_publish}
 
 
 @app.post("/api/posts/{post_id}/browser-post")

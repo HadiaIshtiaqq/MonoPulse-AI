@@ -278,9 +278,21 @@ def _attach_with_chooser(page, button, files: list[str]) -> None:
     chooser.value.set_files(files)
 
 
+def _dismiss_prompts(page) -> None:
+    """Close the platform's own friendly pop-ups ("Remember password?", "Turn on notifications?")
+    that sit over the composer, by choosing the polite no. Never a security check: those stop posting."""
+    for _ in range(3):
+        later = _first_visible(page.get_by_role("button", name=re.compile(r"^(not now|maybe later|skip|no thanks)$", re.I)))
+        if later is None:
+            return
+        later.click()
+        page.wait_for_timeout(500)
+
+
 def _linkedin(page, caption: str, files: list[str], submit: bool) -> None:
     page.goto(HOME[Platform.LINKEDIN])
     _signed_in_or_raise(page, "LinkedIn")
+    _dismiss_prompts(page)
     _need("LinkedIn's \"Start a post\" button",
           page.get_by_role("button", name=re.compile(r"start a post", re.I)),
           page.locator("button:has-text('Start a post')")).click()
@@ -314,6 +326,7 @@ def _x(page, caption: str, files: list[str], submit: bool) -> None:
 def _facebook(page, caption: str, files: list[str], submit: bool) -> None:
     page.goto(HOME[Platform.FACEBOOK])
     _signed_in_or_raise(page, "Facebook")
+    _dismiss_prompts(page)
     _need("Facebook's \"What's on your mind\" box",
           page.get_by_role("button", name=re.compile(r"what's on your mind", re.I)),
           page.locator("span:has-text(\"What's on your mind\")")).click()
@@ -334,6 +347,7 @@ def _instagram(page, caption: str, files: list[str], submit: bool) -> None:
         raise BrowserPostError("Instagram posts need an image or a reel.")
     page.goto(HOME[Platform.INSTAGRAM])
     _signed_in_or_raise(page, "Instagram")
+    _dismiss_prompts(page)
     _need("Instagram's New post button", page.locator("svg[aria-label='New post']"),
           page.get_by_role("link", name=re.compile(r"^(new post|create)$", re.I))).click()
     menu_post = _first_visible(page.get_by_role("link", name=re.compile(r"^post$", re.I)),
