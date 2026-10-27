@@ -112,10 +112,22 @@ class ReelScene(BaseModel):
     text: str = ""
     sub: str = ""  # price under a product, the website on the end card
     photo: str = ""  # /media/... file the scene shows ("" = brand colour)
+    tag: str = ""  # its place in the story: "Tip 2", "#1", "A"
+
+
+class ReelOptions(BaseModel):
+    """How a reel looks beyond its style: colours, pace and lettering."""
+    palette: str = ""  # brand | midnight | pastel | complement | mono | sunset | ocean | forest | berry | custom; "" = rotate
+    color: str = ""  # the main colour for the custom palette, #RRGGBB
+    pace: str = "normal"  # relaxed | normal | snappy
+    case: str = "auto"  # auto (the style decides) | normal | upper
 
 
 class ReelRequest(BaseModel):
     scenes: list[ReelScene] | None = None  # omitted: write a new script from scratch
+    options: ReelOptions | None = None  # omitted: keep the reel's options (a fresh script rotates the palette)
+    topic: str | None = None  # products | countdown | tips | poll | story | occasion; omitted: fits the post
+    occasion: str | None = None  # eid_fitr | mothers | independence | sale | ... for an occasion reel
     style: str | None = None  # cinematic | punch | showcase | magazine | scrapbook; omitted: pick one
 
 
@@ -156,6 +168,10 @@ class SocialPost(BaseModel):
     video_poster: str | None = None
     reel_scenes: list[ReelScene] = []  # the reel's script and photos, so it can be edited and re-rendered
     reel_style: str = ""  # the reel's visual style, so a campaign's reels rotate through different looks
+    reel_options: ReelOptions = ReelOptions()  # the palette (as used), pace and lettering
+    reel_topic: str = ""  # what the reel is about: products | countdown | tips | poll | story | occasion
+    reel_occasion: str = ""  # the occasion an occasion reel celebrates
+    occasion: str = ""  # a greeting post's occasion ("Eid al-Fitr")
     publish_at: datetime
     status: PostStatus = PostStatus.DRAFT
     published_via: str | None = None  # direct | webhook | manual

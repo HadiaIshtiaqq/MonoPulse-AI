@@ -19,7 +19,7 @@ GENERIC_CYCLE = ["spotlight", "carousel", "question", "tip", "quote", "moment", 
 
 KIND_LABELS = {
     "spotlight": "Product spotlight", "carousel": "Carousel", "duo": "This or that", "tip": "Styling tip", "quote": "Brand quote",
-    "sale": "Sale", "moment": "Seasonal moment", "question": "Question",
+    "sale": "Sale", "moment": "Seasonal moment", "question": "Question", "greeting": "Greeting",
 }
 
 

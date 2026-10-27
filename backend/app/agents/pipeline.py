@@ -162,7 +162,9 @@ def assign_layouts(posts: list[SocialPost]) -> None:
     for versions in ideas.values():
         first = versions[0]
         has_photo = bool(first.background)
-        if first.kind == "quote" and not first.product:
+        if first.kind == "greeting":
+            look = ("greeting", "auto")
+        elif first.kind == "quote" and not first.product:
             look = ("quote", "auto")
         elif first.kind == "duo" and has_photo and first.gallery:
             look = ("duo", "auto")
@@ -241,7 +243,8 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
 
         with StepTimer(job, campaign, "copy") as st:
             slots = strategist.plan_slots(campaign.strategy, campaign.trends, campaign.platforms, campaign.days, posts_per_day,
-                                          products=kit.products, claims=len(strategist.brand_claims(kit)))
+                                          products=kit.products, claims=len(strategist.brand_claims(kit)),
+                                          start=campaign.start_date, country=kit.country)
             copies = await strategist.write_all(kit, campaign.strategy, slots, findings)
             posts = []
             group_ids: dict[int, str] = {}
@@ -264,6 +267,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                         product=slot.product,
                         compare=slot.compare,
                         kind=slot.kind,
+                        occasion=slot.occasion,
                         layout=GRAPHIC_LAYOUTS[slot.group % len(GRAPHIC_LAYOUTS)],
                         format=slot.format,
                         slides=[Slide(**s) for s in copy.get("slides", [])] if slot.format == "carousel" else [],

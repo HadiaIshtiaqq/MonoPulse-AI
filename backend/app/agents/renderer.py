@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from .. import config
 from ..schemas import BrandKit, Platform, SocialPost
+from . import occasions
 
 SIZES = {
     Platform.INSTAGRAM: (1080, 1350),
@@ -25,7 +26,7 @@ SIZES = {
     Platform.X: (1600, 900),
 }
 CAROUSEL_SIZE = (1080, 1350)
-LAYOUTS = ["bold", "split", "quote", "photo", "frame", "poster", "minimal", "duo"]
+LAYOUTS = ["bold", "split", "quote", "photo", "frame", "poster", "minimal", "duo", "greeting"]
 PHOTO_LAYOUTS = {"photo", "frame", "poster", "minimal", "duo"}  # need a background photo (duo also needs a second one)
 POSITIONS = ["auto", "top", "center", "bottom"]
 
@@ -133,7 +134,11 @@ def paste_logo(img: Image.Image, kit: BrandKit, box: tuple[int, int, int, int], 
     except OSError:
         return False
     x0, y0, x1, y1 = box
-    logo.thumbnail((x1 - x0, y1 - y0), Image.LANCZOS)
+    logo = logo.crop(logo.getbbox() or (0, 0, *logo.size))
+    # Fit the box both ways: many sites only offer a small logo file (a 32 px favicon), which
+    # would otherwise sit tiny in the corner.
+    s = min((x1 - x0) / logo.width, (y1 - y0) / logo.height)
+    logo = logo.resize((max(1, int(logo.width * s)), max(1, int(logo.height * s))), Image.LANCZOS)
     if on_dark:
         pad = 14
         chip = Image.new("RGBA", (logo.width + pad * 2, logo.height + pad * 2), (0, 0, 0, 0))
@@ -350,6 +355,36 @@ def render_minimal(kit: BrandKit, post: SocialPost, size: tuple[int, int], headl
     return img
 
 
+def render_greeting(kit: BrandKit, post: SocialPost, size: tuple[int, int], headline: str, scale: float) -> Image.Image:
+    """A festive card for Eid, Mother's Day, Independence Day and other occasions: the occasion's
+    colours and motif, a big greeting, and the brand's logo and name to sign it."""
+    w, h = size
+    o = occasions.find(post.occasion or headline) or occasions.OCCASIONS["new_year"]
+    primary, accent, _ = occasions.colors(o, kit.country)
+    s = min(w, h)
+    img = gradient(size, shade(primary, 0.36) if luminance(primary) > 0.05 else primary, shade(primary, 0.14)).convert("RGBA")
+    img.alpha_composite(occasions.motif_layer(o.motif, size, (primary, accent, (0, 0, 0))))
+    draw = ImageDraw.Draw(img)
+    fg = accent if luminance(accent) > 0.35 else (255, 255, 255)
+    start = int(s * 0.13 * scale)
+    longest = max(headline.split(), key=len) if headline.split() else headline
+    while start > 30 and draw.textlength(longest, font=font(start)) > w * 0.8:  # never split "Independence"
+        start -= 4
+    fnt, lines, lh = fit_text(draw, headline, int(w * 0.8), int(h * 0.36), start, max_lines=3)
+    y = (h - lh * len(lines)) // 2 - int(h * 0.04)
+    for line in lines:
+        draw.text(((w - draw.textlength(line, font=fnt)) / 2, y), line, font=fnt, fill=fg)
+        y += lh
+    y += int(lh * 0.3)  # clear of the last line's descenders
+    draw.rectangle([w // 2 - 60, y, w // 2 + 60, y + 8], fill=fg)
+    sign = f"From all of us at {kit.name}"
+    sf = font(int(s * 0.035), False)
+    draw.text(((w - draw.textlength(sign, font=sf)) / 2, y + 34), sign, font=sf, fill=(255, 255, 255))
+    lw, lh2 = int(w * 0.24), int(h * 0.08)
+    paste_logo(img, kit, ((w - lw) // 2, h - int(s * 0.07) - lh2, (w + lw) // 2, h - int(s * 0.07)), on_dark=True)
+    return img.convert("RGB")
+
+
 def render_duo(kit: BrandKit, post: SocialPost, size: tuple[int, int]) -> Image.Image:
     """"This or that": two products side by side, lettered A and B, for a vote in the comments."""
     w, h = size
@@ -432,6 +467,8 @@ def render_cover(kit: BrandKit, post: SocialPost, size: tuple[int, int], carouse
         return render_duo(kit, post, size)
     if layout == "frame":
         return render_frame(kit, post, size, headline, scale)
+    if layout == "greeting" or post.kind == "greeting":
+        return render_greeting(kit, post, size, headline, scale)
     if layout == "poster":
         return render_poster(kit, post, size, headline, scale, carousel)
     if layout == "minimal":

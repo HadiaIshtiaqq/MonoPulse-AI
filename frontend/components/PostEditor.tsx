@@ -113,7 +113,10 @@ export function PostEditor({
   const [guide, setGuide] = useState<{ imageOnClipboard: boolean; multi: boolean } | null>(null);
   const [sheet, setSheet] = useState(false);
   const [reelPreview, setReelPreview] = useState<ReelScene | null>(null);
-  const previewScene = useCallback((s: ReelScene | null) => setReelPreview(s), []);
+  const [reelColors, setReelColors] = useState<string[] | undefined>();
+  const previewScene = useCallback((s: ReelScene | null, colors?: string[]) => { setReelPreview(s); setReelColors(colors); }, []);
+  // The still preview uses the colours picked for the reel, not only the brand's.
+  const reelBrand = brand && reelColors ? { ...brand, primary_color: reelColors[0], accent_color: reelColors[1] ?? brand.accent_color } : brand;
   useEffect(() => setSheet(canShareFiles()), []);
 
   useEffect(() => {
@@ -264,7 +267,7 @@ export function PostEditor({
           {/* preview */}
           <div className="flex flex-col items-center gap-3 bg-[radial-gradient(circle_at_top,#EFEDFF,transparent_60%)] p-5 md:overflow-y-auto">
             {tab === "reel" ? (
-              <ReelPlayer post={post} brand={brand} preview={reelPreview} onExitPreview={() => setReelPreview(null)} />
+              <ReelPlayer post={post} brand={reelBrand} preview={reelPreview} onExitPreview={() => setReelPreview(null)} />
             ) : (
               <div key={post.id} className="animate-scale-in" style={{ width: previewWidth(post) }}>
                 <PostPreview post={{ ...post, caption: showDraft && post.original_caption ? post.original_caption : caption, hashtags: hashtags.split(/\s+/).filter(Boolean) }} brand={brand} />

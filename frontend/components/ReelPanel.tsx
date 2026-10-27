@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowDown, ArrowUp, Check, Clapperboard, Copy, Download, Film, ImageOff, ImagePlus, Loader2, Pause, Play, Plus,
-  RefreshCw, Share2, Shuffle, Sparkles, Trash2, Undo2, Upload, Volume2, Wand2,
+  ArrowDown, ArrowUp, BookOpen, Check, Clapperboard, Copy, Download, Film, ImageOff, ImagePlus, Lightbulb, ListOrdered, Loader2,
+  PartyPopper, Pause, Pipette, Play, Plus, RefreshCw, Share2, ShoppingBag, Shuffle, Sparkles, Trash2, Undo2, Upload, Volume2, Vote, Wand2,
 } from "lucide-react";
-import { api, logoSrc, media, type BrandKit, type ReelPhoto, type ReelScene, type ReelStyle, type SocialPost } from "@/lib/api";
+import {
+  api, logoSrc, media, type BrandKit, type ReelOccasion, type ReelOptions, type ReelOptionsInfo, type ReelPalette, type ReelPhoto,
+  type ReelScene, type ReelStyle, type SocialPost,
+} from "@/lib/api";
 import { canShareVideo, copyText, downloadVideo, shareVideo } from "@/lib/share";
 import { useCycle } from "@/components/Motion";
 import { useFeedback } from "@/components/Feedback";
@@ -35,6 +38,11 @@ function ScenePreview({ scene, brand }: { scene: ReelScene; brand: BrandKit | nu
       {logo && scene.kind !== "cta" && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={logo} alt="" className="absolute left-[7%] top-[8%] h-[6%] max-w-[30%] rounded-md bg-white object-contain p-1" />
+      )}
+      {scene.tag && (
+        <span className="absolute right-[7%] top-[16%] animate-pop-in rounded-full px-2.5 py-0.5 text-xs font-extrabold" style={{ background: accent, color: "#111" }}>
+          {scene.tag}
+        </span>
       )}
       <div className={`absolute inset-x-[8%] ${centered ? "top-1/2 -translate-y-1/2 text-center" : "bottom-[9%]"}`}>
         {scene.kind === "cta" && logo && (
@@ -253,53 +261,216 @@ function StylePicker({ styles, value, current, auto, onPick, photo, brand, disab
   );
 }
 
+const TOPIC_ICONS: Record<string, typeof ShoppingBag> = {
+  products: ShoppingBag, countdown: ListOrdered, tips: Lightbulb, poll: Vote, story: BookOpen, occasion: PartyPopper,
+};
+
+function Chips<T extends string>({ label, hint, value, options, onPick, disabled }: {
+  label: string; hint?: string; value: T; options: { key: T; label: string }[]; onPick: (k: T) => void; disabled: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="label shrink-0" title={hint}>{label}</p>
+      <div className="seg">
+        {options.map((o) => (
+          <button key={o.key} type="button" data-active={value === o.key} onClick={() => onPick(o.key)} disabled={disabled}>{o.label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** What the reel is about. Each topic is one connected story: a promise, scenes that deliver it, a payoff. */
+function TopicPicker({ options, value, suggested, onPick, disabled }: {
+  options: ReelOptionsInfo | null; value: string; suggested: string; onPick: (k: string) => void; disabled: boolean;
+}) {
+  const topics = options?.topics ?? [];
+  const active = topics.find((t) => t.key === (value || suggested));
+  return (
+    <section>
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <p className="label">Topic</p>
+        <p className="truncate text-[11px] text-slate-500">{active?.blurb}</p>
+      </div>
+      <div className="grid grid-cols-3 gap-1.5">
+        {topics.map((t) => {
+          const Icon = TOPIC_ICONS[t.key] ?? Sparkles;
+          const on = (value || suggested) === t.key;
+          return (
+            <button key={t.key} type="button" onClick={() => onPick(t.key)} disabled={disabled || !t.available}
+              title={t.available ? t.blurb : "There isn't enough in this campaign for this one"}
+              className={`relative flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-left text-xs font-medium transition disabled:opacity-35 ${on ? "border-brand bg-brand-soft text-brand-700" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+              <Icon size={14} className={on ? "text-brand" : "text-slate-400"} />
+              <span className="truncate">{t.label}</span>
+              {!value && t.key === suggested && <span className="absolute -top-1.5 right-1.5 rounded bg-brand px-1 text-[8px] font-bold uppercase text-white">Fits</span>}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function OccasionPicker({ occasions, value, onPick, disabled }: {
+  occasions: ReelOccasion[]; value: string; onPick: (k: string) => void; disabled: boolean;
+}) {
+  return (
+    <section className="animate-slide-down">
+      <p className="label mb-2">Occasion</p>
+      <div className="flex flex-wrap gap-1.5">
+        {occasions.map((o) => {
+          const on = value === o.key;
+          return (
+            <button key={o.key} type="button" onClick={() => onPick(o.key)} disabled={disabled} title={o.greeting}
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${on ? "border-ink bg-ink text-white" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+              <span className="flex">
+                <span className="h-3 w-3 rounded-full border border-white" style={{ background: o.colors[0] }} />
+                <span className="-ml-1 h-3 w-3 rounded-full border border-white" style={{ background: o.colors[1] }} />
+              </span>
+              {o.label}
+              {o.soon && <span className={`text-[10px] ${on ? "text-white/70" : "text-brand"}`}>· {o.soon.replace(/^.*\((.*)\)$/, "$1")}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ColourPicker({ palettes, value, color, festive, auto, onPick, onColor, disabled }: {
+  palettes: ReelPalette[]; value: string; color: string; festive: string[] | null; auto: boolean;
+  onPick: (k: string) => void; onColor: (c: string) => void; disabled: boolean;
+}) {
+  const swatch = (cols: string[]) => (
+    <span className="flex h-7 w-7 overflow-hidden rounded-full border border-slate-200 shadow-sm">
+      <span className="h-full w-1/2" style={{ background: cols[0] }} />
+      <span className="h-full w-1/2" style={{ background: cols[1] }} />
+    </span>
+  );
+  const item = (key: string, label: string, body: React.ReactNode) => (
+    <button key={key} type="button" onClick={() => onPick(key)} disabled={disabled} aria-pressed={value === key} title={label}
+      className={`flex w-[54px] shrink-0 flex-col items-center gap-1 rounded-xl p-1 text-[10px] font-medium transition ${value === key ? "bg-brand-soft text-brand-700 ring-2 ring-brand" : "text-slate-600 hover:bg-slate-100"}`}>
+      {body}
+      <span className="w-full truncate text-center">{label}</span>
+    </button>
+  );
+  return (
+    <section>
+      <p className="label mb-2">Colours</p>
+      <div className="no-scrollbar -mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
+        {auto && item("", "Mix it up", <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-gradient text-white"><Shuffle size={12} /></span>)}
+        {festive && item("occasion", "Festive", swatch(festive))}
+        {palettes.map((p) => item(p.key, p.label, swatch(p.colors)))}
+        <label className={`flex w-[54px] shrink-0 cursor-pointer flex-col items-center gap-1 rounded-xl p-1 text-[10px] font-medium transition ${value === "custom" ? "bg-brand-soft text-brand-700 ring-2 ring-brand" : "text-slate-600 hover:bg-slate-100"}`}>
+          <span className="relative grid h-7 w-7 place-items-center overflow-hidden rounded-full border border-slate-200" style={{ background: color }}>
+            <Pipette size={12} className="text-white mix-blend-difference" />
+            <input type="color" value={color} disabled={disabled} aria-label="Pick your own colour"
+              onChange={(e) => { onColor(e.target.value); onPick("custom"); }} className="absolute inset-0 cursor-pointer opacity-0" />
+          </span>
+          Your pick
+        </label>
+      </div>
+    </section>
+  );
+}
+
 export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   post: SocialPost; brand: BrandKit | null; caption: string; onChange: (p: SocialPost) => void;
-  onPreview: (scene: ReelScene | null) => void;
+  onPreview: (scene: ReelScene | null, colors?: string[]) => void;
 }) {
   const { toast, confirm } = useFeedback();
   const brandName = brand?.name ?? "";
-  const [busy, setBusy] = useState<"make" | "render" | "share" | "download" | "upload" | null>(null);
+  const [busy, setBusy] = useState<"make" | "render" | "share" | "download" | "upload" | "humanize" | null>(null);
   const [info, setInfo] = useState<{ seconds: number; used_llm: boolean } | null>(null);
   const [draft, setDraft] = useState<ReelScene[]>(post.reel_scenes ?? []);
   const [focus, setFocus] = useState<number | null>(null);
   const [picking, setPicking] = useState<number | null>(null);
   const [photos, setPhotos] = useState<ReelPhoto[] | null>(null);
   const [shareable, setShareable] = useState(false);
-  const [styles, setStyles] = useState<ReelStyle[]>(FALLBACK_STYLES);
-  const [look, setLook] = useState(post.reel_style ?? "");  // "" = pick a different one automatically
+  const [opts, setOpts] = useState<ReelOptionsInfo | null>(null);
+  const styles = opts?.styles ?? FALLBACK_STYLES;
+  const has = !!post.reel_scenes?.length;
+  // "" means "pick for me": the topic that fits the post, a style and palette the campaign hasn't used much.
+  const [look, setLook] = useState(post.reel_style ?? "");
+  const [topic, setTopic] = useState(post.reel_topic ?? "");
+  const [occasion, setOccasion] = useState(post.reel_occasion ?? "");
+  const [palette, setPalette] = useState(post.reel_options?.palette ?? "");
+  const [color, setColor] = useState(post.reel_options?.color || brand?.primary_color || "#5B47FB");
+  const [pace, setPace] = useState<ReelOptions["pace"]>(post.reel_options?.pace ?? "normal");
+  const [textCase, setTextCase] = useState<ReelOptions["case"]>(post.reel_options?.case ?? "auto");
   const step = useCycle(busy === "render" ? EDIT_STEPS : STEPS, 4500);
   useEffect(() => setShareable(canShareVideo()), []);
-  useEffect(() => { api.reelStyles().then(setStyles).catch(() => {}); }, []);
-  useEffect(() => setLook(post.reel_style ?? ""), [post.reel_style, post.group_id]);
+  useEffect(() => { api.reelOptions(post.id).then(setOpts).catch(() => {}); }, [post.id]);
 
+  const resetChoices = () => {
+    setLook(post.reel_style ?? ""); setTopic(post.reel_topic ?? ""); setOccasion(post.reel_occasion ?? "");
+    setPalette(post.reel_options?.palette ?? ""); setColor(post.reel_options?.color || brand?.primary_color || "#5B47FB");
+    setPace(post.reel_options?.pace ?? "normal"); setTextCase(post.reel_options?.case ?? "auto");
+  };
   const saved = JSON.stringify(post.reel_scenes ?? []);
-  useEffect(() => { setDraft(JSON.parse(saved)); setFocus(null); setPicking(null); }, [saved]);
+  const savedOpts = JSON.stringify([post.reel_style, post.reel_topic, post.reel_occasion, post.reel_options]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setDraft(JSON.parse(saved)); setFocus(null); setPicking(null); resetChoices(); }, [saved, savedOpts]);
   useEffect(() => { setInfo(null); setPhotos(null); }, [post.group_id]);
-  useEffect(() => { onPreview(focus !== null && draft[focus] ? draft[focus] : null); }, [focus, draft, onPreview]);
-  useEffect(() => () => onPreview(null), [onPreview]);
   useEffect(() => {
     if (picking !== null && photos === null) api.reelPhotos(post.id).then(setPhotos).catch(() => setPhotos([]));
   }, [picking, photos, post.id]);
 
-  const styleChanged = !!post.reel_scenes?.length && !!look && look !== post.reel_style;
-  const dirty = JSON.stringify(draft) !== saved || styleChanged;
-  const styleLabel = (key: string) => styles.find((s) => s.key === key)?.label ?? key;
-  const fileBase = `${brandName.replace(/[^\w]+/g, "-").toLowerCase() || "post"}-${post.publish_at.slice(0, 10)}`;
+  const effectiveTopic = topic || opts?.suggested_topic || "products";
+  const effectiveOccasion = occasion || opts?.suggested_occasion || opts?.occasions[0]?.key || "";
+  const occasionInfo = opts?.occasions.find((o) => o.key === effectiveOccasion);
+  const festive = effectiveTopic === "occasion" && occasionInfo ? occasionInfo.colors : null;
+  const previewColors = palette === "occasion" && festive ? festive : palette === "custom" ? [color, brand?.accent_color ?? "#FFFFFF"]
+    : opts?.palettes.find((p) => p.key === palette)?.colors ?? (festive && !has ? festive : undefined);
+  useEffect(() => { onPreview(focus !== null && draft[focus] ? draft[focus] : null, previewColors); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [focus, draft, onPreview, JSON.stringify(previewColors)]);
+  useEffect(() => () => onPreview(null), [onPreview]);
 
-  async function make(scenes?: ReelScene[]) {
-    if (!scenes && post.reel_scenes?.length) {  // a fresh script would replace the owner's edits
-      const ok = await confirm({ title: "Write a new script?", body: "MonoPlus writes new words and picks photos again. Your edits to this reel are replaced.", confirm: "Write a new one" });
+  // A new topic or occasion needs a new script; the look, colours, pace, lettering and edits only need a re-render.
+  const storyChanged = has && ((!!topic && topic !== post.reel_topic) || (effectiveTopic === "occasion" && !!occasion && occasion !== post.reel_occasion));
+  const lookChanged = has && (
+    JSON.stringify(draft) !== saved || (!!look && look !== post.reel_style) || (palette !== (post.reel_options?.palette ?? ""))
+    || (palette === "custom" && color !== post.reel_options?.color) || pace !== (post.reel_options?.pace ?? "normal")
+    || textCase !== (post.reel_options?.case ?? "auto"));
+  const dirty = storyChanged || lookChanged;
+  const label = (list: { key: string; label: string }[] | undefined, key: string) => list?.find((s) => s.key === key)?.label ?? key;
+  const fileBase = `${brandName.replace(/[^\w]+/g, "-").toLowerCase() || "post"}-${post.publish_at.slice(0, 10)}`;
+  const options = (): ReelOptions => ({ palette, color: palette === "custom" ? color : "", pace, case: textCase });
+
+  async function make(kind: "fresh" | "render", ask = true) {
+    if (kind === "fresh" && has && ask && !storyChanged) {  // a fresh script replaces the owner's edits
+      const ok = await confirm({ title: "Write a new script?", body: "MonoPlus tells a new story with new words, photos and a new look. Your edits to this reel are replaced.", confirm: "Write a new one" });
       if (!ok) return;
     }
-    setBusy(scenes ? "render" : "make");
+    setBusy(kind === "render" ? "render" : "make");
     try {
-      // A fresh script without a chosen look gets a new one; edits keep the look picked above.
-      const res = await api.makeReel(post.id, scenes, scenes ? look || undefined : (look && look !== post.reel_style ? look : undefined));
+      const fresh = kind === "fresh";
+      const res = await api.makeReel(post.id, fresh ? {
+        // Unchanged choices are left out, so a fresh script moves on to a new topic, look and colours.
+        style: look && (!has || look !== post.reel_style) ? look : undefined,
+        topic: topic && (!has || topic !== post.reel_topic || storyChanged) ? topic : undefined,
+        occasion: effectiveTopic === "occasion" ? effectiveOccasion : undefined,
+        options: { ...options(), palette: has && palette === post.reel_options?.palette && !storyChanged ? "" : palette },
+      } : { scenes: draft, style: look || undefined, options: options() });
       onChange(res.post);
       setInfo(res);
       setFocus(null);
-      toast(scenes ? `Reel updated · ${styleLabel(res.style)}` : `Your ${Math.round(res.seconds)}-second ${styleLabel(res.style)} reel is ready`);
+      const what = `${label(opts?.topics, res.topic)} · ${label(styles, res.style)}`;
+      toast(fresh ? `Your ${Math.round(res.seconds)}-second reel is ready: ${what}` : `Reel updated: ${what}`);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function humanizeWords() {
+    setBusy("humanize");
+    try {
+      const res = await api.humanizeReel(post.id, draft);
+      setDraft(res.scenes);
+      toast(res.after < res.before ? `Sounds more human: AI-tell score ${res.before} → ${res.after}` : "Already reads like a person wrote it", "info");
     } catch (e) {
       toast((e as Error).message, "error");
     } finally {
@@ -335,7 +506,7 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   }
   function add() {
     const at = draft.length && draft[draft.length - 1].kind === "cta" ? draft.length - 1 : draft.length;
-    setDraft((d) => [...d.slice(0, at), { kind: "product", text: "", sub: "", photo: "" }, ...d.slice(at)]);
+    setDraft((d) => [...d.slice(0, at), { kind: "product", text: "", sub: "", photo: "", tag: "" }, ...d.slice(at)]);
     setFocus(at);
     setPicking(at);
   }
@@ -370,11 +541,30 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
 
   const middle = (i: number) => draft[i].kind !== "hook" && draft[i].kind !== "cta";
   const working = busy === "make" || busy === "render";
+  const choices = (
+    <>
+      <TopicPicker options={opts} value={topic} suggested={has ? post.reel_topic ?? "" : opts?.suggested_topic ?? ""}
+        onPick={(k) => { setTopic(k); if (k === "occasion" && !palette) setPalette("occasion"); }} disabled={busy !== null} />
+      {effectiveTopic === "occasion" && opts && (
+        <OccasionPicker occasions={opts.occasions} value={effectiveOccasion} onPick={setOccasion} disabled={busy !== null} />
+      )}
+      <StylePicker styles={styles} value={look} current={has ? post.reel_style ?? "" : ""} auto={!has} onPick={setLook} disabled={busy !== null}
+        photo={draft.find((s) => s.kind === "product" && s.photo)?.photo || post.background?.thumb_url || ""} brand={brand} />
+      <ColourPicker palettes={opts?.palettes ?? []} value={palette} color={color} festive={festive} auto={!has}
+        onPick={setPalette} onColor={setColor} disabled={busy !== null} />
+      <div className="space-y-2">
+        <Chips label="Pace" hint="How long each scene stays on screen" value={pace} onPick={setPace} disabled={busy !== null}
+          options={[{ key: "relaxed", label: "Relaxed" }, { key: "normal", label: "Normal" }, { key: "snappy", label: "Snappy" }]} />
+        <Chips label="Text" hint="Capital letters or not; Auto lets the style decide" value={textCase} onPick={setTextCase} disabled={busy !== null}
+          options={[{ key: "auto", label: "Auto" }, { key: "normal", label: "Aa" }, { key: "upper", label: "AA" }]} />
+      </div>
+    </>
+  );
 
   return (
     <>
-      {!post.reel_scenes?.length && (
-        <section className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50 to-white p-4">
+      {!has && (
+        <section className="space-y-4 rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50 to-white p-4">
           <div className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-gradient text-white shadow-glow"><Clapperboard size={18} /></span>
             <div className="min-w-0">
@@ -382,16 +572,13 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
               <p className="mt-0.5 text-sm text-slate-600">
                 {post.video_url
                   ? "This reel was made before reels could be edited. Make a new version to change its words and photos."
-                  : <>A 10–15 second vertical video from {brandName}&apos;s own photos: an AI-written hook, each product with its price,
-                    and an end card with your logo. You can change every word and photo afterwards.</>}
+                  : <>A 10–15 second vertical video from {brandName}&apos;s own photos that tells one story: an opening that makes a
+                    promise, scenes that deliver it, and an ending that pays it off. Every word is humanized, and you can change anything afterwards.</>}
               </p>
             </div>
           </div>
-          <div className="mt-4">
-            <StylePicker styles={styles} value={look} current="" auto onPick={setLook} disabled={busy !== null}
-              photo={post.background?.thumb_url || ""} brand={brand} />
-          </div>
-          <button onClick={() => make()} disabled={busy !== null} className="btn-gradient mt-4 w-full">
+          {choices}
+          <button onClick={() => make("fresh", false)} disabled={busy !== null} className="btn-gradient w-full">
             {busy === "make" ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {busy === "make" ? "Making your reel…" : post.video_url ? "Make a new version" : "Make reel"}
           </button>
@@ -407,18 +594,20 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
         </div>
       )}
 
-      {draft.length > 0 && (
-        <StylePicker styles={styles} value={look} current={post.reel_style ?? ""} auto={false} onPick={setLook} disabled={busy !== null}
-          photo={draft.find((s) => s.kind === "product" && s.photo)?.photo || draft[0]?.photo || ""} brand={brand} />
-      )}
+      {has && <div className="space-y-4">{choices}</div>}
 
       {draft.length > 0 && (
         <section>
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-2 flex items-center justify-between gap-2">
             <p className="label">Scenes{info ? ` · ${info.seconds.toFixed(0)}s${info.used_llm ? " · written by Nemotron" : ""}` : ""}</p>
-            <button onClick={() => make()} disabled={busy !== null} className="flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-brand disabled:opacity-50">
-              <Wand2 size={12} /> Write a new script
-            </button>
+            <span className="flex items-center gap-3">
+              <button onClick={humanizeWords} disabled={busy !== null} className="flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-brand disabled:opacity-50">
+                {busy === "humanize" ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} Humanize words
+              </button>
+              <button onClick={() => make("fresh")} disabled={busy !== null} className="flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-brand disabled:opacity-50">
+                <Sparkles size={12} /> Write a new script
+              </button>
+            </span>
           </div>
           <ol className="stagger space-y-2">
             {draft.map((s, i) => {
@@ -429,7 +618,7 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
                   className={`rounded-xl border bg-white p-2.5 transition-all duration-200 ${on ? "border-brand shadow-lift ring-2 ring-brand-100" : "border-slate-200 hover:border-slate-300"}`}>
                   <div className="flex gap-3">
                     {s.kind === "cta" ? (
-                      <span className="grid h-[72px] w-[41px] shrink-0 place-items-center rounded-lg text-white" style={{ background: brand?.primary_color ?? "#5B47FB" }}>
+                      <span className="grid h-[72px] w-[41px] shrink-0 place-items-center rounded-lg text-white" style={{ background: previewColors?.[0] ?? brand?.primary_color ?? "#5B47FB" }}>
                         <Film size={14} />
                       </span>
                     ) : (
@@ -439,7 +628,7 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={photoSrc(s.photo)} alt="" className="h-full w-full object-cover" />
                         ) : (
-                          <span className="grid h-full w-full place-items-center" style={{ background: brand?.primary_color }}><ImageOff size={13} className="text-white/80" /></span>
+                          <span className="grid h-full w-full place-items-center" style={{ background: previewColors?.[0] ?? brand?.primary_color }}><ImageOff size={13} className="text-white/80" /></span>
                         )}
                         <span className="absolute inset-0 grid place-items-center bg-black/45 text-white opacity-0 transition group-hover:opacity-100"><ImagePlus size={14} /></span>
                       </button>
@@ -449,6 +638,11 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
                         <span className={`chip px-2 py-0.5 text-[10px] ${s.kind === "hook" ? "bg-brand-soft text-brand-700" : s.kind === "cta" ? "bg-pop/10 text-pop" : "bg-slate-100 text-slate-600"}`}>
                           {LABEL[s.kind]}{middle(i) ? ` ${n}` : ""}
                         </span>
+                        {middle(i) && (
+                          <input value={s.tag ?? ""} maxLength={12} onChange={(e) => edit(i, { tag: e.target.value })} placeholder="Label"
+                            title="Its place in the story, shown on screen: Tip 1, #2, A…" aria-label="Scene label"
+                            className="w-16 rounded-md border border-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 outline-none focus:border-brand" />
+                        )}
                         {middle(i) && (
                           <span className="ml-auto flex items-center">
                             <button type="button" onClick={() => move(i, -1)} disabled={i <= 0 || !middle(i - 1)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-ink disabled:opacity-30" aria-label="Move up"><ArrowUp size={13} /></button>
@@ -481,17 +675,25 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
               <Plus size={14} /> Add a scene
             </button>
           )}
-          {dirty && (
-            <div className="sticky bottom-0 -mx-1 mt-3 flex animate-slide-down gap-2 rounded-xl border border-brand-100 bg-white/95 p-2 shadow-lift backdrop-blur">
-              <button onClick={() => make(draft)} disabled={busy !== null} className="btn-primary flex-1">
-                {busy === "render" ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Render my changes
-              </button>
-              <button onClick={() => { setDraft(JSON.parse(saved)); setLook(post.reel_style ?? ""); setFocus(null); setPicking(null); }} disabled={busy !== null} className="btn-ghost">
-                <Undo2 size={15} /> Undo
-              </button>
-            </div>
-          )}
         </section>
+      )}
+
+      {dirty && (
+        <div className="sticky bottom-0 -mx-1 flex animate-slide-down gap-2 rounded-xl border border-brand-100 bg-white/95 p-2 shadow-lift backdrop-blur">
+          {storyChanged ? (
+            <button onClick={() => make("fresh")} disabled={busy !== null} className="btn-gradient flex-1">
+              {busy === "make" ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+              Make a {label(opts?.topics, effectiveTopic).toLowerCase()} reel
+            </button>
+          ) : (
+            <button onClick={() => make("render")} disabled={busy !== null} className="btn-primary flex-1">
+              {busy === "render" ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Render my changes
+            </button>
+          )}
+          <button onClick={() => { setDraft(JSON.parse(saved)); resetChoices(); setFocus(null); setPicking(null); }} disabled={busy !== null} className="btn-ghost">
+            <Undo2 size={15} /> Undo
+          </button>
+        </div>
       )}
 
       {post.video_url && !dirty && !working && (

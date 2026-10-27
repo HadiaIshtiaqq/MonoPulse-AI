@@ -18,7 +18,7 @@ from .. import config
 from ..llm import LLMError, router
 from ..scraper.products import looks_like_menu, strip_codes
 from ..schemas import BrandKit, CampaignStrategy, ContentPillar, Platform, Product, TrendItem
-from . import calendar, variety
+from . import calendar, occasions, variety
 from .calendar import COUNTRY_NAMES
 from .playbooks import TERMS, WHO, amount, brand_facts, join_words, playbook_for, playbook_key, tidy_price
 
@@ -49,6 +49,7 @@ class Slot:
     kind: str = "spotlight"  # the post type (see variety.KIND_LABELS)
     compare: Product | None = None  # second product of a "this or that" duo
     nth: int = 0  # how many earlier ideas had this type: picks the wording variant
+    occasion: str = ""  # a greeting post's occasion, e.g. "Eid al-Fitr"
 
 
 def product_brief(p: Product) -> dict:
@@ -247,8 +248,20 @@ def varied(products: list[Product]) -> list[Product]:
     return out
 
 
+def greeting_days(country: str, start: date | None, days: int) -> dict[int, str]:
+    """Holidays inside the campaign that deserve a greeting on the day: {day offset: name}."""
+    if not start:
+        return {}
+    out: dict[int, str] = {}
+    for mo in calendar.upcoming(country, start, days, lead=0):
+        o = occasions.find(mo.name)
+        if mo.kind == "holiday" and o and o.key != "sale" and 0 <= (mo.day - start).days < days:
+            out.setdefault((mo.day - start).days, mo.name.replace("Ramadan begins", "Ramadan"))
+    return out
+
+
 def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: list[Platform], days: int, per_day: int,
-               products: list[Product] | None = None, claims: int = 0) -> list[Slot]:
+               products: list[Product] | None = None, claims: int = 0, start: date | None = None, country: str = "") -> list[Slot]:
     """One post idea per day (or per_day of them), each in a version for every platform.
 
     Ideas cycle through post types (spotlight, carousel, this-or-that duo, tip, quote, sale,
@@ -263,6 +276,11 @@ def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: l
               for day in range(days) for _ in range(per_day)]
     kinds = variety.plan_kinds(len(themes), products=len(catalogue), on_sale=len(on_sale), claims=claims,
                                moments=[theme_moment(t) for t in themes])
+    # On Eid, Mother's Day, Independence Day and other holidays, the day's first post is a greeting.
+    greetings = {day * per_day: name for day, name in greeting_days(country, start, days).items()}
+    for i in greetings:
+        if i < len(kinds):
+            kinds[i] = "greeting"
     seen: Counter = Counter()
     next_product = next_sale = 0
     last_by_kind: dict[str, str] = {}  # the product each post type featured last time
@@ -274,7 +292,7 @@ def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: l
         trend = trends[(i // 3) % len(trends)] if trends and i % 3 == 0 else None
         product = compare = None
         extra: tuple[Product, ...] = ()
-        if catalogue and kind != "quote":
+        if catalogue and kind not in ("quote", "greeting"):
             if kind == "sale":
                 product, next_sale = on_sale[next_sale % len(on_sale)], next_sale + 1
             else:
@@ -292,7 +310,8 @@ def plan_slots(strategy: CampaignStrategy, trends: list[TrendItem], platforms: l
         for platform in platforms:
             fmt = "carousel" if kind == "carousel" and platform in CAROUSEL_PLATFORMS else "single"
             slots.append(Slot(day=day, platform=platform, pillar=pillar, theme=theme, trend=trend, format=fmt, product=product,
-                              slide_products=extra if fmt == "carousel" else (), group=i, kind=kind, compare=compare, nth=nth))
+                              slide_products=extra if fmt == "carousel" else (), group=i, kind=kind, compare=compare, nth=nth,
+                              occasion=greetings.get(i, "")))
     return slots
 
 
@@ -312,7 +331,8 @@ When a slot has a "product", the post features that exact product, shown in the 
 exactly as given. When a carousel slot has "slide_products", write exactly one slide per listed product, in order.
 Never invent products, prices, discounts or claims that aren't in the brief.
 Follow each slot's "post_type": a "This or that" post asks people to choose between "product" and "compare_with"; a
-"Sale" post leads with the saving; a "Brand quote" is one short line from the brand's own claims; a "Styling tip" gives
+"Sale" post leads with the saving; a "Greeting" post warmly wishes people a happy "occasion"
+from the brand, with no selling and no product; a "Brand quote" is one short line from the brand's own claims; a "Styling tip" gives
 one concrete tip; a "Seasonal moment" ties the product to the weekly theme's date.
 No two posts may feel the same: never reuse a headline, never open two captions the same way, and vary the length.
 Write each caption in its slot's "caption_shape" (a plain statement, a hook line first, a short fact list, a tiny story,
@@ -331,6 +351,8 @@ async def write_batch(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slo
                  "caption_shape": variety.SHAPE_HINTS[variety.caption_shape(s.group, s.platform.value)]}
         if s.compare:
             entry["compare_with"] = product_brief(s.compare)
+        if s.occasion:
+            entry["occasion"] = s.occasion
         if s.trend:
             entry["trend"] = f"{s.trend.title} - {s.trend.snippet[:200]}"
         if s.product:
@@ -714,10 +736,30 @@ def quote_copy(kit: BrandKit, slot: Slot) -> dict:
     return {"headline": headline[:1].upper() + headline[1:], "caption": caption, "cta": cta}
 
 
+GREETING_ENDINGS = {
+    "facebook": ["Tag someone you're celebrating with.", "Who are you celebrating with today?"],
+    "linkedin": ["Thank you to our customers and our team.", "Grateful to everyone who's part of our story."],
+}
+
+
+def greeting_copy(kit: BrandKit, slot: Slot) -> dict:
+    """A warm greeting on the day itself: no selling, nothing claimed about the brand."""
+    o = occasions.find(slot.occasion) or occasions.OCCASIONS["new_year"]
+    name = slot.occasion
+    headline = occasions.greeting(o, kit.name, name)
+    caption = occasions.greeting_caption(o, kit.name, name)
+    if slot.platform is Platform.X:
+        return {"headline": headline, "caption": f"{headline} from all of us at {kit.name}.", "cta": ""}
+    ending = variety.pick(GREETING_ENDINGS.get(slot.platform.value, [""]), slot.group)
+    return {"headline": headline, "caption": f"{caption}\n\n{ending}".strip(), "cta": ""}
+
+
 def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
     """Template copy for demo mode (no API key) or failed batches, built only from what the
     brand's site says: its products, offerings and claims. Nothing is invented."""
     kind = effective_kind(slot)
+    if kind == "greeting":
+        return greeting_copy(kit, slot)
     if kind == "quote" and (kit.value_props or kit.tagline):
         return quote_copy(kit, slot)
     if slot.product:

@@ -3,16 +3,27 @@ export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:800
 export type Platform = "instagram" | "linkedin" | "x" | "facebook";
 export type ReelSceneKind = "hook" | "product" | "fact" | "cta";
 /** One scene of a reel as the owner edits it; `photo` is a /media/… path or one of the brand's web photos. */
-export type ReelScene = { kind: ReelSceneKind; text: string; sub: string; photo: string };
+export type ReelScene = { kind: ReelSceneKind; text: string; sub: string; photo: string; tag?: string };
+export type ReelOptions = { palette: string; color: string; pace: "relaxed" | "normal" | "snappy"; case: "auto" | "normal" | "upper" };
+export type ReelPalette = { key: string; label: string; colors: string[] };
+export type ReelOccasion = { key: string; label: string; greeting: string; colors: string[]; soon: string };
+export type ReelOptionsInfo = {
+  topics: { key: string; label: string; blurb: string; available: boolean }[];
+  suggested_topic: string;
+  occasions: ReelOccasion[];
+  suggested_occasion: string;
+  palettes: ReelPalette[];
+  styles: ReelStyle[];
+};
 export type ReelPhoto = { url: string; label: string; price: string; remote: boolean };
 export type ReelStyle = { key: string; label: string; blurb: string };
 
 export type PostStatus = "DRAFT" | "APPROVED" | "PUBLISHED";
-export type Layout = "bold" | "split" | "quote" | "photo" | "frame" | "poster" | "minimal" | "duo";
-export type PostKind = "spotlight" | "carousel" | "duo" | "tip" | "quote" | "sale" | "moment" | "question";
+export type Layout = "bold" | "split" | "quote" | "photo" | "frame" | "poster" | "minimal" | "duo" | "greeting";
+export type PostKind = "spotlight" | "carousel" | "duo" | "tip" | "quote" | "sale" | "moment" | "question" | "greeting";
 export const KIND_LABELS: Record<PostKind, string> = {
   spotlight: "Spotlight", carousel: "Carousel", duo: "This or that", tip: "Tip", quote: "Brand quote",
-  sale: "Sale", moment: "Seasonal", question: "Question",
+  sale: "Sale", moment: "Seasonal", question: "Question", greeting: "Greeting",
 };
 export type TextPosition = "auto" | "top" | "center" | "bottom";
 export type HumanizeMode = "light" | "standard" | "deep";
@@ -101,6 +112,10 @@ export interface SocialPost {
   video_poster?: string | null;
   reel_scenes?: ReelScene[];
   reel_style?: string;
+  reel_options?: ReelOptions;
+  reel_topic?: string;
+  reel_occasion?: string;
+  occasion?: string;
   publish_at: string;
   status: PostStatus;
   published_via: string | null;
@@ -367,10 +382,13 @@ export const api = {
   humanizePost: (id: string, mode: HumanizeMode = "standard") =>
     req<HumanizeResult & { post: SocialPost }>(`/api/posts/${id}/humanize`, json("POST", { mode })),
   rewritePost: (id: string, tone: string) => req<SocialPost>(`/api/posts/${id}/rewrite`, json("POST", { tone })),
-  makeReel: (id: string, scenes?: ReelScene[], style?: string) =>
-    req<{ post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string }>(
-      `/api/posts/${id}/reel`, json("POST", { scenes: scenes ?? null, style: style ?? null })),
+  makeReel: (id: string, body: { scenes?: ReelScene[]; style?: string; options?: ReelOptions; topic?: string; occasion?: string } = {}) =>
+    req<{ post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string; topic: string; occasion: string }>(
+      `/api/posts/${id}/reel`, json("POST", body)),
   reelStyles: () => req<ReelStyle[]>("/api/reel-styles"),
+  reelOptions: (id: string) => req<ReelOptionsInfo>(`/api/posts/${id}/reel/options`),
+  humanizeReel: (id: string, scenes: ReelScene[]) =>
+    req<{ scenes: ReelScene[]; before: number; after: number; used_llm: boolean }>(`/api/posts/${id}/reel/humanize`, json("POST", { scenes })),
   reelPhotos: (id: string) => req<ReelPhoto[]>(`/api/posts/${id}/reel/photos`),
   share: (id: string) =>
     req<{ platform: Platform; url: string; caption: string; image_url: string | null; image_urls: string[]; note: string }>(`/api/posts/${id}/share`),

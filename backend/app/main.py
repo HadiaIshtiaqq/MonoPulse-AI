@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, mcp_server, publishing
-from .agents import humanizer, memory, photos, pipeline, reels, renderer, research, strategist
+from .agents import calendar, humanizer, memory, occasions, photos, pipeline, reels, renderer, research, strategist
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
 from .publishing import share_links
@@ -36,6 +36,7 @@ from .schemas import (
     HumanizeRequest,
     PostStatus,
     ReelRequest,
+    ReelScene,
     ResearchTask,
     RewriteRequest,
     SetBackgroundRequest,
@@ -443,7 +444,8 @@ async def make_reel(post_id: str, req: ReelRequest | None = None) -> dict:
     leave them out to write a fresh script."""
     campaign, post = _post(post_id)
     try:
-        info = await reels.make_reel(campaign, post, req.scenes if req else None, req.style if req else None)
+        info = await reels.make_reel(campaign, post, req.scenes if req else None, req.style if req else None,
+                                     req.options if req else None, req.topic if req else None, req.occasion if req else None)
     except reels.ReelEditError as exc:
         raise HTTPException(422, str(exc)) from exc
     except reels.ReelError as exc:
@@ -455,6 +457,45 @@ async def make_reel(post_id: str, req: ReelRequest | None = None) -> dict:
 @app.get("/api/reel-styles")
 def reel_styles() -> list[dict]:
     return reels.style_list()
+
+
+@app.get("/api/posts/{post_id}/reel/options")
+def reel_options(post_id: str) -> dict:
+    """Everything a reel can be: its topics (and which this post can use), the occasions (the ones
+    near this post first, with their festive colours) and colour palettes worked out from the brand."""
+    campaign, post = _post(post_id)
+    kit = campaign.brand
+    if not kit:
+        raise HTTPException(409, "campaign has no brand kit yet")
+    usable = reels.available_topics(campaign, post)
+    near = {occasions.find(m.name).key: m.label() for m in calendar.upcoming(kit.country, post.publish_at.date(), 21, lead=0)
+            if occasions.find(m.name)}
+    occ = occasions.occasion_list(kit.country)
+    for o in occ:
+        o["soon"] = near.get(o["key"], "")
+    occ.sort(key=lambda o: not o["soon"])
+    return {
+        "topics": [{"key": k, "label": label, "blurb": blurb, "available": k in usable} for k, (label, blurb) in reels.TOPICS.items()],
+        "suggested_topic": reels.default_topic(campaign, post),
+        "occasions": occ,
+        "suggested_occasion": reels.post_occasion(campaign, post) or next((o["key"] for o in occ if o["soon"]), ""),
+        "palettes": reels.palette_list(kit),
+        "styles": reels.style_list(),
+    }
+
+
+class ReelHumanizeRequest(BaseModel):
+    scenes: list[ReelScene]
+
+
+@app.post("/api/posts/{post_id}/reel/humanize")
+async def humanize_reel(post_id: str, req: ReelHumanizeRequest) -> dict:
+    """Make a reel's words sound like a person wrote them, without rendering."""
+    campaign, _ = _post(post_id)
+    if not campaign.brand:
+        raise HTTPException(409, "campaign has no brand kit yet")
+    scenes, info = await reels.humanize_scenes(campaign.brand, req.scenes[: reels.MAX_SCENES])
+    return {"scenes": scenes, **info}
 
 
 @app.get("/api/posts/{post_id}/reel/photos")
