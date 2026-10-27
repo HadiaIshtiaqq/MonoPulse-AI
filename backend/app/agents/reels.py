@@ -554,7 +554,10 @@ def line_images(text: str, width: int, max_h: int, start: int, color, minimum: i
     probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
     out = []
     for line in lines:
-        img = Image.new("RGBA", (int(probe.textlength(line, font=fnt)) + 8, lh), (0, 0, 0, 0))
+        # Size the strip from the glyphs themselves: a strip one line-height tall cuts off the
+        # tails of g, j, p, q and y ("Proudly local").
+        _, _, right, bottom = probe.textbbox((0, 0), line, font=fnt)
+        img = Image.new("RGBA", (right + 8, max(lh, bottom + 6)), (0, 0, 0, 0))
         ImageDraw.Draw(img).text((0, 0), line, font=fnt, fill=(*color, 255))
         out.append(img)
     return out
@@ -569,7 +572,8 @@ def caption_blocks(text: str, width: int, start: int, fills: list, tilt: bool = 
         fill = fills[i % len(fills)]
         tw = int(probe.textlength(line, font=fnt))
         pad_x, pad_y = int(fnt.size * 0.32), int(fnt.size * 0.16)
-        block = Image.new("RGBA", (tw + 2 * pad_x, int(fnt.size * 1.18) + 2 * pad_y), (0, 0, 0, 0))
+        ink = max(int(fnt.size * 1.18), probe.textbbox((0, 0), line, font=fnt)[3] + 4)  # room for lowercase tails
+        block = Image.new("RGBA", (tw + 2 * pad_x, ink + 2 * pad_y), (0, 0, 0, 0))
         d = ImageDraw.Draw(block)
         d.rounded_rectangle([0, 0, block.width - 1, block.height - 1], radius=int(fnt.size * 0.18), fill=(*fill, 255))
         d.text((pad_x, pad_y), line, font=fnt, fill=(*text_on(fill), 255))
