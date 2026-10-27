@@ -177,15 +177,15 @@ async def _publish(post: SocialPost, campaign: Campaign) -> SocialPost:
             raise PublishError(f"{post.platform.value.title()} isn't connected yet.")
     except PublishError as exc:
         post.publish_error = str(exc)
-        store.save()
+        store.save(campaign)
         raise
     except httpx.HTTPError as exc:
         post.publish_error = f"Network error: {exc}"
-        store.save()
+        store.save(campaign)
         raise PublishError(post.publish_error) from exc
     post.status, post.published_via, post.publish_error = PostStatus.PUBLISHED, via, None
     post.remote_id, post.remote_url = result.remote_id or None, result.url
-    store.save()
+    store.save(campaign)
     return post
 
 

@@ -7,6 +7,7 @@ import hmac
 import io
 import json
 import logging
+import re
 import shutil
 import zipfile
 from contextlib import asynccontextmanager
@@ -58,11 +59,12 @@ async def lifespan(app: FastAPI):
     for t in store.research.values():
         if t.status == "running":
             t.status = "retry"  # the server restarted mid-run
+    from .social import browser
+
+    browser.move_old_profile()
     workers = [asyncio.create_task(research.worker()), asyncio.create_task(publishing.scheduler())]
     workers.append(asyncio.create_task(asyncio.to_thread(media_gc.cleanup)))  # tidy up old renders once at start
     if store.settings.browser_publish:  # scheduled browser posts need to know where you're signed in
-        from .social import browser
-
         if browser.available():
             workers.append(asyncio.create_task(browser.poster.status()))
     yield
@@ -75,7 +77,26 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="MonoPlus", version="0.4.0", lifespan=lifespan)
 app.include_router(mcp_server.router)  # /mcp authenticates itself (Bearer token), see mcp_server._authorized
 
-OPEN_PATHS = {"/api/health", "/api/access"}
+OPEN_PATHS = {"/api/health", "/api/access", "/api/access/login", "/api/access/logout"}
+ACCESS_COOKIE = "monoplus_access"
+# Calls that act on your social accounts or this computer's browser: allowed from this computer, or with the access key.
+ACCOUNT_PATHS = re.compile(r"^/api/(browser(/.*)?|posts/[^/]+/(browser-post|publish|mark-published)|publishing(/.*)?|maintenance/.*)$")
+LOCAL_CLIENTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def _client_host(request: Request) -> str:
+    if config.TRUST_PROXY and request.headers.get("x-forwarded-for"):
+        return request.headers["x-forwarded-for"].split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
+def _given_key(request: Request) -> str:
+    return (request.headers.get("x-access-key") or request.cookies.get(ACCESS_COOKIE)
+            or request.query_params.get("key") or "")
+
+
+def _key_ok(given: str) -> bool:
+    return bool(config.ACCESS_KEY) and bool(given) and hmac.compare_digest(given.encode(), config.ACCESS_KEY.encode())
 
 
 @app.middleware("http")
@@ -84,11 +105,15 @@ async def require_access_key(request: Request, call_next):
     Instagram and other platforms download post images from there."""
     path = request.url.path
     if config.ACCESS_KEY and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
-        given = request.headers.get("x-access-key") or request.query_params.get("key") or ""
-        if not hmac.compare_digest(given.encode(), config.ACCESS_KEY.encode()):
+        if not _key_ok(_given_key(request)):
             return JSONResponse({"detail": "Access key required."}, status_code=401)
+    if ACCOUNT_PATHS.match(path) and request.method != "OPTIONS" and not _key_ok(_given_key(request)) \
+            and _client_host(request) not in LOCAL_CLIENTS:
+        # Without a key, nobody else on the network can post to your accounts or drive your browser.
+        return JSONResponse({"detail": "Posting to your accounts only works from the computer MonoPlus runs on, "
+                                       "or with the access key (MONOPLUS_ACCESS_KEY)."}, status_code=403)
     if config.RATE_LIMITS:
-        client = request.headers.get("x-access-key") or (request.client.host if request.client else "anon")
+        client = _client_host(request) or "anon"  # X-Forwarded-For only counts behind a trusted proxy
         hit = ratelimit.limiter.check(client, request.method, path)
         if hit:
             bucket, wait = hit
@@ -97,7 +122,7 @@ async def require_access_key(request: Request, call_next):
     return await call_next(request)
 
 
-app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"],
+app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"], allow_credentials=True,
                    expose_headers=["Mcp-Session-Id"])
 app.mount("/media", StaticFiles(directory=config.MEDIA_DIR), name="media")
 
@@ -122,9 +147,31 @@ def root() -> RedirectResponse:
 @app.get("/api/access")
 def access(request: Request) -> dict:
     """Tells the UI whether a key is needed and whether the one it holds is right."""
-    given = request.headers.get("x-access-key") or ""
-    ok = not config.ACCESS_KEY or hmac.compare_digest(given.encode(), config.ACCESS_KEY.encode())
-    return {"required": bool(config.ACCESS_KEY), "ok": ok}
+    return {"required": bool(config.ACCESS_KEY), "ok": not config.ACCESS_KEY or _key_ok(_given_key(request))}
+
+
+class AccessLogin(BaseModel):
+    key: str
+
+
+@app.post("/api/access/login")
+def access_login(req: AccessLogin, request: Request) -> JSONResponse:
+    """Check the key and keep it in an httpOnly cookie: page scripts (and anything injected into
+    the page) can't read it, unlike a key kept in the browser's local storage."""
+    if config.ACCESS_KEY and not _key_ok(req.key.strip()):
+        return JSONResponse({"ok": False}, status_code=401)
+    resp = JSONResponse({"ok": True})
+    if config.ACCESS_KEY:
+        resp.set_cookie(ACCESS_COOKIE, req.key.strip(), httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30,
+                        secure=request.url.scheme == "https")
+    return resp
+
+
+@app.post("/api/access/logout")
+def access_logout() -> JSONResponse:
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(ACCESS_COOKIE)
+    return resp
 
 
 @app.get("/api/health")
@@ -234,7 +281,7 @@ def approve_all(campaign_id: str) -> dict:
             p.status = PostStatus.APPROVED
             changed.append(p.id)
     c.status = CampaignStatus.APPROVED
-    store.save()
+    store.save(c)
     return {**c.model_dump(mode="json"), "approved_ids": changed}
 
 
@@ -252,7 +299,7 @@ def undo_approve(campaign_id: str, req: UndoApprovalRequest) -> Campaign:
             p.status = PostStatus.DRAFT
     if any(p.status is PostStatus.DRAFT for p in c.posts):
         c.status = CampaignStatus.DRAFT
-    store.save()
+    store.save(c)
     return c
 
 
@@ -264,7 +311,7 @@ async def redraw_campaign(campaign_id: str) -> Campaign:
         raise HTTPException(409, "This campaign isn't ready to redraw yet.")
     await renderer.render_posts(c.brand, c.posts)
     c.design_version = config.DESIGN_VERSION
-    store.save()
+    store.save(c)
     return c
 
 
@@ -305,7 +352,7 @@ async def update_brand(campaign_id: str, req: BrandUpdateRequest) -> Campaign:
         shutil.copyfile(src, dest)
         kit.logo_path, kit.logo_url = str(dest), f"/media/{dest.name}"
     await renderer.render_posts(kit, c.posts)
-    store.save()
+    store.save(c)
     return c
 
 
@@ -410,7 +457,7 @@ async def update_post(post_id: str, req: UpdatePostRequest) -> SocialPost:
             post.publish_error = None
     if rerender:
         await _rerender(campaign, post)
-    store.save()
+    store.save(campaign)
     return post
 
 
@@ -441,7 +488,7 @@ async def set_background(post_id: str, req: SetBackgroundRequest) -> SocialPost:
         raise HTTPException(502, f"Couldn't use that photo: {exc}") from exc
     post.layout = "photo"
     await _rerender(campaign, post)
-    store.save()
+    store.save(campaign)
     return post
 
 
@@ -458,7 +505,7 @@ async def humanize_post(post_id: str, req: PostHumanizeRequest | None = None):
                                    protect=[kit.name] if kit else None)
     post.original_caption = post.original_caption or post.caption
     post.caption, post.ai_tell_after, post.is_humanized = res.text, res.after, True
-    store.save()
+    store.save(campaign)
     return {"post": post, "used_llm": res.used_llm, "before": res.before, "after": res.after,
             "patterns_before": res.patterns_before, "patterns_after": res.patterns_after,
             "steps": [asdict(s) for s in res.steps]}
@@ -492,7 +539,7 @@ async def rewrite_post(post_id: str, req: RewriteRequest) -> SocialPost:
     if headline != post.headline:
         post.headline = headline
         await _rerender(campaign, post)
-    store.save()
+    store.save(campaign)
     return post
 
 
@@ -512,7 +559,7 @@ async def make_reel(post_id: str, req: ReelRequest | None = None) -> dict:
         raise HTTPException(429, str(exc), headers={"Retry-After": "60"}) from exc
     except reels.ReelError as exc:
         raise HTTPException(503, str(exc)) from exc
-    store.save()
+    store.save(campaign)
     return {"post": post, **info}
 
 
@@ -588,7 +635,7 @@ async def caption_language(post_id: str, req: CaptionLanguageRequest) -> dict:
             seed = sum(map(ord, post.id))
             post.caption = f"{variety.pick(lang.OPENERS[p], seed)}\n\n{base}\n\n{variety.pick(lang.CLOSERS[p], seed)}"
     post.original_caption = post.original_caption or base
-    store.save()
+    store.save(campaign)
     return {"post": post, "rewritten": rewritten}
 
 
@@ -621,9 +668,9 @@ def share_post(post_id: str) -> dict:
 
 @app.post("/api/posts/{post_id}/mark-published")
 def mark_published(post_id: str) -> SocialPost:
-    _, post = _post(post_id)
+    campaign, post = _post(post_id)
     post.status, post.published_via, post.publish_error = PostStatus.PUBLISHED, "manual", None
-    store.save()
+    store.save(campaign)
     return post
 
 
@@ -677,6 +724,18 @@ async def browser_login(platform: Platform) -> dict:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, f"Couldn't open the browser on this computer: {exc}") from exc
     return {"opened": True, "note": f"A browser window opened on {platform.value.title()}'s sign-in page. Sign in there, then come back."}
+
+
+@app.post("/api/browser/sign-out")
+async def browser_sign_out() -> dict:
+    """Forget every sign-in MonoPlus's browser holds (it deletes the browser profile)."""
+    from .social import browser
+
+    if browser.available():
+        await browser.poster.sign_out()
+    store.settings.browser_publish = False
+    store.save()
+    return {"signed_out": True}
 
 
 @app.put("/api/browser/scheduled")

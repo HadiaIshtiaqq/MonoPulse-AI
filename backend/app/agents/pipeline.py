@@ -328,4 +328,4 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
         job.error = (str(exc) if isinstance(exc, (SiteUnavailable, UnsafeURL)) else f"{type(exc).__name__}: {exc}")[:300]
     finally:
         campaign.timings["total"] = round(time.perf_counter() - t_start, 2)
-        store.save()
+        store.save(campaign)

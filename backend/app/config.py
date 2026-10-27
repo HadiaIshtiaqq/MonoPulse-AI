@@ -43,6 +43,11 @@ ALLOW_PRIVATE_URLS = _env("ALLOW_PRIVATE_URLS", "0") == "1"
 ACCESS_KEY = _env("MONOPLUS_ACCESS_KEY")
 # Bumped whenever post designs change, so campaigns drawn by an older version can offer a redraw.
 DESIGN_VERSION = 7
+# Your social sign-ins (MonoPlus's browser profile) live outside the project folder, so they're never
+# copied, committed or backed up along with it.
+BROWSER_PROFILE_DIR = Path(_env("MONOPLUS_BROWSER_PROFILE", str(Path(os.getenv("LOCALAPPDATA") or Path.home() / ".local" / "share")
+                                                             / "MonoPlus" / "browser-profile")))
+TRUST_PROXY = _env("MONOPLUS_TRUST_PROXY", "0") in ("1", "true", "yes")  # behind a proxy: read the client from X-Forwarded-For
 RATE_LIMITS = _env("MONOPLUS_RATE_LIMITS", "1") not in ("0", "false", "no", "off")  # per-client limits on expensive calls
 REEL_RENDERS = max(1, int(_env("MONOPLUS_REEL_RENDERS", "2") or 2))  # reels rendered at the same time
 

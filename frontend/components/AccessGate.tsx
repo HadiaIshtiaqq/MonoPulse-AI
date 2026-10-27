@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { KeyRound, Loader2 } from "lucide-react";
-import { accessKey, api } from "@/lib/api";
+import { api, takeOldAccessKey } from "@/lib/api";
 import { BrandMark } from "./BrandMark";
 
 /** Shows an unlock screen only when the server has MONOPLUS_ACCESS_KEY set and we don't hold it. */
@@ -13,7 +13,12 @@ export function AccessGate({ children }: { children: React.ReactNode }) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.access().then((a) => setState(!a.required || a.ok ? "open" : "locked")).catch(() => setState("open"));
+    (async () => {
+      const old = takeOldAccessKey(); // a key an older version left in local storage becomes the cookie
+      if (old) await api.login(old).catch(() => false);
+      const a = await api.access();
+      setState(!a.required || a.ok ? "open" : "locked");
+    })().catch(() => setState("open"));
     const onLocked = () => setState("locked");
     window.addEventListener("monoplus:locked", onLocked);
     return () => window.removeEventListener("monoplus:locked", onLocked);
@@ -23,14 +28,11 @@ export function AccessGate({ children }: { children: React.ReactNode }) {
     e.preventDefault();
     setBusy(true);
     setError("");
-    accessKey.set(key.trim());
     try {
-      const a = await api.access();
-      if (a.ok) {
+      if (await api.login(key.trim())) {
         setState("open");
         window.location.reload();
       } else {
-        accessKey.clear();
         setError("That key isn't right.");
       }
     } catch {

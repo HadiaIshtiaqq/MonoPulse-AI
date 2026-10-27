@@ -23,7 +23,7 @@ def offline(monkeypatch):
     monkeypatch.setattr(config, "NEBIUS_API_KEY", "")
     monkeypatch.setattr(config, "TAVILY_API_KEY", "")
     monkeypatch.setattr(config, "PEXELS_API_KEY", "")
-    monkeypatch.setattr(store, "save", lambda: None)
+    monkeypatch.setattr(store, "save", lambda *a: None)
     monkeypatch.setattr(store, "campaigns", {})
     monkeypatch.setattr(store, "research", {})
     from app.schemas import AppSettings

@@ -16,7 +16,7 @@ from test_core import _kit
 def clean_store(monkeypatch):
     monkeypatch.setattr(config, "NEBIUS_API_KEY", "")
     monkeypatch.setattr(config, "TAVILY_API_KEY", "")
-    monkeypatch.setattr(store, "save", lambda: None)
+    monkeypatch.setattr(store, "save", lambda *a: None)
     monkeypatch.setattr(store, "research", {})
     monkeypatch.setattr(store, "memory", [])
     monkeypatch.setattr(store, "campaigns", {})

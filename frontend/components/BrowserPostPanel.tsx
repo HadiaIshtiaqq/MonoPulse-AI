@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Clapperboard, Globe, Loader2, LogIn, MousePointerClick, RefreshCw, Rocket } from "lucide-react";
+import { CheckCircle2, Clapperboard, Globe, Loader2, LogIn, LogOut, MousePointerClick, RefreshCw, Rocket } from "lucide-react";
 import { api, type SocialPost } from "@/lib/api";
 import { PLATFORM_META } from "@/components/PlatformIcon";
 import { useFeedback } from "@/components/Feedback";
@@ -12,7 +12,7 @@ type Status = { available: boolean; signed_in: Record<string, boolean>; schedule
 export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; onChange: (p: SocialPost) => void; dirty: boolean }) {
   const { toast, confirm } = useFeedback();
   const [status, setStatus] = useState<Status | null>(null);
-  const [busy, setBusy] = useState<"check" | "login" | "review" | "post" | "auto" | null>(null);
+  const [busy, setBusy] = useState<"check" | "login" | "review" | "post" | "auto" | "signout" | null>(null);
   const [useReel, setUseReel] = useState(false);
   const label = PLATFORM_META[post.platform].label;
   const signedIn = !!status?.signed_in[post.platform];
@@ -48,6 +48,23 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
       const res = await api.browserPost(post.id, submit, useReel ? "reel" : "images");
       onChange(res.post);
       toast(res.message, submit ? "success" : "info");
+    } catch (e) { toast((e as Error).message, "error"); }
+    finally { setBusy(null); }
+  }
+
+  async function signOutEverywhere() {
+    const ok = await confirm({
+      title: "Sign out everywhere?",
+      body: "MonoPlus's browser forgets every sign-in it holds (LinkedIn, Facebook, Instagram, X) and scheduled browser posting turns off. You can sign in again any time.",
+      confirm: "Sign out",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy("signout");
+    try {
+      await api.browserSignOut();
+      setStatus((s) => (s ? { ...s, signed_in: {}, scheduled: false } : s));
+      toast("Signed out of every platform in MonoPlus's browser", "success");
     } catch (e) { toast((e as Error).message, "error"); }
     finally { setBusy(null); }
   }
@@ -126,6 +143,11 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
             Your passwords stay with the platforms: you sign in inside the browser window, never in MonoPlus. Platforms discourage
             automated posting, so keep it to your normal schedule; &ldquo;Fill in for review&rdquo; lets you press Post yourself.
           </p>
+          {Object.values(status.signed_in).some(Boolean) && (
+            <button onClick={signOutEverywhere} disabled={busy !== null} className="mt-2 flex items-center gap-1 text-[11px] font-medium text-slate-500 hover:text-red-600">
+              {busy === "signout" ? <Loader2 size={11} className="animate-spin" /> : <LogOut size={11} />} Sign out everywhere
+            </button>
+          )}
         </>
       )}
     </section>

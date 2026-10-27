@@ -85,12 +85,17 @@ class Store:
         rows[("settings", "app")] = self.settings.model_dump_json()
         return rows
 
-    def save(self) -> None:
-        """Write what changed since the last save, and remove what was deleted."""
+    def save(self, *campaigns: Campaign) -> None:
+        """Write what changed since the last save, and remove what was deleted. Given campaigns,
+        only those are checked: editing one post shouldn't serialise every campaign there is."""
         with self._lock:
-            rows = self._rows()
+            if campaigns:
+                rows = {("campaign", c.id): c.model_dump_json() for c in campaigns if c.id in self.campaigns}
+                gone = []
+            else:
+                rows = self._rows()
+                gone = [key for key in self._written if key not in rows]
             changed = [(k, i, d, time.time()) for (k, i), d in rows.items() if self._written.get((k, i)) != d]
-            gone = [key for key in self._written if key not in rows]
             if not changed and not gone:
                 return
             with self._db:

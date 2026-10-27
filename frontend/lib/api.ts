@@ -325,19 +325,18 @@ export type PostUpdate = Partial<
   Pick<SocialPost, "headline" | "caption" | "cta" | "hashtags" | "publish_at" | "status" | "layout" | "slides" | "text_position" | "text_scale">
 > & { clear_background?: boolean };
 
-const KEY_STORE = "monoplus_access_key";
+/** Where older versions kept the access key. It now lives in an httpOnly cookie the server sets,
+ *  which page scripts can't read; a key found here is traded for that cookie once, then removed. */
+const OLD_KEY_STORE = "monoplus_access_key";
 
-export const accessKey = {
-  get: () => {
-    try { return typeof window === "undefined" ? "" : window.localStorage.getItem(KEY_STORE) || ""; } catch { return ""; }
-  },
-  set: (k: string) => { try { window.localStorage.setItem(KEY_STORE, k); } catch {} },
-  clear: () => { try { window.localStorage.removeItem(KEY_STORE); } catch {} },
-};
-
-function authHeaders(): Record<string, string> {
-  const k = accessKey.get();
-  return k ? { "X-Access-Key": k } : {};
+export function takeOldAccessKey(): string {
+  try {
+    const k = window.localStorage.getItem(OLD_KEY_STORE) || "";
+    window.localStorage.removeItem(OLD_KEY_STORE);
+    return k;
+  } catch {
+    return "";
+  }
 }
 
 function locked() {
@@ -350,7 +349,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...init,
-      headers: { ...(isForm ? {} : { "Content-Type": "application/json" }), ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
+      headers: { ...(isForm ? {} : { "Content-Type": "application/json" }), ...((init?.headers as Record<string, string>) || {}) },
+      credentials: "include", // the access cookie
       cache: "no-store",
     });
   } catch {
@@ -388,8 +388,16 @@ export const api = {
     logo_upload_id?: string;
     remove_logo?: boolean;
   }) => req<Campaign>(`/api/campaigns/${id}/brand`, json("PATCH", body)),
-  exportUrl: (id: string) => `${API_URL}/api/campaigns/${id}/export${accessKey.get() ? `?key=${encodeURIComponent(accessKey.get())}` : ""}`,
+  exportUrl: (id: string) => `${API_URL}/api/campaigns/${id}/export`,
   access: () => req<{ required: boolean; ok: boolean }>("/api/access"),
+  /** Resolves true when the key is right (the server then keeps it in a cookie), false when it isn't. */
+  login: async (key: string) => {
+    const res = await fetch(`${API_URL}/api/access/login`, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }),
+    });
+    return res.ok;
+  },
+  logout: () => req<{ ok: boolean }>("/api/access/logout", { method: "POST" }),
   upcoming: (days = 7) => req<{ campaign_id: string; brand: string; post: SocialPost }[]>(`/api/upcoming?days=${days}`),
 
   updatePost: (id: string, body: PostUpdate) => req<SocialPost>(`/api/posts/${id}`, json("PATCH", body)),
@@ -416,6 +424,7 @@ export const api = {
   browserLogin: (platform: Platform) => req<{ opened: boolean; note: string }>(`/api/browser/login/${platform}`, { method: "POST" }),
   browserPost: (id: string, submit: boolean, media: "images" | "reel") =>
     req<{ post: SocialPost; message: string }>(`/api/posts/${id}/browser-post`, json("POST", { submit, media })),
+  browserSignOut: () => req<{ signed_out: boolean }>("/api/browser/sign-out", { method: "POST" }),
   browserScheduled: (enabled: boolean) => req<{ scheduled: boolean }>("/api/browser/scheduled", json("PUT", { enabled })),
 
   searchPhotos: (q: string, orientation = "square") =>
@@ -443,7 +452,7 @@ export const api = {
 
 /** Reads a server-sent-events stream with fetch(), calling onEvent for each `data:` message. */
 export async function streamEvents(path: string, onEvent: (ev: any) => void, signal?: AbortSignal) {
-  const res = await fetch(`${API_URL}${path}`, { signal, headers: authHeaders() });
+  const res = await fetch(`${API_URL}${path}`, { signal, credentials: "include" });
   if (res.status === 401) locked();
   if (!res.ok || !res.body) {
     let msg = res.statusText;

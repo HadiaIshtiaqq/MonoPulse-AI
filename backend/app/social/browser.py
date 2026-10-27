@@ -61,7 +61,7 @@ class BrowserPoster:
     """One browser, driven from one worker thread (Playwright objects belong to their thread)."""
 
     def __init__(self, profile: Path | None = None, headless: bool = False) -> None:
-        self.profile = profile or (config.DATA_DIR / "browser-profile")
+        self.profile = profile or config.BROWSER_PROFILE_DIR
         self.headless = headless  # tests run without a window; people see what MonoPlus does
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="browser")
         self._pw = None
@@ -154,7 +154,23 @@ class BrowserPoster:
                 ctx.close()
                 self._ctx = None
 
+    def _sign_out(self) -> None:
+        """Close the browser and delete its profile: every sign-in it held is gone."""
+        import shutil
+
+        if self._ctx is not None:
+            try:
+                self._ctx.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._ctx = None
+        shutil.rmtree(self.profile, ignore_errors=True)
+        self.signed_in = {}
+
     # ------------------------------------------------------------------ async-friendly entry points
+
+    async def sign_out(self) -> None:
+        await self.run(self._sign_out)
 
     async def read_instagram(self, username: str) -> dict:
         return await self.run(self._read_instagram, username)
@@ -294,6 +310,20 @@ def _instagram(page, caption: str, files: list[str], submit: bool) -> None:
         _need("Instagram's Share button", page.get_by_role("button", name=re.compile(r"^share$", re.I)),
               page.locator("div[role='button']:has-text('Share')")).click()
         page.wait_for_timeout(6000)
+
+
+def move_old_profile() -> None:
+    """Sign-ins used to be kept in the project's data folder; move them to where they live now."""
+    old, new = config.DATA_DIR / "browser-profile", config.BROWSER_PROFILE_DIR
+    if old.is_dir() and not new.exists() and old.resolve() != new.resolve():
+        import shutil
+
+        try:
+            new.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(old), str(new))
+            log.info("moved the browser profile to %s", new)
+        except OSError as exc:  # a browser still holding it open
+            log.warning("couldn't move the browser profile out of the project (%s)", exc)
 
 
 poster = BrowserPoster()

@@ -16,7 +16,7 @@ from app.store import store
 def offline(monkeypatch):
     monkeypatch.setattr(config, "NEBIUS_API_KEY", "")
     monkeypatch.setattr(config, "AWS_BEDROCK_ENABLED", False)
-    monkeypatch.setattr(store, "save", lambda: None)
+    monkeypatch.setattr(store, "save", lambda *a: None)
 
 
 def kit() -> BrandKit:

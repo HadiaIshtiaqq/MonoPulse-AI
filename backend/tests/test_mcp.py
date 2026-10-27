@@ -22,7 +22,7 @@ def isolated(monkeypatch):
     monkeypatch.setattr(config, "AWS_BEDROCK_ENABLED", False)
     monkeypatch.setattr(config, "TAVILY_API_KEY", "")
     monkeypatch.setattr(config, "ACCESS_KEY", "")
-    monkeypatch.setattr(store, "save", lambda: None)
+    monkeypatch.setattr(store, "save", lambda *a: None)
     monkeypatch.setattr(store, "campaigns", {})
     monkeypatch.setattr(store, "jobs", {})
     monkeypatch.setattr(store, "research", {})

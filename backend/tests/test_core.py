@@ -113,7 +113,7 @@ def test_full_30_day_campaign_under_30s(monkeypatch):
         return _kit()
 
     monkeypatch.setattr(pipeline, "ingest", fake_ingest)
-    monkeypatch.setattr(pipeline.store, "save", lambda: None)
+    monkeypatch.setattr(pipeline.store, "save", lambda *a: None)
     camp = Campaign(start_date=date(2026, 11, 1), days=30, platforms=[Platform.INSTAGRAM, Platform.LINKEDIN, Platform.X])
     job = pipeline.new_job(camp.id)
     t0 = time.perf_counter()
@@ -197,6 +197,13 @@ def test_store_saves_only_what_changed_and_survives_a_restart(tmp_path, monkeypa
     del third.campaigns[a.id]
     third.save()
     assert a.id not in Store().campaigns
+    # Saving one campaign writes only that one.
+    third.campaigns[old.id].days = 4
+    b = Campaign(start_date=date(2026, 11, 1), days=2, platforms=[Platform.X])
+    third.campaigns[b.id] = b
+    third.save(third.campaigns[old.id])
+    fourth = Store()
+    assert fourth.campaigns[old.id].days == 4 and b.id not in fourth.campaigns
 
 
 def test_posts_go_out_at_the_brands_local_hour():
