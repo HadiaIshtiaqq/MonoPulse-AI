@@ -4,7 +4,8 @@ export type Platform = "instagram" | "linkedin" | "x" | "facebook";
 export type ReelSceneKind = "hook" | "product" | "fact" | "cta";
 /** One scene of a reel as the owner edits it; `photo` is a /media/… path or one of the brand's web photos. */
 export type ReelScene = { kind: ReelSceneKind; text: string; sub: string; photo: string; tag?: string };
-export type ReelOptions = { palette: string; color: string; pace: "relaxed" | "normal" | "snappy"; case: "auto" | "normal" | "upper" };
+export type ReelLanguage = "en" | "roman" | "ur" | "mix";
+export type ReelOptions = { palette: string; color: string; pace: "relaxed" | "normal" | "snappy"; case: "auto" | "normal" | "upper"; language?: ReelLanguage };
 export type ReelPalette = { key: string; label: string; colors: string[] };
 export type ReelOccasion = { key: string; label: string; greeting: string; colors: string[]; soon: string };
 export type ReelOptionsInfo = {
@@ -14,6 +15,8 @@ export type ReelOptionsInfo = {
   suggested_occasion: string;
   palettes: ReelPalette[];
   styles: ReelStyle[];
+  languages: { key: ReelLanguage; label: string }[];
+  trends: { key: string; label: string }[];
 };
 export type ReelPhoto = { url: string; label: string; price: string; remote: boolean };
 export type ReelStyle = { key: string; label: string; blurb: string };
@@ -382,11 +385,13 @@ export const api = {
   humanizePost: (id: string, mode: HumanizeMode = "standard") =>
     req<HumanizeResult & { post: SocialPost }>(`/api/posts/${id}/humanize`, json("POST", { mode })),
   rewritePost: (id: string, tone: string) => req<SocialPost>(`/api/posts/${id}/rewrite`, json("POST", { tone })),
-  makeReel: (id: string, body: { scenes?: ReelScene[]; style?: string; options?: ReelOptions; topic?: string; occasion?: string } = {}) =>
+  makeReel: (id: string, body: { scenes?: ReelScene[]; style?: string; options?: ReelOptions; topic?: string; occasion?: string; trend?: string } = {}) =>
     req<{ post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string; topic: string; occasion: string }>(
       `/api/posts/${id}/reel`, json("POST", body)),
   reelStyles: () => req<ReelStyle[]>("/api/reel-styles"),
   reelOptions: (id: string) => req<ReelOptionsInfo>(`/api/posts/${id}/reel/options`),
+  captionLanguage: (id: string, language: ReelLanguage) =>
+    req<{ post: SocialPost; rewritten: boolean }>(`/api/posts/${id}/caption-language`, json("POST", { language })),
   humanizeReel: (id: string, scenes: ReelScene[]) =>
     req<{ scenes: ReelScene[]; before: number; after: number; used_llm: boolean }>(`/api/posts/${id}/reel/humanize`, json("POST", { scenes })),
   reelPhotos: (id: string) => req<ReelPhoto[]>(`/api/posts/${id}/reel/photos`),

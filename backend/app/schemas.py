@@ -121,6 +121,7 @@ class ReelOptions(BaseModel):
     color: str = ""  # the main colour for the custom palette, #RRGGBB
     pace: str = "normal"  # relaxed | normal | snappy
     case: str = "auto"  # auto (the style decides) | normal | upper
+    language: str = "en"  # en | roman (Roman Urdu) | ur (Urdu) | mix (English + Roman Urdu)
 
 
 class ReelRequest(BaseModel):
@@ -128,6 +129,7 @@ class ReelRequest(BaseModel):
     options: ReelOptions | None = None  # omitted: keep the reel's options (a fresh script rotates the palette)
     topic: str | None = None  # products | countdown | tips | poll | story | occasion; omitted: fits the post
     occasion: str | None = None  # eid_fitr | mothers | independence | sale | ... for an occasion reel
+    trend: str | None = None  # pov | sign | rate | wait | local, for a trending-format reel
     style: str | None = None  # cinematic | punch | showcase | magazine | scrapbook; omitted: pick one
 
 

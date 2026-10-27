@@ -169,3 +169,38 @@ def test_campaigns_greet_people_on_holidays():
     assert greet and greet[0].occasion == "International Women's Day" and greet[0].day == 4  # 8 March
     copy = strategist.fallback_copy(kit, greet[0])
     assert copy["headline"] == "Happy Women's Day" and "Bluebird Bakery" in copy["caption"] and not copy["cta"]
+
+
+def test_reels_in_roman_urdu_and_urdu_with_trending_formats(tmp_path):
+    from app.agents import lang
+
+    c = _shop(tmp_path)
+    style = reels.STYLES["cinematic"]
+    tips = reels.plan_story(c, c.posts[0], "tips", style, language="roman")
+    assert "tareeqay" in tips.hook or "tips" in tips.hook and tips.lines[0] in lang.TIPS["roman"]["food"]
+    urdu = reels.plan_story(c, c.posts[0], "countdown", style, language="ur")
+    assert lang.ARABIC.search(urdu.hook) and lang.ARABIC.search(urdu.cta)
+    eid = reels.plan_story(c, c.posts[0], "occasion", style, occasion_key="eid_fitr", language="roman")
+    assert eid.hook == "Eid Mubarak" and "ki taraf se" in eid.cta
+    for key in ("pov", "sign", "rate", "wait", "local"):
+        plan = reels.plan_story(c, c.posts[0], "trend", style, language="en", trend=key)
+        assert plan.topic == "trend" and plan.occasion == key and plan.hook
+    assert reels.plan_story(c, c.posts[0], "trend", style, trend="rate").tags[0] == "1-10?"
+    assert reels.plan_story(c, c.posts[0], "trend", style, trend="wait").tags[-1] == "The last one"
+    assert "Austin" in reels.plan_story(c, c.posts[0], "trend", style, trend="local").hook
+    # Urdu is shaped (joined, right to left) before it's drawn.
+    assert lang.shape("عید مبارک") != "عید مبارک" and lang.shape("Eid Mubarak") == "Eid Mubarak"
+
+
+def test_urdu_reel_renders_and_captions_change_language(client, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(reels, "FPS", 2)
+    c = _campaign_with_posts(days=2)
+    post = c.posts[0]
+    r = client.post(f"/api/posts/{post.id}/reel", json={"topic": "trend", "trend": "sign", "options": {"language": "ur"}})
+    assert r.status_code == 200, r.text
+    assert r.json()["post"]["reel_options"]["language"] == "ur" and r.json()["topic"] == "trend"
+    roman = client.post(f"/api/posts/{post.id}/caption-language", json={"language": "roman"}).json()["post"]["caption"]
+    assert post.original_caption in roman and roman != post.original_caption  # a Roman Urdu opener and closer frame it
+    back = client.post(f"/api/posts/{post.id}/caption-language", json={"language": "en"}).json()["post"]["caption"]
+    assert back == post.original_caption
+    assert client.post(f"/api/posts/{post.id}/caption-language", json={"language": "klingon"}).status_code == 422

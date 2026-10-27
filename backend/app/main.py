@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, mcp_server, publishing
-from .agents import calendar, humanizer, memory, occasions, photos, pipeline, reels, renderer, research, strategist
+from .agents import calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, strategist, variety
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
 from .publishing import share_links
@@ -445,7 +445,8 @@ async def make_reel(post_id: str, req: ReelRequest | None = None) -> dict:
     campaign, post = _post(post_id)
     try:
         info = await reels.make_reel(campaign, post, req.scenes if req else None, req.style if req else None,
-                                     req.options if req else None, req.topic if req else None, req.occasion if req else None)
+                                     req.options if req else None, req.topic if req else None, req.occasion if req else None,
+                                     req.trend if req else None)
     except reels.ReelEditError as exc:
         raise HTTPException(422, str(exc)) from exc
     except reels.ReelError as exc:
@@ -481,7 +482,53 @@ def reel_options(post_id: str) -> dict:
         "suggested_occasion": reels.post_occasion(campaign, post) or next((o["key"] for o in occ if o["soon"]), ""),
         "palettes": reels.palette_list(kit),
         "styles": reels.style_list(),
+        "languages": [{"key": k, "label": v} for k, v in lang.LANGUAGES.items()],
+        "trends": [{"key": k, "label": lang.TRENDS[k]["label"].format(city=(kit.location or "").split(",")[0].strip())}
+                   for k in reels.trend_formats(kit)],
     }
+
+
+class CaptionLanguageRequest(BaseModel):
+    language: str
+
+
+CAPTION_LANGUAGE_SYSTEM = """Rewrite this social media caption for the same brand and platform in the requested language.
+Roman Urdu means Urdu written in Latin letters, casual, the way people in Pakistan text and post. Urdu means Urdu script.
+"English + Roman Urdu" means English with natural Roman Urdu phrases mixed in. Keep every fact, price and product name
+exactly; don't add offers or claims. You may open with one short, natural line in the style that's trending in Pakistani
+feeds if it fits. No hashtags. Return JSON: {"caption": "..."}"""
+
+
+@app.post("/api/posts/{post_id}/caption-language")
+async def caption_language(post_id: str, req: CaptionLanguageRequest) -> dict:
+    """The caption in English, Roman Urdu, Urdu or a mix. With Nemotron it's rewritten in the language;
+    without, a trending opener and closer in that language frame the existing caption."""
+    campaign, post = _post(post_id)
+    kit = campaign.brand
+    if req.language not in lang.LANGUAGES:
+        raise HTTPException(422, f"Language must be one of: {', '.join(lang.LANGUAGES.values())}.")
+    base = post.original_caption or post.caption
+    rewritten = False
+    if router.enabled and kit:
+        try:
+            data = await router.complete_json("rewrite", CAPTION_LANGUAGE_SYSTEM,
+                                              f"Brand: {kit.name}\nPlatform: {post.platform.value}\nLanguage: {lang.LANGUAGES[req.language]}\n"
+                                              f"Caption:\n{base}", temperature=0.7, max_tokens=900)
+            text = str(data.get("caption") or "").strip() if isinstance(data, dict) else ""
+            if text and not humanizer.missing_facts(base, text, [kit.name]):
+                post.caption, rewritten = humanizer.rule_pass(text) if req.language != "ur" else text, True
+        except (LLMError, AttributeError) as exc:
+            logging.getLogger(__name__).info("caption language rewrite fell back: %s", exc)
+    if not rewritten:
+        p = lang.pools(req.language)
+        if p == "en":
+            post.caption = base
+        else:
+            seed = sum(map(ord, post.id))
+            post.caption = f"{variety.pick(lang.OPENERS[p], seed)}\n\n{base}\n\n{variety.pick(lang.CLOSERS[p], seed)}"
+    post.original_caption = post.original_caption or base
+    store.save()
+    return {"post": post, "rewritten": rewritten}
 
 
 class ReelHumanizeRequest(BaseModel):

@@ -12,3 +12,5 @@ python-multipart>=0.0.12
 boto3>=1.35
 resvg-py>=0.5
 imageio-ffmpeg>=0.5
+arabic-reshaper>=3.0
+python-bidi>=0.4

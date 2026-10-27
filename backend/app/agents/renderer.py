@@ -13,10 +13,11 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 
 from .. import config
 from ..schemas import BrandKit, Platform, SocialPost
+from . import lang as lang_mod
 from . import occasions
 
 SIZES = {
@@ -87,18 +88,26 @@ def gradient(size: tuple[int, int], top: tuple[int, int, int], bottom: tuple[int
 
 
 def wrap(draw: ImageDraw.ImageDraw, text: str, fnt, max_width: int) -> list[str]:
+    """Lines that fit max_width. Urdu lines come back shaped (joined letters, right to left),
+    ready to draw; they're measured shaped too."""
+    if lang_mod.ARABIC.search(text or ""):
+        return [lang_mod.shape(line) for line in _wrap(draw, text, fnt, max_width, measure=lang_mod.shape)]
+    return _wrap(draw, text, fnt, max_width)
+
+
+def _wrap(draw: ImageDraw.ImageDraw, text: str, fnt, max_width: int, measure=lambda s: s) -> list[str]:
     lines: list[str] = []
     for para in text.split("\n"):
         line = ""
         for w in para.split():
             trial = f"{line} {w}".strip()
-            if draw.textlength(trial, font=fnt) <= max_width:
+            if draw.textlength(measure(trial), font=fnt) <= max_width:
                 line = trial
                 continue
             if line:
                 lines.append(line)
             # A single word wider than the box (long URL or brand name) is split, never drawn off-canvas.
-            while draw.textlength(w, font=fnt) > max_width and len(w) > 1:
+            while draw.textlength(measure(w), font=fnt) > max_width and len(w) > 1:
                 cut = len(w) - 1
                 while cut > 1 and draw.textlength(w[:cut] + "-", font=fnt) > max_width:
                     cut -= 1
@@ -124,9 +133,10 @@ def fit_text(draw, text: str, max_width: int, max_height: int, start: int, minim
     return fnt, wrap(draw, text, fnt, max_width)[:max_lines], int(minimum * spacing)
 
 
-def paste_logo(img: Image.Image, kit: BrandKit, box: tuple[int, int, int, int], on_dark: bool) -> bool:
+def paste_logo(img: Image.Image, kit: BrandKit, box: tuple[int, int, int, int], on_dark: bool, align: str = "left") -> bool:
     """on_dark puts the logo on a white chip. Every brand-coloured or photo background needs
-    one: logos are usually drawn in the brand colour, so they vanish on their own colour."""
+    one: logos are usually drawn in the brand colour, so they vanish on their own colour.
+    align="right" keeps the logo against the box's right edge."""
     if not kit.logo_path or not Path(kit.logo_path).exists():
         return False
     try:
@@ -139,6 +149,8 @@ def paste_logo(img: Image.Image, kit: BrandKit, box: tuple[int, int, int, int], 
     # would otherwise sit tiny in the corner.
     s = min((x1 - x0) / logo.width, (y1 - y0) / logo.height)
     logo = logo.resize((max(1, int(logo.width * s)), max(1, int(logo.height * s))), Image.LANCZOS)
+    if align == "right":
+        x0 = x1 - logo.width
     if on_dark:
         pad = 14
         chip = Image.new("RGBA", (logo.width + pad * 2, logo.height + pad * 2), (0, 0, 0, 0))
@@ -214,6 +226,33 @@ def price_chip(draw: ImageDraw.ImageDraw, price: str, right: int, top: int, size
     draw.text((right - tw - pad_x, top + pad_y - size * 0.08), price, font=f, fill=shade(color, 0.25) if luminance(color) > 0.5 else color)
 
 
+def busyness(img: Image.Image, box: tuple[int, int, int, int]) -> float:
+    """How much is going on in part of a photo (edges and contrast): text, faces and products score high."""
+    crop = img.crop(box).convert("L").resize((64, 64))
+    return ImageStat.Stat(crop.filter(ImageFilter.FIND_EDGES)).mean[0] + ImageStat.Stat(crop).stddev[0] * 0.3
+
+
+def photo_corners(img: Image.Image, kit: BrandKit, post: SocialPost, m: int, logo_size: tuple[int, int], price: str,
+                  primary, accent, chip_size: int, badge: int, logo: bool = True) -> None:
+    """Logo, price and sale badge on a photo: the logo goes in whichever top corner is calmer, so it
+    doesn't cover the photo's own words or the product, and the price or badge takes the other corner."""
+    w, h = img.size
+    lw, lh = logo_size
+    left, right = (m, m, m + lw, m + lh), (w - m - lw, m, w - m, m + lh)
+    side = "left" if busyness(img, left) <= busyness(img, right) else "right"
+    if logo:
+        paste_logo(img, kit, left if side == "left" else right, on_dark=True, align=side)
+    else:  # no logo here: the price takes the calmer corner itself
+        side = "right" if side == "left" else "left"
+    draw = ImageDraw.Draw(img)
+    if post.kind == "sale" and sale_pct(post.product):
+        sale_badge(img, sale_pct(post.product), (w - m - badge, m) if side == "left" else (m, m), badge, accent)
+    elif price:
+        price = price[:-3] if price.endswith(".00") else price
+        chip_w = int(draw.textlength(price, font=font(chip_size))) + int(chip_size * 0.7) * 2
+        price_chip(draw, price, w - m if side == "left" else m + chip_w, m, chip_size, primary)
+
+
 def sale_pct(product) -> int:
     if not product or not product.was_price:
         return 0
@@ -264,7 +303,16 @@ def render_frame(kit: BrandKit, post: SocialPost, size: tuple[int, int], headlin
         photo = rounded_photo(post.background.path, (w - 2 * m, h - band - 2 * m), m)
         img.paste(photo, (m, m), photo)
         tx, tw, top, bottom = m * 2, w - m * 4, h - band + int(m * 0.3), h - m
-    paste_logo(img, kit, (m * 2, m * 2, m * 2 + int(w * (0.18 if wide else 0.26)), m * 2 + int(h * (0.14 if wide else 0.09))), on_dark=True)
+    inset = img.crop((w - pw, m, w - m, h - m)) if wide else img.crop((m, m, w - m, h - band - m))
+    corner = Image.new("RGB", inset.size)
+    corner.paste(inset)
+    sub_post = post.model_copy(update={"product": None}) if post.kind != "sale" else post  # the price is in the band below
+    photo_corners(corner, kit, sub_post, m, (int(w * (0.16 if wide else 0.22)), int(h * (0.1 if wide else 0.065))), "",
+                  primary, accent, int(min(w, h) * 0.035), int(min(w, h) * 0.2))
+    mask = Image.new("L", corner.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, corner.width - 1, corner.height - 1], radius=m, fill=255)
+    img.paste(corner, (w - pw, m) if wide else (m, m), mask)
+    draw = ImageDraw.Draw(img)
     fnt, lines, lh = fit_text(draw, headline, tw, int((bottom - top) * 0.62), int(min(w, h) * 0.085 * scale), max_lines=3)
     y = top + (int((bottom - top) * 0.3) - lh * len(lines) // 2 if wide else 0)
     y = draw_lines(draw, lines, fnt, lh, tx, max(top, y), fg)
@@ -272,9 +320,6 @@ def render_frame(kit: BrandKit, post: SocialPost, size: tuple[int, int], headlin
     meta = "  ·  ".join(x for x in (price[:-3] if price.endswith(".00") else price, brand_label(kit)) if x)
     draw.rectangle([tx, y + 14, tx + 110, y + 24], fill=accent)
     draw.text((tx, min(bottom - int(min(w, h) * 0.035), y + 44)), meta, font=font(int(min(w, h) * 0.03), False), fill=fg)
-    if post.kind == "sale" and sale_pct(post.product):
-        d = int(min(w, h) * 0.2)
-        sale_badge(img, sale_pct(post.product), (w - m * 2 - d, m * 2), d, accent)
     return img
 
 
@@ -286,29 +331,31 @@ def render_poster(kit: BrandKit, post: SocialPost, size: tuple[int, int], headli
     m = int(s * 0.07)
     img = cover_photo(post.background.path, size).convert("RGBA")
     probe = ImageDraw.Draw(img)
-    fnt, lines, lh = fit_text(probe, headline, int(w * 0.8), int(h * 0.22), int(s * 0.085 * scale), max_lines=3)
-    band_h = lh * len(lines) + int(s * 0.09)
+    has_logo = bool(kit.logo_path and Path(kit.logo_path).exists())
+    logo_w = int(w * 0.2) if has_logo else 0
+    fnt, lines, lh = fit_text(probe, headline, int(w * 0.8) - (logo_w + m if has_logo else 0), int(h * 0.22),
+                              int(s * 0.085 * scale), max_lines=3)
+    band_h = max(lh * len(lines) + int(s * 0.09), int(s * 0.15) if has_logo else 0)
     band = Image.new("RGBA", (int(w * 1.4), band_h), (*primary, 245))
     bd = ImageDraw.Draw(band)
     bd.rectangle([0, 0, band.width, int(s * 0.012)], fill=(*accent, 255))
     tx = (band.width - w) // 2 + m
-    y = int(s * 0.045)
+    y = (band_h - lh * len(lines)) // 2
     for line in lines:
         bd.text((tx, y), line, font=fnt, fill=(*text_on(primary), 255))
         y += lh
+    if has_logo:  # the logo rides on the ribbon, so it never covers the photo's own words or the product
+        right = (band.width + w) // 2 - m
+        chip_h = min(int(s * 0.08), band_h - int(s * 0.05))
+        paste_logo(band, kit, (right - logo_w, (band_h - chip_h) // 2, right, (band_h + chip_h) // 2), on_dark=True, align="right")
     band = band.rotate(4, expand=True, resample=Image.BICUBIC)
     pos = post.text_position if post.text_position in ("top", "center") else "bottom"
     # "top" sits below where a model's face usually is, so the ribbon never covers it.
     cy = {"top": int(h * 0.42), "center": int(h * 0.56)}.get(pos, int(h * 0.74))
     img.alpha_composite(band, ((w - band.width) // 2, cy - band.height // 2))
-    paste_logo(img, kit, (m, m, m + int(w * 0.28), m + int(h * 0.09)), on_dark=True)
+    photo_corners(img, kit, post, m, (int(w * 0.22), int(h * 0.065)), post.product.price if post.product else "",
+                  primary, accent, int(s * 0.04), int(s * 0.2), logo=False)
     draw = ImageDraw.Draw(img)
-    price = post.product.price if post.product else ""
-    if post.kind == "sale" and sale_pct(post.product):
-        d = int(s * 0.2)
-        sale_badge(img, sale_pct(post.product), (w - m - d, m), d, accent)
-    elif price:
-        price_chip(draw, price[:-3] if price.endswith(".00") else price, w - m, m, int(s * 0.04), primary)
     label = brand_label(kit)
     lf = font(int(s * 0.03), False)
     lw = draw.textlength(label, font=lf)
@@ -490,12 +537,9 @@ def render_cover(kit: BrandKit, post: SocialPost, size: tuple[int, int], carouse
         y = block_y(pos, h, m, lh * len(lines), "bottom")
         y = draw_lines(draw, lines, fnt, lh, m, y, (255, 255, 255))
         draw.rectangle([m, y + 22, m + 130, y + 34], fill=accent)
-        logo_box = (m, m, m + int(w * 0.3), m + int(h * 0.1))
-        paste_logo(img, kit, logo_box, on_dark=True)
-        if post.kind == "sale" and sale_pct(post.product):
-            sale_badge(img, sale_pct(post.product), (w - m - int(min(w, h) * 0.2), m), int(min(w, h) * 0.2), accent)
-        elif price:
-            price_chip(draw, price, w - m, m, int(min(w, h) * 0.04), primary)
+        photo_corners(img, kit, post, m, (int(w * 0.22), int(h * 0.065)), price, primary, accent,
+                      int(min(w, h) * 0.04), int(min(w, h) * 0.2))
+        draw = ImageDraw.Draw(img)
         draw.text((m, h - m), brand_label(kit), font=font(int(min(w, h) * 0.03), False), fill=(235, 235, 235))
         if carousel:
             swipe_chip(draw, w, h, m, accent, text_on(accent))

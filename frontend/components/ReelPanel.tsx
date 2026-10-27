@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowDown, ArrowUp, BookOpen, Check, Clapperboard, Copy, Download, Film, ImageOff, ImagePlus, Lightbulb, ListOrdered, Loader2,
+  AlertTriangle, ArrowDown, ArrowUp, BookOpen, Check, Clapperboard, Copy, Download, Film, Flame, ImageOff, ImagePlus, Lightbulb, ListOrdered, Loader2,
   PartyPopper, Pause, Pipette, Play, Plus, RefreshCw, Share2, ShoppingBag, Shuffle, Sparkles, Trash2, Undo2, Upload, Volume2, Vote, Wand2,
 } from "lucide-react";
 import {
-  api, logoSrc, media, type BrandKit, type ReelOccasion, type ReelOptions, type ReelOptionsInfo, type ReelPalette, type ReelPhoto,
+  api, logoSrc, media, type BrandKit, type ReelLanguage, type ReelOccasion, type ReelOptions, type ReelOptionsInfo, type ReelPalette, type ReelPhoto,
   type ReelScene, type ReelStyle, type SocialPost,
 } from "@/lib/api";
 import { canShareVideo, copyText, downloadVideo, shareVideo } from "@/lib/share";
@@ -262,8 +262,11 @@ function StylePicker({ styles, value, current, auto, onPick, photo, brand, disab
 }
 
 const TOPIC_ICONS: Record<string, typeof ShoppingBag> = {
-  products: ShoppingBag, countdown: ListOrdered, tips: Lightbulb, poll: Vote, story: BookOpen, occasion: PartyPopper,
+  products: ShoppingBag, countdown: ListOrdered, tips: Lightbulb, poll: Vote, story: BookOpen, occasion: PartyPopper, trend: Flame,
 };
+const LANG_FALLBACK: { key: ReelLanguage; label: string }[] = [
+  { key: "en", label: "English" }, { key: "roman", label: "Roman Urdu" }, { key: "ur", label: "اردو" }, { key: "mix", label: "Mix" },
+];
 
 function Chips<T extends string>({ label, hint, value, options, onPick, disabled }: {
   label: string; hint?: string; value: T; options: { key: T; label: string }[]; onPick: (k: T) => void; disabled: boolean;
@@ -388,6 +391,7 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   const [photos, setPhotos] = useState<ReelPhoto[] | null>(null);
   const [shareable, setShareable] = useState(false);
   const [opts, setOpts] = useState<ReelOptionsInfo | null>(null);
+  const [optsError, setOptsError] = useState(false);
   const styles = opts?.styles ?? FALLBACK_STYLES;
   const has = !!post.reel_scenes?.length;
   // "" means "pick for me": the topic that fits the post, a style and palette the campaign hasn't used much.
@@ -398,14 +402,21 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   const [color, setColor] = useState(post.reel_options?.color || brand?.primary_color || "#5B47FB");
   const [pace, setPace] = useState<ReelOptions["pace"]>(post.reel_options?.pace ?? "normal");
   const [textCase, setTextCase] = useState<ReelOptions["case"]>(post.reel_options?.case ?? "auto");
+  const [language, setLanguage] = useState<ReelLanguage>(post.reel_options?.language ?? "en");
+  const [trend, setTrend] = useState(post.reel_topic === "trend" ? post.reel_occasion ?? "" : "");
   const step = useCycle(busy === "render" ? EDIT_STEPS : STEPS, 4500);
   useEffect(() => setShareable(canShareVideo()), []);
-  useEffect(() => { api.reelOptions(post.id).then(setOpts).catch(() => {}); }, [post.id]);
+  const loadOptions = useCallback(() => {
+    setOptsError(false);
+    api.reelOptions(post.id).then(setOpts).catch(() => setOptsError(true));
+  }, [post.id]);
+  useEffect(loadOptions, [loadOptions]);
 
   const resetChoices = () => {
     setLook(post.reel_style ?? ""); setTopic(post.reel_topic ?? ""); setOccasion(post.reel_occasion ?? "");
     setPalette(post.reel_options?.palette ?? ""); setColor(post.reel_options?.color || brand?.primary_color || "#5B47FB");
     setPace(post.reel_options?.pace ?? "normal"); setTextCase(post.reel_options?.case ?? "auto");
+    setLanguage(post.reel_options?.language ?? "en"); setTrend(post.reel_topic === "trend" ? post.reel_occasion ?? "" : "");
   };
   const saved = JSON.stringify(post.reel_scenes ?? []);
   const savedOpts = JSON.stringify([post.reel_style, post.reel_topic, post.reel_occasion, post.reel_options]);
@@ -428,7 +439,8 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   useEffect(() => () => onPreview(null), [onPreview]);
 
   // A new topic or occasion needs a new script; the look, colours, pace, lettering and edits only need a re-render.
-  const storyChanged = has && ((!!topic && topic !== post.reel_topic) || (effectiveTopic === "occasion" && !!occasion && occasion !== post.reel_occasion));
+  const storyChanged = has && ((!!topic && topic !== post.reel_topic) || (effectiveTopic === "occasion" && !!occasion && occasion !== post.reel_occasion)
+    || (effectiveTopic === "trend" && !!trend && trend !== post.reel_occasion) || language !== (post.reel_options?.language ?? "en"));
   const lookChanged = has && (
     JSON.stringify(draft) !== saved || (!!look && look !== post.reel_style) || (palette !== (post.reel_options?.palette ?? ""))
     || (palette === "custom" && color !== post.reel_options?.color) || pace !== (post.reel_options?.pace ?? "normal")
@@ -436,7 +448,7 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   const dirty = storyChanged || lookChanged;
   const label = (list: { key: string; label: string }[] | undefined, key: string) => list?.find((s) => s.key === key)?.label ?? key;
   const fileBase = `${brandName.replace(/[^\w]+/g, "-").toLowerCase() || "post"}-${post.publish_at.slice(0, 10)}`;
-  const options = (): ReelOptions => ({ palette, color: palette === "custom" ? color : "", pace, case: textCase });
+  const options = (): ReelOptions => ({ palette, color: palette === "custom" ? color : "", pace, case: textCase, language });
 
   async function make(kind: "fresh" | "render", ask = true) {
     if (kind === "fresh" && has && ask && !storyChanged) {  // a fresh script replaces the owner's edits
@@ -451,6 +463,7 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
         style: look && (!has || look !== post.reel_style) ? look : undefined,
         topic: topic && (!has || topic !== post.reel_topic || storyChanged) ? topic : undefined,
         occasion: effectiveTopic === "occasion" ? effectiveOccasion : undefined,
+        trend: effectiveTopic === "trend" && trend ? trend : undefined,
         options: { ...options(), palette: has && palette === post.reel_options?.palette && !storyChanged ? "" : palette },
       } : { scenes: draft, style: look || undefined, options: options() });
       onChange(res.post);
@@ -541,12 +554,47 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
 
   const middle = (i: number) => draft[i].kind !== "hook" && draft[i].kind !== "cta";
   const working = busy === "make" || busy === "render";
-  const choices = (
+  const choices = optsError ? (
+    <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+      <AlertTriangle size={16} className="shrink-0 text-amber-600" />
+      <p className="flex-1">Couldn&apos;t reach MonoPlus to load the reel options. Is the server running?</p>
+      <button type="button" onClick={loadOptions} className="btn-ghost btn-sm"><RefreshCw size={13} /> Retry</button>
+    </div>
+  ) : !opts ? (
+    <div className="space-y-3" aria-busy="true" aria-label="Loading reel options">
+      <div className="skeleton h-4 w-24" />
+      <div className="grid grid-cols-3 gap-1.5">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton h-9 rounded-xl" />)}</div>
+      <div className="flex gap-2">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="skeleton aspect-[9/16] w-[60px] rounded-lg" />)}</div>
+    </div>
+  ) : (
     <>
+      <div className="flex items-center justify-between gap-3">
+        <p className="label shrink-0" title="The words on screen; product names stay as they are">Language</p>
+        <div className="seg">
+          {(opts.languages ?? LANG_FALLBACK).map((l) => (
+            <button key={l.key} type="button" data-active={language === l.key} onClick={() => setLanguage(l.key)} disabled={busy !== null}>
+              {l.key === "ur" ? "اردو" : l.key === "mix" ? "Mix" : l.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <TopicPicker options={opts} value={topic} suggested={has ? post.reel_topic ?? "" : opts?.suggested_topic ?? ""}
         onPick={(k) => { setTopic(k); if (k === "occasion" && !palette) setPalette("occasion"); }} disabled={busy !== null} />
       {effectiveTopic === "occasion" && opts && (
         <OccasionPicker occasions={opts.occasions} value={effectiveOccasion} onPick={setOccasion} disabled={busy !== null} />
+      )}
+      {effectiveTopic === "trend" && (
+        <section className="animate-slide-down">
+          <p className="label mb-2">Format</p>
+          <div className="flex flex-wrap gap-1.5">
+            {[{ key: "", label: "Surprise me" }, ...(opts.trends ?? [])].map((t) => (
+              <button key={t.key || "any"} type="button" onClick={() => setTrend(t.key)} disabled={busy !== null}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition ${trend === t.key ? "border-ink bg-ink text-white" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </section>
       )}
       <StylePicker styles={styles} value={look} current={has ? post.reel_style ?? "" : ""} auto={!has} onPick={setLook} disabled={busy !== null}
         photo={draft.find((s) => s.kind === "product" && s.photo)?.photo || post.background?.thumb_url || ""} brand={brand} />

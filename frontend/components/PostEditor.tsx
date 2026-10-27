@@ -58,6 +58,9 @@ const POSITIONS: { id: TextPosition; label: string }[] = [
   { id: "bottom", label: "Bottom" },
 ];
 const TONES = ["casual", "professional", "playful", "urgent", "storytelling"];
+const CAPTION_LANGUAGES: { key: "en" | "roman" | "ur" | "mix"; label: string }[] = [
+  { key: "en", label: "English" }, { key: "roman", label: "Roman Urdu" }, { key: "ur", label: "اردو" }, { key: "mix", label: "English + Roman Urdu" },
+];
 const MODES: { id: HumanizeMode; label: string; hint: string }[] = [
   { id: "light", label: "Light", hint: "Instant rule pass: stock phrases, dashes, stiff grammar." },
   { id: "standard", label: "Standard", hint: "Rules, then a Nemotron rewrite guided by Wikipedia's \"Signs of AI writing\" patterns." },
@@ -471,6 +474,25 @@ export function PostEditor({
                     <button onClick={() => run("rewrite", () => api.rewritePost(post.id, tone), `Rewritten in a ${tone} tone`)} disabled={busy !== null} className="btn-ghost btn-sm">
                       {busy === "rewrite" ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Rewrite tone
                     </button>
+                  </section>
+
+                  <section>
+                    <p className="label mb-2">Language</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {CAPTION_LANGUAGES.map((l) => (
+                        <button key={l.key} type="button" disabled={busy !== null}
+                          onClick={() => run(`lang-${l.key}`, async () => {
+                            const res = await api.captionLanguage(post.id, l.key);
+                            setNotice({ kind: "ok", text: res.rewritten ? `Rewritten in ${l.label}.` : l.key === "en"
+                              ? "Back to the original caption."
+                              : `Added a trending ${l.label} opener and closer. Full rewrites in ${l.label} need a Nemotron key.` });
+                            return res.post;
+                          })}
+                          className="btn-ghost btn-sm">
+                          {busy === `lang-${l.key}` ? <Loader2 size={13} className="animate-spin" /> : null} {l.label}
+                        </button>
+                      ))}
+                    </div>
                   </section>
 
                   <section>

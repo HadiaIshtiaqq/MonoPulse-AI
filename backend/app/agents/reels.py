@@ -33,6 +33,7 @@ from .. import config
 from ..llm import LLMError, router
 from ..schemas import BrandKit, Campaign, Product, ReelOptions, ReelScene, SocialPost
 from . import humanizer, occasions
+from . import lang as lang_mod
 from . import photos as photo_store
 from . import strategist
 from .renderer import cover_photo, fit_text, font, gradient, luminance, rgb, shade, text_on, text_scrim
@@ -157,6 +158,7 @@ TOPICS = {
     "poll": ("This or that", "Two products, A or B, and a vote"),
     "story": ("Brand story", "What the brand stands for, from its own facts"),
     "occasion": ("Occasion", "A greeting for Eid, Mother's Day, a sale and more, with festive colours"),
+    "trend": ("Trending format", "Formats people know from their feed: POV, \"this is your sign\", rate it, wait for the last one"),
 }
 KIND_TOPIC = {"spotlight": "products", "carousel": "countdown", "duo": "poll", "tip": "tips", "quote": "story",
               "sale": "occasion", "moment": "occasion", "question": "poll", "greeting": "occasion"}
@@ -198,8 +200,13 @@ def available_topics(campaign: Campaign, post: SocialPost) -> list[str]:
         out.append("poll")
     if kit and len(story_facts(kit)) >= 2:
         out.append("story")
-    out.append("occasion")
+    out += ["trend", "occasion"]  # both work on the brand colours when there are no photos
     return out
+
+
+def trend_formats(kit: BrandKit) -> list[str]:
+    city = (kit.location or "").split(",")[0].strip() if kit else ""
+    return [k for k in lang_mod.TRENDS if k != "local" or city]
 
 
 def default_topic(campaign: Campaign, post: SocialPost, avoid: str = "") -> str:
@@ -209,7 +216,7 @@ def default_topic(campaign: Campaign, post: SocialPost, avoid: str = "") -> str:
     preferred = KIND_TOPIC.get(post.kind, "products")
     if preferred == "occasion" and not post_occasion(campaign, post):
         preferred = "products"
-    order = [preferred] + [t for t in ("products", "countdown", "tips", "story", "poll") if t != preferred]
+    order = [preferred] + [t for t in ("products", "trend", "countdown", "tips", "story", "poll") if t != preferred]
     return next((t for t in order if t in topics and t != avoid), topics[0] if topics else "products")
 
 
@@ -251,7 +258,42 @@ class Plan:
 
 
 def plan_story(campaign: Campaign, post: SocialPost, topic: str, style: "Style", rnd: random.Random | None = None,
-               occasion_key: str = "") -> Plan:
+               occasion_key: str = "", language: str = "en", trend: str = "") -> Plan:
+    plan = _plan_story(campaign, post, topic, style, rnd, occasion_key, language, trend)
+    return localize(plan, campaign.brand, language, rnd)
+
+
+def localize(plan: Plan, kit: BrandKit, language: str, rnd: random.Random | None) -> Plan:
+    """The story's own words (opening, ending, tips, labels, greetings) in Roman Urdu or Urdu.
+    Product names and the brand's facts stay as written; "mix" keeps English tips."""
+    p = lang_mod.pools(language)
+    if p == "en" or plan.topic == "trend":  # trend formats are written in the language from the start
+        return plan
+    f = flavour(kit)
+    subject = strategist.display_name(kit, plan.shots[0][0]) if plan.shots and plan.shots[0][0] else kit.name
+    fields = {"n": len(plan.lines), "brand": kit.name, "name": subject, "verb": lang_mod.VERBS[p][f]}
+    if plan.topic in lang_mod.HOOKS[p]:
+        plan.hook = _pick(lang_mod.HOOKS[p][plan.topic], rnd).format(**fields)
+        plan.cta = _pick(lang_mod.ENDINGS[p][plan.topic], rnd)
+    if plan.topic == "tips" and language != "mix":
+        tips = list(lang_mod.TIPS[p][f])
+        if rnd:
+            rnd.shuffle(tips)
+        plan.lines = tips[: len(plan.lines)]
+        plan.tags = [lang_mod.TIP_LABEL[p].format(i=i + 1) for i in range(len(plan.lines))]
+    if plan.topic == "occasion":
+        o = occasions.OCCASIONS.get(plan.occasion)
+        greet = lang_mod.greeting(plan.occasion, language, occasions.greeting(o, kit.name) if o else "")
+        plan.hook = greet
+        if language != "mix":
+            lines = lang_mod.OCCASION_LINES[p]
+            plan.lines = [lines[i % len(lines)] for i in range(len(plan.lines))]
+        plan.cta = lang_mod.FROM_BRAND[p].format(brand=kit.name, greeting=greet)
+    return plan
+
+
+def _plan_story(campaign: Campaign, post: SocialPost, topic: str, style: "Style", rnd: random.Random | None,
+                occasion_key: str, language: str, trend: str) -> Plan:
     kit = campaign.brand
     f = flavour(kit)
     site = _site(kit) or kit.name
@@ -281,6 +323,31 @@ def plan_story(campaign: Campaign, post: SocialPost, topic: str, style: "Style",
                     brief=f"A brand story: the opening asks why people choose {kit.name}; each scene gives one real reason from the brief, "
                           "in order; the end invites them in. Never add facts that aren't in the brief.")
     shots = product_shots(reel_photos(campaign, post, MAX_PHOTOS, rnd, products_only=True))
+    if topic == "trend":
+        p = lang_mod.pools(language)
+        keys = trend_formats(kit)
+        key = trend if trend in keys else _pick(keys, rnd)
+        t = lang_mod.TRENDS[key]
+        picks = (shots or reel_photos(campaign, post, style.photos, rnd))[: max(3, min(style.photos, 4))]
+        city = (kit.location or "").split(",")[0].strip()
+        hook = t["hook"][p]
+        hook = (hook.get(flavour(kit)) if isinstance(hook, dict) else hook).format(brand=kit.name, city=city)
+        n = len(picks)
+        tags = [t["tag"][p]] * n if "tag" in t else [""] * n
+        if "last" in t and n:
+            tags[-1] = t["last"][p]
+        lines = [name(pr) if pr else (LEAD_IN.sub("", said).strip() or kit.name) for pr, _, said in picks]
+        if not picks:  # no photos: the brand's own facts, on its colours
+            lines = story_facts(kit)[:3] or [kit.tagline or kit.name]
+            picks = [(None, "", "")] * len(lines)
+            n = len(lines)
+            tags = [t["tag"][p]] * n if "tag" in t else [""] * n
+            if "last" in t:
+                tags[-1] = t["last"][p]
+        return Plan("trend", hook, lines, picks, tags, [_price(pr) for pr, _, _ in picks],
+                    t["end"][p].format(city=city), site, occasion=key,
+                    brief=f"A trending '{t['label'].format(city=city)}' reel: the opening uses that well-known format; each scene "
+                          "shows one photo, in order; the end invites people to join in. Keep the format's opening recognisable.")
     if topic == "tips" and shots:
         subject = shots[0]
         tips = list(TIPS[f])
@@ -337,7 +404,15 @@ Specific to this brand, plain and punchy, words a person would say. No hashtags,
 Return JSON: {"hook": "<= 7 words", "scenes": ["<= 7 words per scene, same order and count"], "cta": "<= 6 words"}"""
 
 
-async def write_script(kit: BrandKit, post: SocialPost, plan: Plan, style: "Style | None" = None) -> tuple[Plan, bool]:
+LANGUAGE_NOTES = {
+    "roman": "Write every line in Roman Urdu: Urdu in Latin letters, casual, the way people in Pakistan text and post.",
+    "ur": "Write every line in Urdu, in Urdu script.",
+    "mix": "Write in English with natural Roman Urdu phrases mixed in, the way Pakistani brands post.",
+}
+
+
+async def write_script(kit: BrandKit, post: SocialPost, plan: Plan, style: "Style | None" = None,
+                       language: str = "en") -> tuple[Plan, bool]:
     """The model words the planned story; the rule-based words stay when there's no model."""
     if not router.enabled:
         return plan, False
@@ -345,6 +420,7 @@ async def write_script(kit: BrandKit, post: SocialPost, plan: Plan, style: "Styl
                "draft": line} for tag, (p, _, _), line in zip(plan.tags, plan.shots, plan.lines)]
     user = (f"Brand: {strategist.brand_brief(kit)}\nStory: {plan.brief}\nDraft hook: {plan.hook}\nDraft closing: {plan.cta}\n"
             + (f"Video style: {style.label}. Tone: {style.tone}\n" if style else "")
+            + (f"Language: {LANGUAGE_NOTES[language]} Product names stay as given.\n" if language in LANGUAGE_NOTES else "")
             + f"Scenes: {json.dumps(scenes, ensure_ascii=False)}")
     try:
         data = await router.complete_json("reel_script", REEL_SYSTEM, user, temperature=0.8, max_tokens=500)
@@ -582,6 +658,7 @@ def caption_blocks(text: str, width: int, start: int, fills: list, tilt: bool = 
 
 
 def pill(text: str, size: int, fill, fg) -> Image.Image:
+    text = lang_mod.shape(text)
     f = font(size)
     probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
     tw = int(probe.textlength(text, font=f))
@@ -595,6 +672,7 @@ def pill(text: str, size: int, fill, fg) -> Image.Image:
 
 def sticker(text: str, d: int, fill, angle: float) -> Image.Image:
     """A round price sticker."""
+    text = lang_mod.shape(text)
     img = Image.new("RGBA", (d, d), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.ellipse([0, 0, d - 1, d - 1], fill=(*fill, 255), outline=(255, 255, 255, 255), width=max(6, d // 30))
@@ -1226,6 +1304,8 @@ def resolve_options(campaign: Campaign, post: SocialPost, options: ReelOptions |
         raise ReelEditError("Pace must be relaxed, normal or snappy.")
     if opts.case not in ("auto", "normal", "upper"):
         raise ReelEditError("Text must be auto, normal or upper.")
+    if opts.language not in lang_mod.LANGUAGES:
+        raise ReelEditError(f"Language must be one of: {', '.join(lang_mod.LANGUAGES.values())}.")
     if not opts.palette:
         opts.palette = choose_palette(campaign, post, avoid=current.palette if fresh and post.video_url else "") \
             if fresh or not current.palette else current.palette
@@ -1233,7 +1313,8 @@ def resolve_options(campaign: Campaign, post: SocialPost, options: ReelOptions |
 
 
 async def make_reel(campaign: Campaign, post: SocialPost, edited: list[ReelScene] | None = None, style_key: str | None = None,
-                    options: ReelOptions | None = None, topic: str | None = None, occasion: str | None = None) -> dict:
+                    options: ReelOptions | None = None, topic: str | None = None, occasion: str | None = None,
+                    trend: str | None = None) -> dict:
     """Write (or take the owner's edited scenes), render and attach a reel to every platform
     version of the post. A fresh script also gets a fresh look: the campaign's least-used style
     and palette, never the ones this reel had, unless the owner picked them. Written scripts are
@@ -1249,6 +1330,10 @@ async def make_reel(campaign: Campaign, post: SocialPost, edited: list[ReelScene
         raise ReelEditError("Unknown occasion.")
     if occasion and not topic:
         topic = "occasion"
+    if trend and not topic:
+        topic = "trend"
+    if trend and trend not in lang_mod.TRENDS:
+        raise ReelEditError("Unknown trend format.")
     opts = resolve_options(campaign, post, options, fresh=edited is None)
     rnd = random.Random()
     used_llm = False
@@ -1263,14 +1348,17 @@ async def make_reel(campaign: Campaign, post: SocialPost, edited: list[ReelScene
         topic = topic or default_topic(campaign, post, avoid=post.reel_topic if post.video_url else "")
         if topic not in available_topics(campaign, post):
             raise ReelEditError(f"There isn't enough to make a {TOPICS[topic][0].lower()} reel for this post. Try another topic.")
-        plan = plan_story(campaign, post, topic, style, rnd, occasion or "")
-        plan, used_llm = await write_script(kit, post, plan, style)
+        plan = plan_story(campaign, post, topic, style, rnd, occasion or "", opts.language, trend or "")
+        plan, used_llm = await write_script(kit, post, plan, style, opts.language)
         topic, occasion_key = plan.topic, plan.occasion
         scenes = plan_scenes(plan)
-        texts, human = await humanize_lines(kit, [s.text for s in scenes], [s.kind for s in scenes], deep=used_llm)
+        # The model humanizer is tuned for English; other languages get the rule pass only.
+        texts, human = await humanize_lines(kit, [s.text for s in scenes], [s.kind for s in scenes],
+                                            deep=used_llm and opts.language == "en")
         for s, t in zip(scenes, texts):
             s.text = t
     festive = occasions.OCCASIONS.get(occasion_key) if topic == "occasion" else None
+    trend_key = occasion_key if topic == "trend" else ""
     if festive and not (options and options.palette) and (edited is None or not post.reel_options.palette or post.reel_topic != "occasion"):
         opts.palette = "occasion"  # festive colours unless the owner picked a palette
     key = f"{campaign.id}_{post.group_id or post.id}_reel"
@@ -1289,7 +1377,7 @@ async def make_reel(campaign: Campaign, post: SocialPost, edited: list[ReelScene
         if p.id == post.id or (post.group_id and p.group_id == post.group_id):
             p.video_url, p.video_poster = f"/media/{out.name}?v={stamp}", f"/media/{poster.name}?v={stamp}"
             p.reel_scenes, p.reel_style, p.reel_options = to_edit(scenes), style.key, opts
-            p.reel_topic, p.reel_occasion = topic, occasion_key
+            p.reel_topic, p.reel_occasion = topic, occasion_key  # a trend reel keeps its format here
     return {"seconds": seconds, "scenes": [s.text for s in scenes], "used_llm": used_llm, "style": style.key,
             "topic": topic, "occasion": occasion_key,
             "options": opts.model_dump(), "humanized": human, "render_ms": int((time.perf_counter() - started) * 1000)}
