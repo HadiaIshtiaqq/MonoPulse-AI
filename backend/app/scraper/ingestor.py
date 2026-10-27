@@ -529,7 +529,22 @@ def darken_light_logo(img: Image.Image) -> Image.Image:
     return rgba
 
 
+GOOD_LOGO_SIDE = 120  # a logo this wide is sharp on a post; smaller ones (favicons) are a last resort
+
+
 async def download_logo(candidates: list[str], client: httpx.AsyncClient, brand_id: str) -> tuple[str | None, str | None, bytes | None]:
+    """The first candidate (they come best-guess first) that's big enough to print sharply; when
+    every one is small, the largest of them rather than whichever came first."""
+    small: list[tuple[int, str | None, Image.Image]] = []
+
+    def keep(url: str | None, img: Image.Image) -> tuple[str | None, str | None, bytes | None]:
+        path = config.MEDIA_DIR / f"logo_{brand_id}.png"
+        img = darken_light_logo(img)
+        img.save(path)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        return url, str(path), buf.getvalue()
+
     for url in candidates[:5]:
         try:
             if url.startswith("data:image/svg+xml;utf8,"):  # an inline SVG logo, read from the page itself
@@ -546,14 +561,15 @@ async def download_logo(candidates: list[str], client: httpx.AsyncClient, brand_
             img.load()
             if min(img.size) < 32 and max(img.size) < 120:
                 continue
-            path = config.MEDIA_DIR / f"logo_{brand_id}.png"
-            img = darken_light_logo(img)
-            img.save(path)
-            buf = io.BytesIO()
-            img.save(buf, "PNG")
-            return url, str(path), buf.getvalue()
+            if max(img.size) < GOOD_LOGO_SIDE:
+                small.append((img.width * img.height, url, img))
+                continue
+            return keep(url, img)
         except Exception:  # noqa: BLE001 - any broken image just means "try the next one"
             continue
+    if small:
+        _, url, img = max(small, key=lambda s: s[0])
+        return keep(url, img)
     return (candidates[0] if candidates else None), None, None
 
 
@@ -802,10 +818,26 @@ def site_belongs_to(handle: str, url: str, site: "ScrapedSite") -> bool:
     return bool(core) and (core == compact or (core in compact and len(core) >= 0.8 * len(compact)) or compact in core)
 
 
+async def keep_instagram_photos(urls: list[str], client: httpx.AsyncClient) -> list[str]:
+    """Instagram's photo links stop working after a few days, so the photos are saved at import."""
+    from ..agents.photos import keep_photo
+
+    async def one(url: str) -> str | None:
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except (httpx.HTTPError, UnsafeURL):
+            return None
+        return await asyncio.to_thread(keep_photo, resp.content, "ig")
+
+    saved = await asyncio.gather(*(one(u) for u in urls[:12]))
+    return [s for s in saved if s]
+
+
 async def kit_from_instagram(profile, raw_input: str, client: httpx.AsyncClient) -> BrandKit:
     """A brand kit from the brand's own Instagram profile, plus its website when the bio links one."""
     kit = BrandKit(source_input=raw_input, source_type="handle", name=profile.full_name or handle_name(profile.username))
-    photos = [u for u, _ in profile.posts]
+    photos = await keep_instagram_photos([u for u, _ in profile.posts], client)
     text = profile.text()
     if profile.website:
         try:

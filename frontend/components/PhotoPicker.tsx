@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { ImageUp, Loader2, Search } from "lucide-react";
-import { api, type StockPhoto } from "@/lib/api";
+import { api, media, type StockPhoto } from "@/lib/api";
 
 export function PhotoPicker({
   defaultQuery,
@@ -62,7 +62,7 @@ export function PhotoPicker({
               <button key={p.url} type="button" disabled={busy} onClick={() => onPickSite(p.url)} title={p.label}
                 className="group relative aspect-[4/5] overflow-hidden rounded-lg bg-slate-100 ring-brand transition hover:ring-2 disabled:opacity-50">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={p.url} alt={p.label} loading="lazy" className="h-full w-full object-cover transition group-hover:scale-105" />
+                <img src={p.url.startsWith("/media/") ? media(p.url) : p.url} alt={p.label} loading="lazy" className="h-full w-full object-cover transition group-hover:scale-105" />
               </button>
             ))}
           </div>

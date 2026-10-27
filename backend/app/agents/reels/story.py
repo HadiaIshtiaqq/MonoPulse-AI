@@ -462,7 +462,7 @@ def photo_choices(campaign: Campaign) -> list[dict]:
             if product.image_url and f"product:{product.name.lower()}" not in seen:
                 add(product.image_url, product.name, _price(product), remote=True)
         for url in kit.images:
-            add(url, f"From {kit.name}'s website", remote=True)
+            add(url, f"From {kit.name}'s pages", remote=not url.startswith("/media/"))
     return out[:60]
 
 

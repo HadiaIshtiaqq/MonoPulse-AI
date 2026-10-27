@@ -339,7 +339,7 @@ export function PostEditor({
                       busy={busy !== null}
                       sitePhotos={[
                         ...(brand?.products ?? []).filter((p) => p.image_url).map((p) => ({ url: p.image_url, label: [p.name, p.price].filter(Boolean).join(" · ") })),
-                        ...(brand?.images ?? []).filter((u) => !(brand?.products ?? []).some((p) => p.image_url === u)).map((u) => ({ url: u, label: "Photo from your site" })),
+                        ...(brand?.images ?? []).filter((u) => !(brand?.products ?? []).some((p) => p.image_url === u)).map((u) => ({ url: u, label: u.startsWith("/media/") ? "Photo from your Instagram" : "Photo from your site" })),
                       ]}
                       onPickSite={(url) => run("bg", () => api.setBackground(post.id, { source: "website", image_url: url }), "Photo applied")}
                       onPickStock={(p) => run("bg", () => api.setBackground(post.id, { source: "stock", photo_id: p.id }), "Photo applied")}

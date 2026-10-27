@@ -298,3 +298,35 @@ def test_products_from_data_embedded_for_javascript_pages():
     assert [(p.name, p.image_url) for p in found] == [("Linen Kurta", "https://cdn.example/kurta.jpg"),
                                                        ("Silk Dupatta", "https://cdn.example/dupatta.jpg")]
     assert found[1].price == "Rs. 2,500" and found[0].price == "PKR 4,990" and found[0].url == "https://shop.example/p/linen-kurta"
+
+
+def test_a_sharp_logo_wins_over_a_favicon_and_the_largest_small_one_is_kept():
+    def png(size):
+        buf = io.BytesIO()
+        Image.new("RGB", size, (30, 60, 200)).save(buf, "PNG")
+        return buf.getvalue()
+
+    files = {"/fav.png": png((48, 48)), "/mid.png": png((96, 96)), "/logo.png": png((400, 120))}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=files[request.url.path], headers={"content-type": "image/png"})
+
+    async def run(urls):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await ingestor.download_logo(urls, client, "logotest")
+
+    url, path, data = asyncio.run(run(["https://b.example/fav.png", "https://b.example/logo.png"]))
+    assert url.endswith("/logo.png") and Image.open(io.BytesIO(data)).size == (400, 120)
+    url, _, data = asyncio.run(run(["https://b.example/fav.png", "https://b.example/mid.png"]))
+    assert url.endswith("/mid.png")  # both small: the bigger one
+
+
+def test_differently_named_products_come_up_before_a_name_repeats():
+    items = [Product(name="3 Piece - Lawn Suit", image_url="https://s.example/1.jpg"),
+             Product(name="3 PIECE - LAWN SUIT", image_url="https://s.example/2.jpg"),
+             Product(name="3 Piece - Lawn Suit", image_url="https://s.example/1.jpg"),  # listed twice
+             Product(name="Khaddar Shawl", image_url="https://s.example/3.jpg"),
+             Product(name="Silk Dupatta", image_url="https://s.example/4.jpg")]
+    out = strategist.varied(items)
+    assert len(out) == 4
+    assert [strategist.short_name(p.name) for p in out[:3]] == ["Lawn Suit", "Khaddar Shawl", "Silk Dupatta"]

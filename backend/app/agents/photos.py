@@ -12,6 +12,7 @@ import io
 import logging
 import time
 import uuid
+from pathlib import Path
 from dataclasses import asdict, dataclass
 
 import httpx
@@ -130,8 +131,27 @@ async def to_background(photo_id: str) -> Background:
                       credit_url=photo.credit_url, license=photo.license)
 
 
+def keep_photo(data: bytes, prefix: str) -> str | None:
+    """Save a brand photo found at import (an Instagram post, whose links expire within days) and
+    return its /media/ address, or None when it isn't a usable photo."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        if min(img.size) < MIN_WEB_SIDE:
+            return None
+        return f"/media/{_save_image(data[:MAX_UPLOAD_BYTES], prefix)}"
+    except Exception:  # noqa: BLE001 - not an image
+        return None
+
+
 async def website_background(url: str, credit: str, credit_url: str = "") -> Background:
-    """Download one of the brand's own photos (a product shot, a hero image) for a post."""
+    """Download one of the brand's own photos (a product shot, a hero image) for a post. Photos
+    saved at import ("/media/…") are used as they are."""
+    if url.startswith("/media/"):
+        path = config.MEDIA_DIR / Path(url.split("?")[0]).name
+        if not path.is_file():
+            raise ValueError("that photo is no longer available")
+        return Background(source="website", path=str(path), thumb_url=f"/media/{path.name}", credit=credit,
+                          credit_url=credit_url, license="From the brand's own pages")
     async with safe_client(headers={"User-Agent": WEB_UA}, follow_redirects=True, timeout=15) as client:
         resp = await client.get(url)
         resp.raise_for_status()

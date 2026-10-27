@@ -236,10 +236,16 @@ def weekly_themes(kit: BrandKit, pillars: list[ContentPillar], start: date, week
 
 def varied(products: list[Product]) -> list[Product]:
     """Interleave products so the same item name (often a generic type like "3-Piece Set")
-    doesn't run several posts in a row."""
+    doesn't run several posts in a row: every differently named product comes up before any
+    name repeats. The same product listed twice (same name and photo) is kept once."""
     groups: dict[str, list[Product]] = {}
+    seen: set[tuple[str, str]] = set()
     for p in products:
-        groups.setdefault(p.name.lower(), []).append(p)
+        key = re.sub(r"[^a-z0-9]+", " ", short_name(p.name).lower()).strip() or p.name.lower()
+        if (key, p.image_url or p.url) in seen:
+            continue
+        seen.add((key, p.image_url or p.url))
+        groups.setdefault(key, []).append(p)
     out: list[Product] = []
     while any(groups.values()):
         for key in list(groups):

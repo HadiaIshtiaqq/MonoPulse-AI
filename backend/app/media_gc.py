@@ -27,6 +27,9 @@ def referenced() -> set[str]:
     for c in store.campaigns.values():
         if c.brand:
             add(c.brand.logo_path)
+            for url in c.brand.images:  # photos saved at import (Instagram's)
+                if url.startswith("/media/"):
+                    add(url)
         for p in c.posts:
             for url in [p.image_url, p.video_url, p.video_poster, *p.image_urls]:
                 add(url)

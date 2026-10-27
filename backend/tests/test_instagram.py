@@ -65,7 +65,7 @@ def test_business_discovery_through_the_official_api(monkeypatch):
 def test_a_brand_kit_from_the_profile_alone(monkeypatch):
     monkeypatch.setattr(config, "NEBIUS_API_KEY", "")
     buf = io.BytesIO()
-    Image.new("RGB", (320, 320), (214, 40, 120)).save(buf, "PNG")
+    Image.new("RGB", (480, 480), (214, 40, 120)).save(buf, "PNG")
     picture = buf.getvalue()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -79,5 +79,7 @@ def test_a_brand_kit_from_the_profile_alone(monkeypatch):
             return await ingestor.kit_from_instagram(profile, "https://www.instagram.com/fitt.ote0/", client)
 
     kit = asyncio.run(run())
-    assert kit.name == "FittOte Studio" and kit.logo_path and kit.images == ["https://cdn.example/1.jpg"]
+    assert kit.name == "FittOte Studio" and kit.logo_path
+    assert len(kit.images) == 1 and kit.images[0].startswith("/media/ig_")  # saved: Instagram links expire
+    assert (config.MEDIA_DIR / kit.images[0].removeprefix("/media/")).is_file()
     assert kit.industry == "Fitness & Wellness" and kit.primary_color.upper() != "#5B47FB"  # the picture's own colour
