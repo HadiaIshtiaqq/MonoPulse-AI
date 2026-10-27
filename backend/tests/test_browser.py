@@ -103,3 +103,16 @@ def test_browser_endpoints_answer(monkeypatch):
         assert client.post("/api/browser/login/myspace").status_code == 422
         assert client.put("/api/browser/scheduled", json={"enabled": True}).json()["scheduled"] is True
         client.put("/api/browser/scheduled", json={"enabled": False})
+
+
+def test_a_human_check_stops_posting_and_hands_the_window_over():
+    class Page:
+        url = "https://www.instagram.com/auth_platform/recaptcha/?apc=abc"
+
+    with pytest.raises(browser.VerificationNeeded, match="captcha or security check"):
+        browser._check_for_challenge(Page(), "Instagram")
+    Page.url = "https://www.linkedin.com/checkpoint/challenge/xyz"
+    with pytest.raises(browser.VerificationNeeded):
+        browser._signed_in_or_raise(Page(), "LinkedIn")
+    Page.url = "https://www.instagram.com/"
+    browser._check_for_challenge(Page(), "Instagram")  # an ordinary page is fine

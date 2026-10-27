@@ -43,10 +43,18 @@ SESSION = {
     Platform.X: ("x.com", "auth_token"),
 }
 STEP_MS = 20_000
+# Pages where a platform asks a person to prove who they are (a captcha, a code, a security check).
+# MonoPlus never answers these: it stops and hands the window to you.
+CHALLENGE = re.compile(r"/(auth_platform|challenge|checkpoint|recaptcha|captcha|two_factor|two_step_verification|"
+                       r"account/access|suspended)", re.I)
 
 
 class BrowserPostError(RuntimeError):
     pass
+
+
+class VerificationNeeded(BrowserPostError):
+    """The platform showed a human check. Only the person can answer it."""
 
 
 def available() -> bool:
@@ -124,6 +132,10 @@ class BrowserPoster:
         flow = {Platform.LINKEDIN: _linkedin, Platform.X: _x, Platform.FACEBOOK: _facebook, Platform.INSTAGRAM: _instagram}[platform]
         try:
             flow(page, caption, [str(f) for f in files], submit)
+            _check_for_challenge(page, platform.value.title())
+        except VerificationNeeded:
+            self.signed_in[platform.value] = False  # scheduled posts wait until you've answered it
+            raise
         except BrowserPostError:
             raise
         except Exception as exc:  # noqa: BLE001 - a timeout or a page that changed
@@ -204,12 +216,23 @@ def _first_visible(*locators):
     return None
 
 
+def _check_for_challenge(page, platform: str) -> None:
+    if CHALLENGE.search(page.url):
+        raise VerificationNeeded(
+            f"{platform} wants to check it's really you (a captcha or security check) in MonoPlus's browser window. "
+            "Answer it there yourself; if the box looks blank, reload that page. Then come back and try again. "
+            "Nothing was posted. If it keeps asking, post this one by hand for now: platforms check more often "
+            "when posts come from an automated browser.")
+
+
 def _need(what: str, *locators):
+    page = locators[0].page
     for _ in range(40):  # up to ~20 s for slow pages
+        _check_for_challenge(page, "The platform")
         found = _first_visible(*locators)
         if found is not None:
             return found
-        locators[0].page.wait_for_timeout(500)
+        page.wait_for_timeout(500)
     raise BrowserPostError(f"Couldn't find {what}. The platform may have changed its page, or you may need to sign in "
                            "again; the window is still open.")
 
@@ -225,6 +248,7 @@ def _type(page, box, caption: str) -> None:
 
 
 def _signed_in_or_raise(page, platform: str) -> None:
+    _check_for_challenge(page, platform)
     if re.search(r"/(login|signin|authwall|checkpoint|accounts/login|i/flow/login)", page.url):
         raise BrowserPostError(f"You're not signed in to {platform} in MonoPlus's browser yet. Sign in there first.")
 
