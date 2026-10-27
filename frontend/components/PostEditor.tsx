@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Check, ChevronLeft, ChevronRight, Clapperboard, Copy, Download, ExternalLink, History, ImageOff, Loader2, Palette, PenLine, Plus,
   RefreshCw, Rocket, Send, Trash2, Wand2, X,
 } from "lucide-react";
 import {
-  api, fmtDay, fmtTime, fromLocalInput, KIND_LABELS, media, toLocalInput, type BrandKit, type HumanizeMode, type Layout, type Pattern, type PostUpdate, type Slide, type SocialPost, type TextPosition,
+  api, fmtDay, fmtTime, fromLocalInput, KIND_LABELS, media, toLocalInput, type BrandKit, type HumanizeMode, type Layout, type Pattern, type PostUpdate, type ReelScene, type Slide, type SocialPost, type TextPosition,
 } from "@/lib/api";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 import { PostPreview } from "@/components/PostPreview";
@@ -109,6 +109,8 @@ export function PostEditor({
   const [patterns, setPatterns] = useState<{ before: Pattern[]; after: Pattern[] } | null>(null);
   const [guide, setGuide] = useState<{ imageOnClipboard: boolean; multi: boolean } | null>(null);
   const [sheet, setSheet] = useState(false);
+  const [reelPreview, setReelPreview] = useState<ReelScene | null>(null);
+  const previewScene = useCallback((s: ReelScene | null) => setReelPreview(s), []);
   useEffect(() => setSheet(canShareFiles()), []);
 
   useEffect(() => {
@@ -259,7 +261,7 @@ export function PostEditor({
           {/* preview */}
           <div className="flex flex-col items-center gap-3 bg-[radial-gradient(circle_at_top,#EFEDFF,transparent_60%)] p-5 md:overflow-y-auto">
             {tab === "reel" ? (
-              <ReelPlayer post={post} brandName={brand?.name ?? ""} />
+              <ReelPlayer post={post} brand={brand} preview={reelPreview} onExitPreview={() => setReelPreview(null)} />
             ) : (
               <div key={post.id} className="animate-scale-in" style={{ width: previewWidth(post) }}>
                 <PostPreview post={{ ...post, caption: showDraft && post.original_caption ? post.original_caption : caption, hashtags: hashtags.split(/\s+/).filter(Boolean) }} brand={brand} />
@@ -284,7 +286,7 @@ export function PostEditor({
               {([["design", "Design", Palette], ["copy", "Caption", PenLine], ["reel", "Reel", Clapperboard], ["publish", "Post", Rocket]] as const).map(([key, label, Icon]) => (
                 <button key={key} onClick={() => setTab(key)} data-active={tab === key} className="tab px-3 py-2">
                   <Icon size={14} /> {label}
-                  {key === "reel" && post.video_url && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-label="reel ready" />}
+                  {key === "reel" && post.video_url && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden title="Reel ready" />}
                 </button>
               ))}
             </div>
@@ -476,7 +478,7 @@ export function PostEditor({
                 </>
               )}
 
-              {tab === "reel" && <ReelPanel post={post} brandName={brand?.name ?? ""} caption={fullCaption} onChange={onChange} />}
+              {tab === "reel" && <ReelPanel post={post} brand={brand} caption={fullCaption} onChange={onChange} onPreview={previewScene} />}
               {tab === "publish" && (
                 <>
                   <section>

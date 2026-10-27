@@ -35,6 +35,7 @@ from .schemas import (
     CreateResearchTaskRequest,
     HumanizeRequest,
     PostStatus,
+    ReelRequest,
     ResearchTask,
     RewriteRequest,
     SetBackgroundRequest,
@@ -436,16 +437,26 @@ async def rewrite_post(post_id: str, req: RewriteRequest) -> SocialPost:
 
 
 @app.post("/api/posts/{post_id}/reel")
-async def make_reel(post_id: str) -> dict:
+async def make_reel(post_id: str, req: ReelRequest | None = None) -> dict:
     """A 9:16 motion video of the post for Instagram Reels, YouTube Shorts, TikTok and Facebook Reels,
-    shared by every platform version of the post."""
+    shared by every platform version of the post. Send `scenes` to render the owner's edits;
+    leave them out to write a fresh script."""
     campaign, post = _post(post_id)
     try:
-        info = await reels.make_reel(campaign, post)
+        info = await reels.make_reel(campaign, post, req.scenes if req else None)
+    except reels.ReelEditError as exc:
+        raise HTTPException(422, str(exc)) from exc
     except reels.ReelError as exc:
         raise HTTPException(503, str(exc)) from exc
     store.save()
     return {"post": post, **info}
+
+
+@app.get("/api/posts/{post_id}/reel/photos")
+def reel_photos(post_id: str) -> list[dict]:
+    """Photos a reel scene can use: the campaign's, then the brand's product and website photos."""
+    campaign, _ = _post(post_id)
+    return reels.photo_choices(campaign)
 
 
 @app.get("/api/posts/{post_id}/share")

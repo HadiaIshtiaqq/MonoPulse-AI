@@ -28,7 +28,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** 
 - **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
 - **Branded design**: Renders single images and 1080×1350 carousels (cover, one page per product, CTA) with the brand's logo at the top, its colours, and the product's price. It uses the brand's own photos first, then licensed stock or uploads. No watermarks.
 
-- **Reels from any post**: One click turns a post into a 10–15 second 1080×1920 video for Instagram Reels, TikTok, YouTube Shorts and Facebook Reels. Nemotron writes the on-screen script (a hook, a few words per photo, a call to action); the video shows the brand's real product photos with slow zooms, text that slides in, prices on chips, the logo on every scene and an animated end card. Frames are drawn with Pillow on several threads and encoded with ffmpeg (H.264 plus a silent track, so each app's licensed music can be added when posting).
+- **Reels from any post**: One click turns a post into a 10–15 second 1080×1920 video for Instagram Reels, TikTok, YouTube Shorts and Facebook Reels. Nemotron writes the on-screen script (a hook, a few words per photo, a call to action); the video shows the brand's real product photos with slow zooms, text that slides in, prices on chips, the logo on every scene and an animated end card. Frames are drawn with Pillow on several threads and encoded with ffmpeg (H.264 plus a silent track, so each app's licensed music can be added when posting). Every scene stays editable: change its words or price, swap its photo for another from the campaign, the website or an upload, reorder, add or remove scenes, see a live still of the scene, then render again.
 - **Scheduling and direct posting**: Drag-and-drop calendar, one-click approval, and automatic publishing at each post's time through the official Instagram Graph, Facebook Pages, LinkedIn and X v2 APIs.
 - **Competitor research and strategy agent** ([competitors.py](backend/app/agents/competitors.py)): this runs automatically for every new campaign, from the Research tab, or from the command line (`python scripts/competitor_research.py bata.com.pk`). It works in four steps:
   1. **Finds competitors:** a few web searches ("X competitors", "brands like X", "best footwear brands in Pakistan"), plus reading the round-up articles they return for brands linked to their own websites. It also uses any competitors you name. With a key, Nemotron picks the direct competitors.
@@ -309,7 +309,7 @@ Edit and re-render a post. Any of `headline`, `caption`, `cta`, `hashtags`, `pub
 
 ### `POST /api/posts/{post_id}/reel`
 
-Makes a 9:16 MP4 reel of the post and attaches it to every platform version (`video_url`, `video_poster`). Returns the post plus `seconds`, the script's `scenes`, `used_llm` and `render_ms`. Reels are included in the campaign export under `reels/`.
+Makes a 9:16 MP4 reel of the post and attaches it to every platform version (`video_url`, `video_poster`, and the editable `reel_scenes`). Send `{"scenes": [...]}` to render the owner's edited scenes instead of writing a new script; `GET /api/posts/{post_id}/reel/photos` lists the photos a scene can use. Returns the post plus `seconds`, the script's `scenes`, `used_llm` and `render_ms`. Reels are included in the campaign export under `reels/`.
 
 ### `POST /api/posts/{post_id}/publish`
 

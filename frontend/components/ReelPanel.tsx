@@ -1,19 +1,69 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Clapperboard, Copy, Download, Film, Loader2, Pause, Play, RefreshCw, Share2, Sparkles, Volume2 } from "lucide-react";
-import { api, media, type SocialPost } from "@/lib/api";
+import {
+  ArrowDown, ArrowUp, Check, Clapperboard, Copy, Download, Film, ImageOff, ImagePlus, Loader2, Pause, Play, Plus,
+  RefreshCw, Share2, Sparkles, Trash2, Undo2, Upload, Volume2, Wand2,
+} from "lucide-react";
+import { api, logoSrc, media, type BrandKit, type ReelPhoto, type ReelScene, type SocialPost } from "@/lib/api";
 import { canShareVideo, copyText, downloadVideo, shareVideo } from "@/lib/share";
 import { useCycle } from "@/components/Motion";
 import { useFeedback } from "@/components/Feedback";
 
 const STEPS = ["Writing the script…", "Picking your best product photos…", "Animating every scene…", "Encoding a 1080×1920 MP4…"];
+const EDIT_STEPS = ["Applying your edits…", "Animating every scene…", "Encoding a 1080×1920 MP4…"];
+const MAX_SCENES = 8;
+const LABEL: Record<ReelScene["kind"], string> = { hook: "Opening", product: "Scene", fact: "Scene", cta: "End card" };
 
-/** The reel in a phone frame, playing on a loop like it would in the feed. */
-export function ReelPlayer({ post, brandName }: { post: SocialPost; brandName: string }) {
+/** A /media path or one of the brand's web photos, as an <img> src. */
+const photoSrc = (url: string) => (url.startsWith("/media/") ? media(url) : url);
+
+/** A still of one scene, drawn in the browser, so edits show up before the video is rendered. */
+function ScenePreview({ scene, brand }: { scene: ReelScene; brand: BrandKit | null }) {
+  const primary = brand?.primary_color ?? "#5B47FB";
+  const accent = brand?.accent_color ?? "#FF5C8A";
+  const logo = logoSrc(brand);
+  const centered = scene.kind !== "product";
+  return (
+    <div className="absolute inset-0 animate-fade-in" style={{ background: `linear-gradient(180deg, ${primary}, color-mix(in srgb, ${primary} 45%, black))` }}>
+      {scene.photo && scene.kind !== "cta" && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={photoSrc(scene.photo)} alt="" className={`absolute inset-0 h-full w-full object-cover ${scene.kind === "hook" || scene.kind === "fact" ? "scale-110 blur-md" : ""}`} />
+      )}
+      {scene.photo && scene.kind !== "product" && scene.kind !== "cta" && <div className="absolute inset-0" style={{ background: `color-mix(in srgb, ${primary} 55%, transparent)` }} />}
+      {scene.kind === "product" && <div className="absolute inset-0" style={{ background: `linear-gradient(180deg, transparent 50%, color-mix(in srgb, ${primary} 30%, black) 100%)` }} />}
+      {logo && scene.kind !== "cta" && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={logo} alt="" className="absolute left-[7%] top-[8%] h-[6%] max-w-[30%] rounded-md bg-white object-contain p-1" />
+      )}
+      <div className={`absolute inset-x-[8%] ${centered ? "top-1/2 -translate-y-1/2 text-center" : "bottom-[9%]"}`}>
+        {scene.kind === "cta" && logo && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={logo} alt="" className="mx-auto mb-[12%] h-16 max-w-[60%] rounded-xl bg-white object-contain p-2" />
+        )}
+        <p className="break-words text-[22px] font-extrabold leading-tight text-white drop-shadow-md">{scene.text || "Add some words"}</p>
+        <span className={`mt-3 block h-1 w-12 rounded-full ${centered ? "mx-auto" : ""}`} style={{ background: accent }} />
+        {scene.sub && (
+          <span className="mt-3 inline-block rounded-full px-3 py-1 text-xs font-bold"
+            style={scene.kind === "cta" ? { background: "white", color: primary } : { background: accent, color: "#111" }}>
+            {scene.sub}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The reel in a phone frame, playing on a loop like it would in the feed, or a still of the scene being edited. */
+export function ReelPlayer({ post, brand, preview, onExitPreview }: {
+  post: SocialPost; brand: BrandKit | null; preview?: ReelScene | null; onExitPreview?: () => void;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(true);
   const [progress, setProgress] = useState(0);
+  // The frame keeps its 9:16 shape and fits the window's height, so the video is never cropped.
+  const frame = "relative aspect-[9/16] shrink-0 overflow-hidden rounded-[2rem] border-[6px] border-ink bg-ink shadow-pop";
+  const size = { width: "min(100%, 300px, calc((100dvh - 210px) * 9 / 16))" };
 
   function toggle() {
     const v = ref.current;
@@ -21,9 +71,20 @@ export function ReelPlayer({ post, brandName }: { post: SocialPost; brandName: s
     if (v.paused) { v.play(); setPlaying(true); } else { v.pause(); setPlaying(false); }
   }
 
+  if (preview) {
+    return (
+      <div className="flex flex-col items-center gap-2">
+        <div className={frame} style={size}><ScenePreview scene={preview} brand={brand} /></div>
+        <p className="text-xs text-slate-500">Preview of this scene · render to see it move</p>
+        {post.video_url && onExitPreview && (
+          <button onClick={onExitPreview} className="btn-ghost btn-sm"><Play size={12} /> Play the reel</button>
+        )}
+      </div>
+    );
+  }
   if (!post.video_url) {
     return (
-      <div className="relative grid aspect-[9/16] w-[min(100%,300px)] place-items-center overflow-hidden rounded-[2rem] border-[6px] border-ink bg-ink shadow-pop">
+      <div className={`${frame} grid place-items-center`} style={size}>
         {post.image_url && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={media(post.image_url)} alt="" className="absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-md" />
@@ -37,10 +98,10 @@ export function ReelPlayer({ post, brandName }: { post: SocialPost; brandName: s
     );
   }
   return (
-    <div className="relative aspect-[9/16] w-[min(100%,300px)] animate-scale-in overflow-hidden rounded-[2rem] border-[6px] border-ink bg-ink shadow-pop">
+    <div className={`${frame} animate-scale-in`} style={size}>
       <video key={post.video_url} ref={ref} src={media(post.video_url)} poster={media(post.video_poster)} autoPlay muted loop playsInline
         onTimeUpdate={(e) => setProgress(e.currentTarget.currentTime / (e.currentTarget.duration || 1))}
-        onClick={toggle} className="h-full w-full cursor-pointer object-cover" aria-label={`${brandName} reel`} />
+        onClick={toggle} className="h-full w-full cursor-pointer object-contain" aria-label={`${brand?.name ?? ""} reel`} />
       <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center gap-2 text-white">
         <span className="grid h-7 w-7 place-items-center rounded-full bg-black/40 backdrop-blur">{playing ? <Pause size={13} /> : <Play size={13} />}</span>
         <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/30">
@@ -52,26 +113,84 @@ export function ReelPlayer({ post, brandName }: { post: SocialPost; brandName: s
   );
 }
 
-export function ReelPanel({ post, brandName, caption, onChange }: {
-  post: SocialPost; brandName: string; caption: string; onChange: (p: SocialPost) => void;
+function PhotoGrid({ photos, current, allowNone, onPick, onUpload, uploading }: {
+  photos: ReelPhoto[] | null; current: string; allowNone: boolean; onPick: (p: ReelPhoto | null) => void;
+  onUpload: (f: File) => void; uploading: boolean;
 }) {
-  const { toast } = useFeedback();
-  const [busy, setBusy] = useState<"make" | "share" | "download" | null>(null);
-  const [script, setScript] = useState<{ scenes: string[]; seconds: number; used_llm: boolean; render_ms: number } | null>(null);
-  const [shareable, setShareable] = useState(false);
-  const step = useCycle(STEPS, 4500);
-  useEffect(() => setShareable(canShareVideo()), []);
-  useEffect(() => setScript(null), [post.group_id]);
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div className="mt-3 animate-slide-down rounded-xl border border-slate-200 bg-slate-50 p-2">
+      <div className="grid max-h-64 grid-cols-4 gap-2 overflow-y-auto p-0.5 sm:grid-cols-5">
+        <button type="button" onClick={() => input.current?.click()} disabled={uploading}
+          className="grid aspect-[9/16] place-items-center rounded-lg border-2 border-dashed border-slate-300 text-slate-500 transition hover:border-brand hover:text-brand">
+          <span className="flex flex-col items-center gap-1 text-[10px] font-medium">{uploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Upload</span>
+        </button>
+        {allowNone && (
+          <button type="button" onClick={() => onPick(null)}
+            className={`grid aspect-[9/16] place-items-center rounded-lg border bg-white text-slate-500 transition hover:border-brand ${current ? "border-slate-200" : "border-brand ring-2 ring-brand-200"}`}>
+            <span className="flex flex-col items-center gap-1 px-1 text-center text-[10px] font-medium"><ImageOff size={16} /> Brand colour</span>
+          </button>
+        )}
+        {photos === null && Array.from({ length: 8 }).map((_, i) => <div key={i} className="skeleton aspect-[9/16] rounded-lg" />)}
+        {photos?.map((p) => {
+          const on = p.url === current;
+          return (
+            <button type="button" key={p.url} onClick={() => onPick(p)} title={p.label + (p.price ? ` · ${p.price}` : "")}
+              className={`group relative aspect-[9/16] overflow-hidden rounded-lg border bg-white transition ${on ? "border-brand ring-2 ring-brand-200" : "border-slate-200 hover:border-brand"}`}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={photoSrc(p.url)} alt={p.label} loading="lazy" className="zoom-on-hover h-full w-full object-cover" />
+              <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 to-transparent px-1 pb-1 pt-4 text-left text-[9px] font-medium text-white">{p.label}</span>
+              {on && <span className="absolute right-1 top-1 grid h-4 w-4 animate-pop-in place-items-center rounded-full bg-brand text-white"><Check size={10} /></span>}
+            </button>
+          );
+        })}
+      </div>
+      <input ref={input} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f); e.target.value = ""; }} />
+    </div>
+  );
+}
 
+export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
+  post: SocialPost; brand: BrandKit | null; caption: string; onChange: (p: SocialPost) => void;
+  onPreview: (scene: ReelScene | null) => void;
+}) {
+  const { toast, confirm } = useFeedback();
+  const brandName = brand?.name ?? "";
+  const [busy, setBusy] = useState<"make" | "render" | "share" | "download" | "upload" | null>(null);
+  const [info, setInfo] = useState<{ seconds: number; used_llm: boolean } | null>(null);
+  const [draft, setDraft] = useState<ReelScene[]>(post.reel_scenes ?? []);
+  const [focus, setFocus] = useState<number | null>(null);
+  const [picking, setPicking] = useState<number | null>(null);
+  const [photos, setPhotos] = useState<ReelPhoto[] | null>(null);
+  const [shareable, setShareable] = useState(false);
+  const step = useCycle(busy === "render" ? EDIT_STEPS : STEPS, 4500);
+  useEffect(() => setShareable(canShareVideo()), []);
+
+  const saved = JSON.stringify(post.reel_scenes ?? []);
+  useEffect(() => { setDraft(JSON.parse(saved)); setFocus(null); setPicking(null); }, [saved]);
+  useEffect(() => { setInfo(null); setPhotos(null); }, [post.group_id]);
+  useEffect(() => { onPreview(focus !== null && draft[focus] ? draft[focus] : null); }, [focus, draft, onPreview]);
+  useEffect(() => () => onPreview(null), [onPreview]);
+  useEffect(() => {
+    if (picking !== null && photos === null) api.reelPhotos(post.id).then(setPhotos).catch(() => setPhotos([]));
+  }, [picking, photos, post.id]);
+
+  const dirty = JSON.stringify(draft) !== saved;
   const fileBase = `${brandName.replace(/[^\w]+/g, "-").toLowerCase() || "post"}-${post.publish_at.slice(0, 10)}`;
 
-  async function make() {
-    setBusy("make");
+  async function make(scenes?: ReelScene[]) {
+    if (!scenes && post.reel_scenes?.length) {  // a fresh script would replace the owner's edits
+      const ok = await confirm({ title: "Write a new script?", body: "MonoPlus writes new words and picks photos again. Your edits to this reel are replaced.", confirm: "Write a new one" });
+      if (!ok) return;
+    }
+    setBusy(scenes ? "render" : "make");
     try {
-      const res = await api.makeReel(post.id);
+      const res = await api.makeReel(post.id, scenes);
       onChange(res.post);
-      setScript(res);
-      toast(`Your ${Math.round(res.seconds)}-second reel is ready`);
+      setInfo(res);
+      setFocus(null);
+      toast(scenes ? "Reel updated with your edits" : `Your ${Math.round(res.seconds)}-second reel is ready`);
     } catch (e) {
       toast((e as Error).message, "error");
     } finally {
@@ -94,47 +213,170 @@ export function ReelPanel({ post, brandName, caption, onChange }: {
     }
   }
 
+  const edit = (i: number, patch: Partial<ReelScene>) => setDraft((d) => d.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  function move(i: number, by: -1 | 1) {
+    setDraft((d) => { const n = [...d]; [n[i], n[i + by]] = [n[i + by], n[i]]; return n; });
+    setFocus(i + by);
+    setPicking(null);
+  }
+  function remove(i: number) {
+    setDraft((d) => d.filter((_, j) => j !== i));
+    setFocus(null);
+    setPicking(null);
+  }
+  function add() {
+    const at = draft.length && draft[draft.length - 1].kind === "cta" ? draft.length - 1 : draft.length;
+    setDraft((d) => [...d.slice(0, at), { kind: "product", text: "", sub: "", photo: "" }, ...d.slice(at)]);
+    setFocus(at);
+    setPicking(at);
+  }
+  function pick(i: number, p: ReelPhoto | null) {
+    const s = draft[i];
+    if (!p) edit(i, { photo: "", kind: s.kind === "product" ? "fact" : s.kind });
+    else {
+      // A product photo fills in its name and price when the scene has no words yet.
+      const named = p.label && !p.label.startsWith("From ");
+      edit(i, {
+        photo: p.url,
+        kind: s.kind === "fact" ? "product" : s.kind,
+        text: s.text || (named ? p.label : ""),
+        sub: s.kind !== "hook" && !s.sub && p.price ? p.price : s.sub,
+      });
+    }
+    setPicking(null);
+  }
+  async function upload(i: number, f: File) {
+    setBusy("upload");
+    try {
+      const u = await api.upload(f);
+      const photo: ReelPhoto = { url: u.url, label: "Your upload", price: "", remote: false };
+      setPhotos((ps) => [photo, ...(ps ?? [])]);
+      pick(i, photo);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const middle = (i: number) => draft[i].kind !== "hook" && draft[i].kind !== "cta";
+  const working = busy === "make" || busy === "render";
+
   return (
     <>
-      <section className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50 to-white p-4">
-        <div className="flex items-start gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-gradient text-white shadow-glow"><Clapperboard size={18} /></span>
-          <div className="min-w-0">
-            <p className="font-semibold">Turn this post into a reel</p>
-            <p className="mt-0.5 text-sm text-slate-600">
-              A 10–15 second vertical video from {brandName}&apos;s own photos: an AI-written hook, each product with its price,
-              and an end card with your logo. Ready for Instagram Reels, TikTok, YouTube Shorts and Facebook Reels.
-            </p>
-          </div>
-        </div>
-        <button onClick={make} disabled={busy !== null} className={`${post.video_url ? "btn-ghost" : "btn-gradient"} mt-4 w-full`}>
-          {busy === "make" ? <Loader2 size={16} className="animate-spin" /> : post.video_url ? <RefreshCw size={16} /> : <Sparkles size={16} />}
-          {busy === "make" ? "Making your reel…" : post.video_url ? "Make a new version" : "Make reel"}
-        </button>
-        {busy === "make" && (
-          <div className="mt-3 space-y-2" aria-live="polite">
-            <div className="h-1.5 overflow-hidden rounded-full bg-brand-100">
-              <div className="bg-stripes h-full w-full animate-stripes rounded-full bg-brand" />
+      {!post.reel_scenes?.length && (
+        <section className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50 to-white p-4">
+          <div className="flex items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-gradient text-white shadow-glow"><Clapperboard size={18} /></span>
+            <div className="min-w-0">
+              <p className="font-semibold">{post.video_url ? "Make an editable version" : "Turn this post into a reel"}</p>
+              <p className="mt-0.5 text-sm text-slate-600">
+                {post.video_url
+                  ? "This reel was made before reels could be edited. Make a new version to change its words and photos."
+                  : <>A 10–15 second vertical video from {brandName}&apos;s own photos: an AI-written hook, each product with its price,
+                    and an end card with your logo. You can change every word and photo afterwards.</>}
+              </p>
             </div>
-            <p key={step} className="animate-fade-in text-xs text-slate-500">{step} This takes about half a minute.</p>
           </div>
-        )}
-      </section>
-
-      {script && (
-        <section className="animate-fade-up">
-          <p className="label mb-2">Script · {script.seconds.toFixed(0)}s{script.used_llm ? " · written by Nemotron" : ""}</p>
-          <ol className="stagger flex flex-wrap items-center gap-1.5">
-            {script.scenes.map((s, i) => (
-              <li key={i} className={`chip border ${i === 0 ? "border-brand-200 bg-brand-soft text-brand-700" : i === script.scenes.length - 1 ? "border-pop/30 bg-pop/10 text-pop" : "border-slate-200 bg-white text-slate-700"}`}>
-                <span className="text-[10px] opacity-60">{i === 0 ? "Hook" : i === script.scenes.length - 1 ? "End" : i}</span> {s}
-              </li>
-            ))}
-          </ol>
+          <button onClick={() => make()} disabled={busy !== null} className="btn-gradient mt-4 w-full">
+            {busy === "make" ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            {busy === "make" ? "Making your reel…" : post.video_url ? "Make a new version" : "Make reel"}
+          </button>
         </section>
       )}
 
-      {post.video_url && (
+      {working && (
+        <div className="space-y-2" aria-live="polite">
+          <div className="h-1.5 overflow-hidden rounded-full bg-brand-100">
+            <div className="bg-stripes h-full w-full animate-stripes rounded-full bg-brand" />
+          </div>
+          <p key={step} className="animate-fade-in text-xs text-slate-500">{step} This takes about 20 seconds.</p>
+        </div>
+      )}
+
+      {draft.length > 0 && (
+        <section>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="label">Scenes{info ? ` · ${info.seconds.toFixed(0)}s${info.used_llm ? " · written by Nemotron" : ""}` : ""}</p>
+            <button onClick={() => make()} disabled={busy !== null} className="flex items-center gap-1 text-xs font-medium text-slate-500 transition hover:text-brand disabled:opacity-50">
+              <Wand2 size={12} /> Write a new script
+            </button>
+          </div>
+          <ol className="stagger space-y-2">
+            {draft.map((s, i) => {
+              const on = focus === i;
+              const n = draft.slice(0, i + 1).filter((x) => x.kind === "product" || x.kind === "fact").length;
+              return (
+                <li key={i} onFocusCapture={() => setFocus(i)} onClick={() => setFocus(i)}
+                  className={`rounded-xl border bg-white p-2.5 transition-all duration-200 ${on ? "border-brand shadow-lift ring-2 ring-brand-100" : "border-slate-200 hover:border-slate-300"}`}>
+                  <div className="flex gap-3">
+                    {s.kind === "cta" ? (
+                      <span className="grid h-[72px] w-[41px] shrink-0 place-items-center rounded-lg text-white" style={{ background: brand?.primary_color ?? "#5B47FB" }}>
+                        <Film size={14} />
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => setPicking(picking === i ? null : i)} title="Change photo"
+                        className="group relative h-[72px] w-[41px] shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+                        {s.photo ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={photoSrc(s.photo)} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="grid h-full w-full place-items-center" style={{ background: brand?.primary_color }}><ImageOff size={13} className="text-white/80" /></span>
+                        )}
+                        <span className="absolute inset-0 grid place-items-center bg-black/45 text-white opacity-0 transition group-hover:opacity-100"><ImagePlus size={14} /></span>
+                      </button>
+                    )}
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex items-center gap-1">
+                        <span className={`chip px-2 py-0.5 text-[10px] ${s.kind === "hook" ? "bg-brand-soft text-brand-700" : s.kind === "cta" ? "bg-pop/10 text-pop" : "bg-slate-100 text-slate-600"}`}>
+                          {LABEL[s.kind]}{middle(i) ? ` ${n}` : ""}
+                        </span>
+                        {middle(i) && (
+                          <span className="ml-auto flex items-center">
+                            <button type="button" onClick={() => move(i, -1)} disabled={i <= 0 || !middle(i - 1)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-ink disabled:opacity-30" aria-label="Move up"><ArrowUp size={13} /></button>
+                            <button type="button" onClick={() => move(i, 1)} disabled={i >= draft.length - 1 || !middle(i + 1)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-ink disabled:opacity-30" aria-label="Move down"><ArrowDown size={13} /></button>
+                            <button type="button" onClick={() => remove(i)} disabled={draft.filter((_, j) => middle(j)).length <= 1} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30" aria-label="Remove scene"><Trash2 size={13} /></button>
+                          </span>
+                        )}
+                      </div>
+                      <input value={s.text} maxLength={80} onChange={(e) => edit(i, { text: e.target.value })}
+                        placeholder={s.kind === "hook" ? "Words that stop the scroll" : s.kind === "cta" ? "Order now" : "A few words for this photo"}
+                        className="input py-1.5 text-sm font-semibold" aria-label={`${LABEL[s.kind]} text`} />
+                      {s.kind !== "hook" && (
+                        <input value={s.sub} maxLength={40} onChange={(e) => edit(i, { sub: e.target.value })}
+                          placeholder={s.kind === "cta" ? "Website or handle" : "Price or short note (optional)"}
+                          className="input py-1 text-xs" aria-label={`${LABEL[s.kind]} ${s.kind === "cta" ? "website" : "price"}`} />
+                      )}
+                    </div>
+                  </div>
+                  {picking === i && (
+                    <PhotoGrid photos={photos} current={s.photo} allowNone={s.kind !== "cta"} uploading={busy === "upload"}
+                      onPick={(p) => pick(i, p)} onUpload={(f) => upload(i, f)} />
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          {draft.length < MAX_SCENES && (
+            <button type="button" onClick={add} disabled={busy !== null}
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-slate-200 py-2 text-xs font-medium text-slate-500 transition hover:border-brand hover:text-brand">
+              <Plus size={14} /> Add a scene
+            </button>
+          )}
+          {dirty && (
+            <div className="sticky bottom-0 -mx-1 mt-3 flex animate-slide-down gap-2 rounded-xl border border-brand-100 bg-white/95 p-2 shadow-lift backdrop-blur">
+              <button onClick={() => make(draft)} disabled={busy !== null} className="btn-primary flex-1">
+                {busy === "render" ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Render my changes
+              </button>
+              <button onClick={() => { setDraft(JSON.parse(saved)); setFocus(null); setPicking(null); }} disabled={busy !== null} className="btn-ghost">
+                <Undo2 size={15} /> Undo
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {post.video_url && !dirty && !working && (
         <section className="space-y-3">
           <p className="label">Post it</p>
           <div className="grid grid-cols-2 gap-2">

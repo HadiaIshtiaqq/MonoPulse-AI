@@ -13,6 +13,7 @@ import math
 import shutil
 import subprocess
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -22,7 +23,8 @@ from PIL import Image, ImageDraw, ImageFilter
 
 from .. import config
 from ..llm import LLMError, router
-from ..schemas import BrandKit, Campaign, Product, SocialPost
+from ..schemas import BrandKit, Campaign, Product, ReelScene, SocialPost
+from . import photos as photo_store
 from . import strategist
 from .renderer import cover_photo, fit_text, font, gradient, rgb, shade, text_on, text_scrim
 
@@ -31,12 +33,19 @@ log = logging.getLogger(__name__)
 W, H, FPS = 1080, 1920, 30
 XFADE = 0.3  # seconds two scenes overlap while one fades into the next
 MAX_PHOTOS = 5
+MAX_SCENES = 8
+KINDS = {"hook", "product", "fact", "cta"}
+SECONDS = {"hook": 2.2, "product": 2.4, "fact": 2.4, "cta": 2.6}
 WORKERS = max(2, min(6, (os.cpu_count() or 2) - 1))
 M = 84  # side margin
 
 
 class ReelError(RuntimeError):
     pass
+
+
+class ReelEditError(ReelError):
+    """The owner's edited scenes can't be used as they are (a missing or unknown photo…)."""
 
 
 @dataclass
@@ -51,14 +60,18 @@ class Scene:
 # --------------------------------------------------------------------------- what goes in it
 
 
-def reel_photos(campaign: Campaign, post: SocialPost) -> list[tuple[Product | None, str]]:
+# (product shown, local photo, what the photo's own post or slide said about it)
+Shot = tuple[Product | None, str, str]
+
+
+def reel_photos(campaign: Campaign, post: SocialPost) -> list[Shot]:
     """The post's own photos first, then other products the campaign already has photos of,
     one per product, so a reel shows a little of the range rather than one shot four times."""
-    out: list[tuple[Product | None, str]] = []
+    out: list[Shot] = []
     paths: set[str] = set()
     names: set[str] = set()
 
-    def add(product: Product | None, bg) -> None:
+    def add(product: Product | None, bg, said: str = "") -> None:
         if not bg or not Path(bg.path).exists() or bg.path in paths:
             return
         if product and product.name.lower() in names:
@@ -66,18 +79,25 @@ def reel_photos(campaign: Campaign, post: SocialPost) -> list[tuple[Product | No
         paths.add(bg.path)
         if product:
             names.add(product.name.lower())
-        out.append((product, bg.path))
+        out.append((product, bg.path, said))
 
-    add(post.product, post.background)
+    add(post.product, post.background, post.headline)
     if post.gallery:
         add(post.compare, post.gallery[0])
     for slide in post.slides:
-        add(None, slide.background)
-    for other in sorted(campaign.posts, key=lambda p: p.publish_at):
+        add(None, slide.background, slide.headline)
+    others = [p for p in sorted(campaign.posts, key=lambda p: p.publish_at) if p.group_id != post.group_id]
+    for other in others:
         if len(out) >= MAX_PHOTOS:
             break
-        if other.group_id != post.group_id and other.product:
+        if other.product:
             add(other.product, other.background)
+    # Few or no products (a brand whose site has photos but no shop): use the campaign's other photos.
+    for other in others:
+        if len(out) >= 4:
+            break
+        if not other.product:
+            add(None, other.background, other.headline)
     return out[:MAX_PHOTOS]
 
 
@@ -102,16 +122,39 @@ def default_cta(kit: BrandKit, post: SocialPost) -> str:
     return f"Follow {kit.name}"
 
 
-def fallback_script(kit: BrandKit, post: SocialPost, photos: list[tuple[Product | None, str]]) -> dict:
-    claims = [strategist.short_claim(c) for c in strategist.brand_claims(kit)] or [kit.tagline or kit.name]
+# "Spotlight: The August Rotation" -> "The August Rotation"; "11.11 sale: X" keeps its point.
+LEAD_IN = re.compile(r"^(spotlight|good to know|a tip from [^:]+|tip|new in|in the details|all about[^:]*|the edit)\s*:\s*", re.I)
+ASKS = re.compile(r"\?\s*$|\b(question|go-to|this or that|your vote|settle this|which (?:one|would))\b", re.I)
+
+
+def fallback_script(kit: BrandKit, post: SocialPost, photos: list[Shot]) -> dict:
+    """Words for each photo without a model: the product's name, else what the photo's own post
+    said, else the brand's claims, offerings and value props, never the same line twice."""
+    spare = [strategist.short_claim(c) for c in strategist.brand_claims(kit)]
+    spare += [o for o in kit.offerings if o] + [strategist.short_claim(v) for v in kit.value_props]
+    spare += [f"New at {kit.name}", "Made for every day", "Which one is yours?", f"Only at {kit.name}"]
+    used: list[str] = []
+
+    def fresh(line: str) -> bool:  # not a repeat, nor a fragment of a line already shown ("FW 2026-2027")
+        low = line.lower()
+        return bool(line) and not any(low in u or u in low for u in used)
+
     lines = []
-    for i, (product, _) in enumerate(photos):
-        lines.append(strategist.short_name(product.name) if product else claims[i % len(claims)])
+    for product, _, said in photos:
+        options = [strategist.short_name(product.name)] if product else []
+        if said and not ASKS.search(said):  # "Quick question for you" says nothing about the photo
+            options.append(LEAD_IN.sub("", said).strip())
+        line = next((o for o in options + spare if fresh(o)), kit.name)
+        used.append(line.lower())
+        lines.append(line[0].upper() + line[1:])
     hook = post.headline or kit.tagline or kit.name
     # Don't open on the same words the first scene shows ("New in: Chicken Crispy Roll", then "Chicken Crispy Roll").
-    if lines and lines[0].lower() in hook.lower():
-        hook = kit.tagline if kit.tagline and kit.tagline.lower() not in lines[0].lower() else f"This week at {kit.name}"
-    return {"hook": hook, "scenes": lines, "cta": default_cta(kit, post)}
+    def repeats(text: str) -> bool:
+        return any(x.lower() in text.lower() or text.lower() in x.lower() for x in lines)
+
+    if repeats(hook):
+        hook = kit.tagline if kit.tagline and not repeats(kit.tagline) else f"This week at {kit.name}"
+    return {"hook": hook[0].upper() + hook[1:], "scenes": lines, "cta": default_cta(kit, post)}
 
 
 REEL_SYSTEM = """You write the on-screen text for a 10 to 15 second vertical video (an Instagram Reel, YouTube Short or TikTok) for a brand.
@@ -121,12 +164,12 @@ Be specific to this brand and these products. Plain, punchy words a person would
 Return JSON: {"hook": "<= 6 words that stop the scroll", "scenes": ["<= 6 words for each photo, in the same order"], "cta": "<= 5 words"}"""
 
 
-async def write_script(kit: BrandKit, post: SocialPost, photos: list[tuple[Product | None, str]]) -> tuple[dict, bool]:
+async def write_script(kit: BrandKit, post: SocialPost, photos: list[Shot]) -> tuple[dict, bool]:
     base = fallback_script(kit, post, photos)
     if not router.enabled:
         return base, False
     shots = [f"{i + 1}. " + (f"{p.name}" + (f" ({_price(p)})" if _price(p) else "") if p else "a photo from the brand")
-             for i, (p, _) in enumerate(photos)] or ["no photos: text on the brand colour"]
+             for i, (p, _, _) in enumerate(photos)] or ["no photos: text on the brand colour"]
     user = (f"Brand: {strategist.brand_brief(kit)}\nPost headline: {post.headline}\nPost caption: {post.caption[:400]}\n"
             f"Photos in order:\n" + "\n".join(shots))
     try:
@@ -144,17 +187,92 @@ async def write_script(kit: BrandKit, post: SocialPost, photos: list[tuple[Produ
     }, True
 
 
-def plan_scenes(kit: BrandKit, script: dict, photos: list[tuple[Product | None, str]]) -> list[Scene]:
+def plan_scenes(kit: BrandKit, script: dict, photos: list[Shot]) -> list[Scene]:
     site = (kit.website_url or "").split("//")[-1].split("/")[0].removeprefix("www.")
-    scenes = [Scene("hook", _words(script["hook"], 48), photo=photos[0][1] if photos else "", seconds=2.2)]
+    scenes = [Scene("hook", _words(script["hook"], 48), photo=photos[0][1] if photos else "", seconds=SECONDS["hook"])]
     if photos:
-        for (product, path), line in zip(photos, script["scenes"]):
+        for (product, path, _), line in zip(photos, script["scenes"]):
             scenes.append(Scene("product", _words(line, 44), sub=_price(product), photo=path))
     else:
         claims = [strategist.short_claim(c) for c in strategist.brand_claims(kit)][:3]
         scenes += [Scene("fact", _words(c, 52)) for c in claims]
-    scenes.append(Scene("cta", _words(script["cta"], 36), sub=site or kit.name, seconds=2.6))
+    scenes.append(Scene("cta", _words(script["cta"], 36), sub=site or kit.name, seconds=SECONDS["cta"]))
     return scenes
+
+
+# --------------------------------------------------------------------------- editing
+
+
+def media_url(path: str) -> str:
+    p = Path(path) if path else None
+    return f"/media/{p.name}" if p and p.parent.resolve() == config.MEDIA_DIR.resolve() and p.exists() else ""
+
+
+def photo_choices(campaign: Campaign) -> list[dict]:
+    """Every photo a scene can use: ones the campaign already has, then the rest of the
+    brand's product and website photos (downloaded when picked)."""
+    out: list[dict] = []
+    seen: set[str] = set()  # local files, web URLs already downloaded, and products already shown
+
+    def add(url: str, label: str, price: str = "", remote: bool = False) -> None:
+        if url and url not in seen:
+            seen.add(url)
+            out.append({"url": url, "label": label, "price": price, "remote": remote})
+
+    kit = campaign.brand
+    for p in sorted(campaign.posts, key=lambda p: p.publish_at):
+        for bg, product in ((p.background, p.product), *((g, p.compare) for g in p.gallery[:1]),
+                            *((s.background, None) for s in p.slides)):
+            if bg and media_url(bg.path):
+                seen.update({bg.credit_url or "", f"product:{product.name.lower()}" if product else ""})
+                add(media_url(bg.path), product.name if product else (kit.name if kit else "Photo"), _price(product))
+    if kit:
+        for product in kit.products:
+            if product.image_url and f"product:{product.name.lower()}" not in seen:
+                add(product.image_url, product.name, _price(product), remote=True)
+        for url in kit.images:
+            add(url, f"From {kit.name}'s website", remote=True)
+    return out[:60]
+
+
+async def resolve_photo(campaign: Campaign, ref: str) -> str:
+    """A scene's photo reference -> a local file. Local files must be in MonoPlus's media folder;
+    web photos must be ones found on the brand's own site."""
+    ref = (ref or "").strip()
+    if not ref:
+        return ""
+    if ref.startswith("/media/"):
+        path = config.MEDIA_DIR / Path(ref.split("?")[0]).name
+        if not path.exists() or path.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+            raise ReelEditError("One of the photos is no longer available. Pick another.")
+        return str(path)
+    kit = campaign.brand
+    allowed = {p.image_url for p in (kit.products if kit else []) if p.image_url} | set(kit.images if kit else [])
+    if ref not in allowed:
+        raise ReelEditError("Pick photos from the list: your campaign's photos, your website's or an upload.")
+    try:
+        bg = await photo_store.website_background(ref, credit=f"Photo from {kit.name}")
+    except Exception as exc:  # noqa: BLE001 - download or decode failure
+        raise ReelEditError(f"Couldn't download that photo: {exc}") from exc
+    return bg.path
+
+
+async def scenes_from_edit(campaign: Campaign, edited: list[ReelScene]) -> list[Scene]:
+    edited = [s for s in edited if s.text.strip() or s.photo][:MAX_SCENES]
+    if not edited:
+        raise ReelEditError("A reel needs at least one scene.")
+    out = []
+    for s in edited:
+        kind = s.kind if s.kind in KINDS else "product"
+        path = await resolve_photo(campaign, s.photo) if kind != "cta" else ""
+        if kind == "product" and not path:
+            kind = "fact"  # a product scene without a photo is shown on the brand colour
+        out.append(Scene(kind, " ".join(s.text.split())[:80], sub=" ".join(s.sub.split())[:40], photo=path, seconds=SECONDS[kind]))
+    return out
+
+
+def to_edit(scenes: list[Scene]) -> list[ReelScene]:
+    return [ReelScene(kind=s.kind, text=s.text, sub=s.sub, photo=media_url(s.photo)) for s in scenes]
 
 
 # --------------------------------------------------------------------------- animation helpers
@@ -392,14 +510,19 @@ def render_reel(kit: BrandKit, scenes: list[Scene], out: Path, poster: Path | No
     return round(total, 1)
 
 
-async def make_reel(campaign: Campaign, post: SocialPost) -> dict:
-    """Write, render and attach a reel to every platform version of the post."""
+async def make_reel(campaign: Campaign, post: SocialPost, edited: list[ReelScene] | None = None) -> dict:
+    """Write (or take the owner's edited scenes), render and attach a reel to every platform
+    version of the post."""
     kit = campaign.brand
     if not kit:
         raise ReelError("This campaign has no brand kit yet.")
-    photos = reel_photos(campaign, post)
-    script, used_llm = await write_script(kit, post, photos)
-    scenes = plan_scenes(kit, script, photos)
+    used_llm = False
+    if edited is not None:
+        scenes = await scenes_from_edit(campaign, edited)
+    else:
+        photos = reel_photos(campaign, post)
+        script, used_llm = await write_script(kit, post, photos)
+        scenes = plan_scenes(kit, script, photos)
     key = f"{campaign.id}_{post.group_id or post.id}_reel"
     out, poster = config.MEDIA_DIR / f"{key}.mp4", config.MEDIA_DIR / f"{key}.jpg"
     started = time.perf_counter()
@@ -408,5 +531,6 @@ async def make_reel(campaign: Campaign, post: SocialPost) -> dict:
     for p in campaign.posts:
         if p.id == post.id or (post.group_id and p.group_id == post.group_id):
             p.video_url, p.video_poster = f"/media/{out.name}?v={stamp}", f"/media/{poster.name}?v={stamp}"
+            p.reel_scenes = to_edit(scenes)
     return {"seconds": seconds, "scenes": [s.text for s in scenes], "used_llm": used_llm,
             "render_ms": int((time.perf_counter() - started) * 1000)}

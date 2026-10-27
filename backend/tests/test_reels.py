@@ -30,7 +30,7 @@ def test_reel_shows_the_post_first_then_other_products_once_each(tmp_path):
                _post(c.id, "g3", 2, burger, _photo(tmp_path, "burger2", "yellow")),  # same product again: skipped
                _post(c.id, "g4", 3, None, None)]
     photos = reels.reel_photos(c, post)
-    assert [p.name for p, _ in photos] == ["Chicken Roll", "Zinger Burger"]
+    assert [p.name for p, _, _ in photos] == ["Chicken Roll", "Zinger Burger"]
 
     script = reels.fallback_script(c.brand, post, photos)
     assert script["scenes"] == ["Chicken Roll", "Zinger Burger"]
@@ -54,3 +54,43 @@ def test_make_reel_through_the_api(client, monkeypatch):  # noqa: F811
     video = client.get(body["post"]["video_url"].split("?")[0])
     assert video.status_code == 200 and video.content[4:8] == b"ftyp"
     assert client.get(body["post"]["video_poster"].split("?")[0]).status_code == 200
+
+
+def test_brand_without_products_still_gets_several_photos(tmp_path):
+    c = Campaign(start_date=date(2026, 11, 1), days=5, platforms=[Platform.INSTAGRAM], brand=_kit())
+    post = _post(c.id, "g1", 0, None, _photo(tmp_path, "a", "red"), kind="quote")
+    c.posts = [post] + [_post(c.id, f"g{i}", i, None, _photo(tmp_path, f"p{i}", (40 * i, 90, 120))) for i in range(2, 6)]
+    for i, p in enumerate(c.posts[1:], 2):
+        p.headline = "Spotlight: The August Rotation" if i == 2 else "The official store"
+    photos = reels.reel_photos(c, post)
+    assert len(photos) == 4
+    # Each photo gets its own words, taken from its post and never repeated.
+    lines = reels.fallback_script(c.brand, post, photos)["scenes"]
+    assert lines[1] == "The August Rotation" and len({x.lower() for x in lines}) == 4
+
+
+def test_owner_edits_text_and_photos_then_rerenders(client, monkeypatch):  # noqa: F811
+    from test_features import _png_bytes
+
+    monkeypatch.setattr(reels, "FPS", 4)
+    c = _campaign_with_posts(days=2)
+    post = c.posts[0]
+    first = client.post(f"/api/posts/{post.id}/reel").json()["post"]
+    scenes = first["reel_scenes"]
+    assert scenes[0]["kind"] == "hook" and scenes[-1]["kind"] == "cta"
+
+    upload = client.post("/api/uploads", files={"file": ("shot.png", _png_bytes(size=(900, 1200)), "image/png")}).json()
+    assert any(p["url"] == upload["url"] for p in client.get(f"/api/posts/{post.id}/reel/photos").json()) is False  # not used yet
+    edited = [{"kind": "hook", "text": "Our new loaf is here", "sub": "", "photo": ""},
+              {"kind": "product", "text": "Seeded sourdough", "sub": "$9", "photo": upload["url"]},
+              {"kind": "cta", "text": "Pre-order now", "sub": "bluebird.example", "photo": ""}]
+    r = client.post(f"/api/posts/{post.id}/reel", json={"scenes": edited})
+    assert r.status_code == 200, r.text
+    saved = r.json()["post"]["reel_scenes"]
+    assert [s["text"] for s in saved] == ["Our new loaf is here", "Seeded sourdough", "Pre-order now"]
+    assert saved[1]["photo"] == upload["url"] and saved[1]["sub"] == "$9"
+    assert r.json()["post"]["video_url"] != first["video_url"]
+
+    bad = [dict(edited[1], photo="https://evil.example/x.jpg")]
+    assert client.post(f"/api/posts/{post.id}/reel", json={"scenes": bad}).status_code == 422
+    assert client.post(f"/api/posts/{post.id}/reel", json={"scenes": []}).status_code == 422

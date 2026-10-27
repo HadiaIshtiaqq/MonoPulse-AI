@@ -106,6 +106,18 @@ class Background(BaseModel):
     license: str = ""
 
 
+class ReelScene(BaseModel):
+    """One scene of a post's reel, as the owner can edit it."""
+    kind: str = "product"  # hook | product | fact | cta
+    text: str = ""
+    sub: str = ""  # price under a product, the website on the end card
+    photo: str = ""  # /media/... file the scene shows ("" = brand colour)
+
+
+class ReelRequest(BaseModel):
+    scenes: list[ReelScene] | None = None  # omitted: write a new script from scratch
+
+
 class Slide(BaseModel):
     headline: str = ""
     body: str = ""
@@ -141,6 +153,7 @@ class SocialPost(BaseModel):
     image_urls: list[str] = []  # every rendered page (1 for single posts)
     video_url: str | None = None  # a 9:16 reel made from the post (Instagram Reels, Shorts, TikTok)
     video_poster: str | None = None
+    reel_scenes: list[ReelScene] = []  # the reel's script and photos, so it can be edited and re-rendered
     publish_at: datetime
     status: PostStatus = PostStatus.DRAFT
     published_via: str | None = None  # direct | webhook | manual
