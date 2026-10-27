@@ -141,7 +141,7 @@ async def website_background(url: str, credit: str, credit_url: str = "") -> Bac
         raise ValueError("image too small for a post")
     if img.mode in ("RGBA", "LA", "P"):  # mostly see-through: an icon or a cut-out graphic, not a photo
         alpha = img.convert("RGBA").getchannel("A").resize((64, 64))
-        if sum(1 for a in alpha.getdata() if a < 16) > 64 * 64 * 0.6:
+        if sum(alpha.histogram()[:16]) > 64 * 64 * 0.6:
             raise ValueError("that's an icon, not a photo")
     name = _save_image(data, "web")
     return Background(source="website", path=str(config.MEDIA_DIR / name), thumb_url=f"/media/{name}", credit=credit,

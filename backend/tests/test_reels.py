@@ -111,7 +111,7 @@ def test_reels_in_a_campaign_rotate_through_different_styles():
 
 
 def test_make_reel_through_the_api(client, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(reels, "FPS", 3)
+    monkeypatch.setattr(reels.render, "FPS", 3)
     c = _campaign_with_posts(days=2)
     post = c.posts[0]
     r = client.post(f"/api/posts/{post.id}/reel")
@@ -127,7 +127,7 @@ def test_make_reel_through_the_api(client, monkeypatch):  # noqa: F811
 
 
 def test_owner_edits_and_options_then_rerenders(client, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(reels, "FPS", 3)
+    monkeypatch.setattr(reels.render, "FPS", 3)
     c = _campaign_with_posts(days=2)
     post = c.posts[0]
     client.post(f"/api/posts/{post.id}/reel")
@@ -149,7 +149,7 @@ def test_owner_edits_and_options_then_rerenders(client, monkeypatch):  # noqa: F
 
 
 def test_every_style_and_an_occasion_reel_render(client, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(reels, "FPS", 2)
+    monkeypatch.setattr(reels.render, "FPS", 2)
     c = _campaign_with_posts(days=2)
     post = c.posts[0]
     for key in reels.STYLES:
@@ -193,7 +193,7 @@ def test_reels_in_roman_urdu_and_urdu_with_trending_formats(tmp_path):
 
 
 def test_urdu_reel_renders_and_captions_change_language(client, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(reels, "FPS", 2)
+    monkeypatch.setattr(reels.render, "FPS", 2)
     c = _campaign_with_posts(days=2)
     post = c.posts[0]
     r = client.post(f"/api/posts/{post.id}/reel", json={"topic": "trend", "trend": "sign", "options": {"language": "ur"}})

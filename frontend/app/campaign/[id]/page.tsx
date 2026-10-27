@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CalendarClock, CalendarDays, CheckCheck, Download, Grid3x3, Layers, Lightbulb, List, Loader2, Palette, Send } from "lucide-react";
+import { ArrowLeft, CalendarClock, CalendarDays, CheckCheck, Download, Grid3x3, Layers, Lightbulb, List, Loader2, Palette, RefreshCw, Send, Sparkles } from "lucide-react";
 import { api, fmtDay, fmtTime, groupKey, groupPosts, logoSrc, type Campaign, type Job, type Platform, type PostStatus, type PublishingStatus, type SocialPost } from "@/lib/api";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { CalendarView } from "@/components/CalendarView";
@@ -28,6 +28,8 @@ function CampaignPage() {
   const [job, setJob] = useState<Job | null>(null);
   const [pub, setPub] = useState<PublishingStatus | null>(null);
   const [error, setError] = useState("");
+  const [redrawing, setRedrawing] = useState(false);
+  const [designVersion, setDesignVersion] = useState(0);
   const [tab, setTab] = useState<Tab>("plan");
   const [view, setView] = useState<"calendar" | "list">("calendar");
   const [openId, setOpenId] = useState<string | null>(params.get("post"));
@@ -37,6 +39,7 @@ function CampaignPage() {
   const { toast } = useFeedback();
   const t0 = useRef(Date.now());
 
+  useEffect(() => { api.health().then((h) => setDesignVersion(h.design_version ?? 0)).catch(() => {}); }, []);
   const load = useCallback(() => api.campaign(id).then(setCampaign).catch((e) => setError(e.message)), [id]);
   useEffect(() => { load(); api.publishing().then(setPub).catch(() => {}); }, [load]);
 
@@ -93,10 +96,25 @@ function CampaignPage() {
   async function approveAll() {
     if (!campaign) return;
     try {
-      const drafts = campaign.posts.filter((p) => p.status === "DRAFT").length;
-      setCampaign(await api.approveAll(campaign.id));
-      toast(`Approved ${drafts} ${drafts === 1 ? "version" : "versions"}: your calendar is ready`);
+      const res = await api.approveAll(campaign.id);
+      setCampaign(res);
+      const n = res.approved_ids.length;
+      toast(`Approved ${n} ${n === 1 ? "version" : "versions"}: your calendar is ready`, "success", n ? {
+        label: "Undo",
+        onClick: async () => {
+          try { setCampaign(await api.undoApprove(campaign.id, res.approved_ids)); toast("Back to drafts", "info"); }
+          catch (e) { toast((e as Error).message, "error"); }
+        },
+      } : undefined);
     } catch (e) { toast((e as Error).message, "error"); }
+  }
+
+  async function redraw() {
+    if (!campaign) return;
+    setRedrawing(true);
+    try { setCampaign(await api.redraw(campaign.id)); toast("Every post is drawn with the newest designs"); }
+    catch (e) { toast((e as Error).message, "error"); }
+    finally { setRedrawing(false); }
   }
 
   async function retry() {
@@ -198,6 +216,16 @@ function CampaignPage() {
           </button>
         </div>
       </div>
+
+      {designVersion > 0 && (campaign.design_version ?? 0) < designVersion && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-brand-100 bg-brand-50 px-4 py-3 text-sm text-brand-700">
+          <Sparkles size={18} className="shrink-0 text-brand" />
+          <p className="min-w-0 flex-1">These posts were drawn with an older version of MonoPlus. Redraw them to get the newest designs; your words, photos and approvals stay as they are.</p>
+          <button onClick={redraw} disabled={redrawing} className="btn-primary btn-sm">
+            {redrawing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} {redrawing ? "Redrawing…" : "Redraw images"}
+          </button>
+        </div>
+      )}
 
       {b.source_type === "handle" && !b.website_url && !b.logo_url && tab !== "brand" && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">

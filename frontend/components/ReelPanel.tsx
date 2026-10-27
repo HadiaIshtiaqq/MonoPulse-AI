@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  AlertTriangle, ArrowDown, ArrowUp, BookOpen, Check, Clapperboard, Copy, Download, Film, Flame, ImageOff, ImagePlus, Lightbulb, ListOrdered, Loader2,
+  AlertTriangle, ArrowDown, ArrowUp, BookOpen, Check, ChevronDown, Clapperboard, Copy, Download, Film, Flame, ImageOff, ImagePlus, Lightbulb, ListOrdered, Loader2,
   PartyPopper, Pause, Pipette, Play, Plus, RefreshCw, Share2, ShoppingBag, Shuffle, Sparkles, Trash2, Undo2, Upload, Volume2, Vote, Wand2,
 } from "lucide-react";
 import {
@@ -171,6 +171,7 @@ const FALLBACK_STYLES: ReelStyle[] = [
 function StyleThumb({ style, photo, brand }: { style: string; photo: string; brand: BrandKit | null }) {
   const primary = brand?.primary_color ?? "#5B47FB";
   const accent = brand?.accent_color ?? "#FF5C8A";
+  // eslint-disable-next-line @next/next/no-img-element
   const img = photo ? <img src={photoSrc(photo)} alt="" className="h-full w-full object-cover" /> : <span className="block h-full w-full" style={{ background: primary }} />;
   const bar = (w: string, c = "white") => <span className="block h-[3px] rounded-full" style={{ width: w, background: c }} />;
   if (style === "punch") {
@@ -600,12 +601,19 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
         photo={draft.find((s) => s.kind === "product" && s.photo)?.photo || post.background?.thumb_url || ""} brand={brand} />
       <ColourPicker palettes={opts?.palettes ?? []} value={palette} color={color} festive={festive} auto={!has}
         onPick={setPalette} onColor={setColor} disabled={busy !== null} />
-      <div className="space-y-2">
-        <Chips label="Pace" hint="How long each scene stays on screen" value={pace} onPick={setPace} disabled={busy !== null}
-          options={[{ key: "relaxed", label: "Relaxed" }, { key: "normal", label: "Normal" }, { key: "snappy", label: "Snappy" }]} />
-        <Chips label="Text" hint="Capital letters or not; Auto lets the style decide" value={textCase} onPick={setTextCase} disabled={busy !== null}
-          options={[{ key: "auto", label: "Auto" }, { key: "normal", label: "Aa" }, { key: "upper", label: "AA" }]} />
-      </div>
+      {/* Fine-tuning most reels don't need, folded away so the main choices stay easy to scan. */}
+      <details className="group rounded-xl border border-slate-200 bg-white/60 px-3 py-2" open={pace !== "normal" || textCase !== "auto"}>
+        <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-slate-500 hover:text-ink">
+          More options: pace and lettering
+          <ChevronDown size={14} className="transition-transform duration-300 group-open:rotate-180" />
+        </summary>
+        <div className="mt-3 space-y-2">
+          <Chips label="Pace" hint="How long each scene stays on screen" value={pace} onPick={setPace} disabled={busy !== null}
+            options={[{ key: "relaxed", label: "Relaxed" }, { key: "normal", label: "Normal" }, { key: "snappy", label: "Snappy" }]} />
+          <Chips label="Text" hint="Capital letters or not; Auto lets the style decide" value={textCase} onPick={setTextCase} disabled={busy !== null}
+            options={[{ key: "auto", label: "Auto" }, { key: "normal", label: "Aa" }, { key: "upper", label: "AA" }]} />
+        </div>
+      </details>
     </>
   );
 

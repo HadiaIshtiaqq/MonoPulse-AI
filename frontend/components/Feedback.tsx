@@ -4,11 +4,12 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 
 type Tone = "success" | "error" | "info";
-type Toast = { id: number; tone: Tone; text: string; leaving?: boolean };
+type Action = { label: string; onClick: () => void };
+type Toast = { id: number; tone: Tone; text: string; action?: Action; leaving?: boolean };
 type Ask = { title: string; body?: string; confirm?: string; danger?: boolean };
 
 type Feedback = {
-  toast: (text: string, tone?: Tone) => void;
+  toast: (text: string, tone?: Tone, action?: Action) => void;
   confirm: (ask: Ask) => Promise<boolean>;
 };
 
@@ -37,10 +38,11 @@ export function FeedbackProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 250);
   }, []);
 
-  const toast = useCallback((text: string, tone: Tone = "success") => {
+  const toast = useCallback((text: string, tone: Tone = "success", action?: Action) => {
     const id = ++seq.current;
-    setToasts((t) => [...t.slice(-3), { id, tone, text }]);
-    setTimeout(() => dismiss(id), tone === "error" ? 6000 : 3500);
+    setToasts((t) => [...t.slice(-3), { id, tone, text, action }]);
+    // A toast with an action (Undo) stays long enough to use it.
+    setTimeout(() => dismiss(id), action ? 9000 : tone === "error" ? 6000 : 3500);
   }, [dismiss]);
 
   const confirm = useCallback((a: Ask) => new Promise<boolean>((resolve) => setAsk({ ...a, resolve })), []);
@@ -49,13 +51,19 @@ export function FeedbackProvider({ children }: { children: React.ReactNode }) {
     <Ctx.Provider value={{ toast, confirm }}>
       {children}
       <div aria-live="polite" className="pointer-events-none fixed inset-x-4 bottom-4 z-[70] flex flex-col items-center gap-2 sm:inset-x-auto sm:right-6 sm:items-end">
-        {toasts.map(({ id, tone, text, leaving }) => {
+        {toasts.map(({ id, tone, text, action, leaving }) => {
           const Icon = ICONS[tone];
           return (
             <div key={id} role={tone === "error" ? "alert" : "status"}
               className={`pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 text-sm shadow-pop backdrop-blur transition-all duration-200 ${leaving ? "translate-y-2 opacity-0" : "animate-scale-in"}`}>
               <Icon size={18} className={`mt-px shrink-0 ${TONES[tone]}`} />
               <p className="flex-1 text-slate-700">{text}</p>
+              {action && (
+                <button onClick={() => { action.onClick(); dismiss(id); }}
+                  className="shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold text-brand transition hover:bg-brand-soft">
+                  {action.label}
+                </button>
+              )}
               <button onClick={() => dismiss(id)} aria-label="Dismiss" className="-m-1 rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
                 <X size={14} />
               </button>

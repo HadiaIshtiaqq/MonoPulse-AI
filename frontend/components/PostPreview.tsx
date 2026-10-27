@@ -20,7 +20,8 @@ function Avatar({ brand }: { brand: BrandKit | null }) {
 
 function Pager({ images, alt, aspect }: { images: string[]; alt: string; aspect: string }) {
   const [i, setI] = useState(0);
-  useEffect(() => setI(0), [images.length, images[0]]);
+  const first = images[0];
+  useEffect(() => setI(0), [images.length, first]);
   const many = images.length > 1;
   return (
     <div className={`relative ${aspect} w-full overflow-hidden bg-slate-100`}>

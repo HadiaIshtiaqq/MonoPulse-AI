@@ -41,6 +41,10 @@ ALLOW_PRIVATE_URLS = _env("ALLOW_PRIVATE_URLS", "0") == "1"
 # When set, every /api call must send this key (X-Access-Key header or ?key=). Strongly
 # recommended once social accounts are connected, or anyone who can reach the API can post.
 ACCESS_KEY = _env("MONOPLUS_ACCESS_KEY")
+# Bumped whenever post designs change, so campaigns drawn by an older version can offer a redraw.
+DESIGN_VERSION = 7
+RATE_LIMITS = _env("MONOPLUS_RATE_LIMITS", "1") not in ("0", "false", "no", "off")  # per-client limits on expensive calls
+REEL_RENDERS = max(1, int(_env("MONOPLUS_REEL_RENDERS", "2") or 2))  # reels rendered at the same time
 
 # --- Direct publishing (official APIs). A platform is "connected" when its values are set. ---
 # Meta: one long-lived Page access token covers the Facebook Page and the Instagram
@@ -61,7 +65,8 @@ PUBLISH_WEBHOOK_URL = _env("PUBLISH_WEBHOOK_URL")
 
 DATA_DIR = Path(_env("DATA_DIR", str(BACKEND_DIR / "data")))
 MEDIA_DIR = DATA_DIR / "media"
-DB_PATH = DATA_DIR / "db.json"
+DB_PATH = DATA_DIR / "db.json"  # older JSON store, imported into SQLite once
+SQLITE_PATH = DATA_DIR / "monoplus.db"
 PUBLIC_API_URL = _env("PUBLIC_API_URL", "http://localhost:8000").rstrip("/")
 CORS_ORIGINS = [o.strip() for o in _env("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
 

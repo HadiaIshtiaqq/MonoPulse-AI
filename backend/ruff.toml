@@ -1,0 +1,10 @@
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+
+[tool.ruff.lint]
+# Real mistakes only: undefined or unused names, syntax errors.
+select = ["F", "E9"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/agents/reels/__init__.py" = ["F401"]

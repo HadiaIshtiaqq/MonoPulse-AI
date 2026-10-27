@@ -17,7 +17,7 @@ from urllib.parse import quote, unquote, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from PIL import Image
+from PIL import Image, ImageStat
 
 from .. import config
 from ..llm import LLMError, router
@@ -519,9 +519,10 @@ def darken_light_logo(img: Image.Image) -> Image.Image:
     alpha = rgba.getchannel("A")
     if not alpha.getbbox():
         return rgba
-    gray = rgba.convert("L")
-    opaque = [g for g, a in zip(gray.getdata(), alpha.getdata()) if a > 128]
-    if opaque and sum(opaque) / len(opaque) > 225 and len(opaque) < rgba.width * rgba.height * 0.9:
+    solid = alpha.point(lambda a: 255 if a > 128 else 0)
+    count = solid.histogram()[255]
+    brightness = ImageStat.Stat(rgba.convert("L"), mask=solid).mean[0] if count else 0
+    if count and brightness > 225 and count < rgba.width * rgba.height * 0.9:
         dark = Image.new("RGBA", rgba.size, (24, 24, 28, 255))
         dark.putalpha(alpha)
         return dark

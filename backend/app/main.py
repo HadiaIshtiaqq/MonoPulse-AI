@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, mcp_server, publishing
+from . import config, mcp_server, media_gc, publishing, ratelimit
 from .agents import calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, strategist, variety
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
@@ -50,10 +50,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not config.ACCESS_KEY:
+        logging.getLogger("monoplus").warning(
+            "MONOPLUS_ACCESS_KEY is not set: anyone who can reach this server can use it. Fine on your own machine; "
+            "set a key before putting it online.")
     for t in store.research.values():
         if t.status == "running":
             t.status = "retry"  # the server restarted mid-run
     workers = [asyncio.create_task(research.worker()), asyncio.create_task(publishing.scheduler())]
+    workers.append(asyncio.create_task(asyncio.to_thread(media_gc.cleanup)))  # tidy up old renders once at start
     yield
     for w in workers:
         w.cancel()
@@ -76,6 +81,13 @@ async def require_access_key(request: Request, call_next):
         given = request.headers.get("x-access-key") or request.query_params.get("key") or ""
         if not hmac.compare_digest(given.encode(), config.ACCESS_KEY.encode()):
             return JSONResponse({"detail": "Access key required."}, status_code=401)
+    if config.RATE_LIMITS:
+        client = request.headers.get("x-access-key") or (request.client.host if request.client else "anon")
+        hit = ratelimit.limiter.check(client, request.method, path)
+        if hit:
+            bucket, wait = hit
+            return JSONResponse({"detail": f"{ratelimit.FRIENDLY[bucket]} Please try again in {wait} seconds."},
+                                status_code=429, headers={"Retry-After": str(wait)})
     return await call_next(request)
 
 
@@ -121,6 +133,8 @@ def health() -> dict:
         "free_search": config.FREE_SEARCH,
         "pexels": bool(config.PEXELS_API_KEY),
         "mcp_endpoint": f"{config.PUBLIC_API_URL}/mcp",
+        "design_version": config.DESIGN_VERSION,
+        "protected": bool(config.ACCESS_KEY),
     }
 
 
@@ -205,14 +219,53 @@ def get_campaign(campaign_id: str) -> Campaign:
 
 
 @app.post("/api/campaigns/{campaign_id}/approve-all")
-def approve_all(campaign_id: str) -> Campaign:
+def approve_all(campaign_id: str) -> dict:
+    """Approve every draft. Returns the campaign and which posts changed, so it can be undone."""
     c = _campaign(campaign_id)
+    changed = []
     for p in c.posts:
         if p.status is PostStatus.DRAFT:
             p.status = PostStatus.APPROVED
+            changed.append(p.id)
     c.status = CampaignStatus.APPROVED
     store.save()
+    return {**c.model_dump(mode="json"), "approved_ids": changed}
+
+
+class UndoApprovalRequest(BaseModel):
+    post_ids: list[str]
+
+
+@app.post("/api/campaigns/{campaign_id}/undo-approve")
+def undo_approve(campaign_id: str, req: UndoApprovalRequest) -> Campaign:
+    """Put posts approved by mistake back to draft (posts already published are left alone)."""
+    c = _campaign(campaign_id)
+    ids = set(req.post_ids)
+    for p in c.posts:
+        if p.id in ids and p.status is PostStatus.APPROVED:
+            p.status = PostStatus.DRAFT
+    if any(p.status is PostStatus.DRAFT for p in c.posts):
+        c.status = CampaignStatus.DRAFT
+    store.save()
     return c
+
+
+@app.post("/api/campaigns/{campaign_id}/redraw")
+async def redraw_campaign(campaign_id: str) -> Campaign:
+    """Draw every post again with the newest designs, keeping its words, photos and layout."""
+    c = _campaign(campaign_id)
+    if not c.brand or c.status is CampaignStatus.GENERATING:
+        raise HTTPException(409, "This campaign isn't ready to redraw yet.")
+    await renderer.render_posts(c.brand, c.posts)
+    c.design_version = config.DESIGN_VERSION
+    store.save()
+    return c
+
+
+@app.post("/api/maintenance/cleanup")
+async def cleanup_media() -> dict:
+    """Delete media files nothing uses any more (older than two days)."""
+    return await asyncio.to_thread(media_gc.cleanup)
 
 
 @app.delete("/api/campaigns/{campaign_id}", status_code=204)
@@ -449,6 +502,8 @@ async def make_reel(post_id: str, req: ReelRequest | None = None) -> dict:
                                      req.trend if req else None)
     except reels.ReelEditError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except reels.ReelBusy as exc:
+        raise HTTPException(429, str(exc), headers={"Retry-After": "60"}) from exc
     except reels.ReelError as exc:
         raise HTTPException(503, str(exc)) from exc
     store.save()

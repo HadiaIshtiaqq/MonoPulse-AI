@@ -12,7 +12,7 @@ from PIL import Image
 from app import config, publishing
 from app.agents import humanizer, photos, pipeline, renderer
 from app.llm import router
-from app.schemas import Campaign, Platform, PostStatus, Slide, SocialPost
+from app.schemas import Campaign, Platform, PostStatus, SocialPost
 from app.store import store
 
 from test_core import _kit
@@ -408,3 +408,33 @@ def test_humanize_endpoint_returns_trace(client):
     assert r["mode"] == "light" and r["after"] < r["before"]
     assert [s["name"] for s in r["steps"]] == ["Original", "Rule pass"]
     assert r["patterns_before"] and len(r["patterns_after"]) < len(r["patterns_before"])
+
+
+def test_redraw_undo_approve_and_media_cleanup(client, monkeypatch):
+    import os
+    import time
+
+    from app import config, media_gc
+
+    c = _campaign_with_posts(days=2)
+    c.design_version = 0
+    old_images = [p.image_url for p in c.posts]
+    r = client.post(f"/api/campaigns/{c.id}/redraw")
+    assert r.status_code == 200 and r.json()["design_version"] == config.DESIGN_VERSION
+    assert [p.image_url for p in c.posts] != old_images  # drawn again under fresh names
+
+    approved = client.post(f"/api/campaigns/{c.id}/approve-all").json()["approved_ids"]
+    assert len(approved) == len(c.posts)
+    client.post(f"/api/campaigns/{c.id}/undo-approve", json={"post_ids": approved[:2]})
+    assert sum(p.status is PostStatus.DRAFT for p in c.posts) == 2
+
+    stale = config.MEDIA_DIR / "stale_unused.png"
+    stale.write_bytes(_png_bytes())
+    fresh = config.MEDIA_DIR / "fresh_unused.png"
+    fresh.write_bytes(_png_bytes())
+    two_days_ago = time.time() - 3 * 24 * 3600
+    os.utime(stale, (two_days_ago, two_days_ago))
+    used = config.MEDIA_DIR / c.posts[0].image_url.split("?")[0].removeprefix("/media/")
+    os.utime(used, (two_days_ago, two_days_ago))
+    media_gc.cleanup()
+    assert not stale.exists() and fresh.exists() and used.exists()  # only old, unused files go

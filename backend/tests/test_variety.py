@@ -138,7 +138,8 @@ def test_feed_rotates_through_photo_layouts(tmp_path):
     path = tmp_path / "p.jpg"
     Image.new("RGB", (800, 1000), "teal").save(path)
     posts = [SocialPost(campaign_id="c", group_id=f"g{i}", day=i, platform=Platform.INSTAGRAM, kind="spotlight",
-                        background=Background(source="website", path=str(path)), publish_at=datetime.now(timezone.utc)) for i in range(9)]
+                        product=Product(name=f"Kurta {i}"), background=Background(source="website", path=str(path)),
+                        publish_at=datetime.now(timezone.utc)) for i in range(9)]
     pipeline.assign_layouts(posts)
     assert {p.layout for p in posts} >= {"photo", "poster", "frame", "minimal"}
     assert all((a.layout, a.text_position) != (b.layout, b.text_position) for a, b in zip(posts, posts[1:]))
@@ -158,3 +159,13 @@ def test_navigation_menus_run_together_are_not_brand_claims():
         "New In New In New In Ready To Wear Tailored Fabrics Chapter 2 Accessories", "Ready To Wear Ready To Wear Essentials 1 Piece 2 Piece",
         "Our latest drop this season, bringing together classic and contemporary silhouettes"])
     assert strategist.brand_claims(kit) == ["Our latest drop this season, bringing together classic and contemporary silhouettes"]
+
+
+def test_banner_photos_keep_the_headline_off_the_photo(tmp_path):
+    path = tmp_path / "banner.jpg"
+    Image.new("RGB", (1600, 800), "navy").save(path)
+    bg = Background(source="website", path=str(path))
+    posts = [SocialPost(campaign_id="c", group_id=f"g{i}", day=i, platform=Platform.INSTAGRAM, kind="spotlight",
+                        background=bg, publish_at=datetime.now(timezone.utc)) for i in range(4)]  # no product: site banners
+    pipeline.assign_layouts(posts)
+    assert {p.layout for p in posts} <= {"frame", "minimal"}

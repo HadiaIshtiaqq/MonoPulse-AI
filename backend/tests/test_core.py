@@ -167,3 +167,56 @@ def test_batches_keep_a_posts_versions_together():
     for _, batch in batches:
         groups = {s.group for s in batch}
         assert all(sum(1 for s in slots if s.group == g) == sum(1 for s in batch if s.group == g) for g in groups)
+
+
+def test_store_saves_only_what_changed_and_survives_a_restart(tmp_path, monkeypatch):
+    from datetime import date
+
+    from app import config
+    from app.schemas import Campaign, Platform
+    from app.store import Store
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "SQLITE_PATH", tmp_path / "monoplus.db")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "db.json")
+    old = Campaign(start_date=date(2026, 11, 1), days=3, platforms=[Platform.INSTAGRAM])
+    (tmp_path / "db.json").write_text('{"campaigns": [' + old.model_dump_json() + "]}", encoding="utf-8")
+    first = Store()  # imports the older JSON store once
+    assert old.id in first.campaigns and (tmp_path / "db.json.migrated").exists()
+    a = Campaign(start_date=date(2026, 11, 1), days=3, platforms=[Platform.INSTAGRAM])
+    first.campaigns[a.id] = a
+    first.save()
+    # Another process (a second Store on the same file) edits a different campaign; neither save is lost.
+    second = Store()
+    second.campaigns[old.id].days = 9
+    second.save()
+    first.campaigns[a.id].days = 5
+    first.save()
+    third = Store()
+    assert third.campaigns[old.id].days == 9 and third.campaigns[a.id].days == 5
+    del third.campaigns[a.id]
+    third.save()
+    assert a.id not in Store().campaigns
+
+
+def test_posts_go_out_at_the_brands_local_hour():
+    from app.agents import calendar
+
+    zone = calendar.local_zone("PK")
+    when = datetime(2026, 11, 2, 11, tzinfo=zone).astimezone(timezone.utc)
+    assert when.hour == 6  # 11 am in Karachi is 6 am UTC
+    assert calendar.local_zone("") is timezone.utc
+
+
+def test_expensive_calls_are_rate_limited_per_client(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import config, ratelimit
+    from app.main import app
+
+    monkeypatch.setattr(config, "RATE_LIMITS", True)
+    monkeypatch.setattr(ratelimit, "limiter", ratelimit.RateLimiter())
+    with TestClient(app) as client:
+        codes = [client.post("/api/posts/nope/reel").status_code for _ in range(14)]
+    assert codes[:12] == [404] * 12 and codes[12] == 429  # the 13th reel within five minutes waits
+    assert ratelimit.limiter.check("someone-else", "POST", "/api/posts/x/reel") is None  # per client

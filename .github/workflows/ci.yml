@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Fonts for the image and reel renderer
+        run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+      - run: pip install -r requirements.txt ruff
+      - name: Lint (undefined or unused names, syntax errors)
+        run: ruff check .
+      - name: Tests (offline; no API keys needed)
+        run: python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx next lint
+      - run: npx tsc --noEmit -p .
+      - run: npx next build
+
+  browser:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+      - run: pip install -r backend/requirements.txt playwright && python -m playwright install --with-deps chromium
+      - run: cd frontend && npm ci && npx next build
+      - name: Start MonoPlus
+        run: |
+          cd backend && nohup python -m uvicorn app.main:app --port 8000 > ../api.log 2>&1 &
+          cd frontend && nohup npx next start -p 3000 > ../web.log 2>&1 &
+      - name: Every page opens without errors
+        run: python backend/scripts/ui_smoke.py

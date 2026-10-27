@@ -1,7 +1,14 @@
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+
+# Tests get their own data folder (database, rendered images, reels), set before the app is
+# imported, so they never read or change the real campaigns and media.
+os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="monoplus-tests-")
+os.environ["MONOPLUS_RATE_LIMITS"] = "0"  # tests call the API far faster than a person; one test turns limits on
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

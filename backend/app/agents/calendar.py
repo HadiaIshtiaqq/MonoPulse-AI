@@ -104,3 +104,28 @@ def upcoming(country: str, start: date, days: int, lead: int = 10) -> list[Momen
     end = start + timedelta(days=days + lead)
     found = [mo for y in {start.year, end.year} for mo in moments_for_year(y, country) if start <= mo.day <= end]
     return sorted(set(found), key=lambda mo: mo.day)
+
+
+# Where a brand posts from decides what "11 am" means. Countries spanning several zones use
+# their biggest market's.
+COUNTRY_TZ = {
+    "PK": "Asia/Karachi", "IN": "Asia/Kolkata", "AE": "Asia/Dubai", "SA": "Asia/Riyadh", "BD": "Asia/Dhaka",
+    "GB": "Europe/London", "IE": "Europe/Dublin", "US": "America/New_York", "CA": "America/Toronto",
+    "AU": "Australia/Sydney", "NZ": "Pacific/Auckland", "DE": "Europe/Berlin", "FR": "Europe/Paris",
+    "ES": "Europe/Madrid", "IT": "Europe/Rome", "NL": "Europe/Amsterdam", "TR": "Europe/Istanbul",
+    "EG": "Africa/Cairo", "MY": "Asia/Kuala_Lumpur", "SG": "Asia/Singapore", "ID": "Asia/Jakarta",
+    "PH": "Asia/Manila", "ZA": "Africa/Johannesburg", "NG": "Africa/Lagos", "KE": "Africa/Nairobi",
+    "QA": "Asia/Qatar", "KW": "Asia/Kuwait", "OM": "Asia/Muscat", "BH": "Asia/Bahrain",
+}
+
+
+def local_zone(country: str):
+    """The brand's time zone, or UTC when the country isn't known."""
+    from datetime import timezone
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    name = COUNTRY_TZ.get((country or "").upper())
+    try:
+        return ZoneInfo(name) if name else timezone.utc
+    except ZoneInfoNotFoundError:
+        return timezone.utc

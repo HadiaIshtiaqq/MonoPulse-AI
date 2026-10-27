@@ -54,7 +54,7 @@ Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** 
 
 _TODO: public YouTube link (3 minutes or less)._
 
-MonoPlus is a FastAPI backend that runs each campaign as a background job made of seven named steps, plus a Next.js web app that polls the job and renders the results. All state lives in one JSON store. Every model call goes through a single router that sends each *purpose* to Nemotron 3 Ultra or Nemotron Nano on Token Factory.
+MonoPlus is a FastAPI backend that runs each campaign as a background job made of seven named steps, plus a Next.js web app that polls the job and renders the results. All state lives in SQLite (one row per campaign, written only when it changes). Every model call goes through a single router that sends each *purpose* to Nemotron 3 Ultra or Nemotron Nano on Token Factory.
 
 ```mermaid
 flowchart TB
@@ -76,7 +76,7 @@ flowchart TB
         end
         R1["ModelRouter (llm.py)<br/>purpose → Ultra / Nano"]
         S1["Scheduler + publishers"]
-        D1[("JSON store<br/>campaigns · posts · jobs · research")]
+        D1[("SQLite store<br/>campaigns · posts · research")]
     end
 
     subgraph Nebius["Nebius Token Factory"]
@@ -120,7 +120,7 @@ Plain-text version (for contexts that don't render Mermaid):
                        │       (or free search)    Ultra: strategy, copy, humanize
                        └──── Nano: brand extract   Nano:  brand extract, SEO
                                          ▼
-                              JSON store (campaigns, posts, jobs)
+                              SQLite store (campaigns, posts, research)
                                          ▼
           owner approves ──▶ Scheduler (every minute) ──▶ Instagram / Facebook / LinkedIn / X
 ```
@@ -230,7 +230,7 @@ Key design points:
 │   │   ├── llm.py                  # ModelRouter: purpose → Nemotron Ultra/Nano, auto-selection, telemetry
 │   │   ├── config.py               # Environment settings
 │   │   ├── schemas.py              # Pydantic models (BrandKit, Campaign, SocialPost, Job, ResearchTask…)
-│   │   ├── store.py                # JSON store
+│   │   ├── store.py                # SQLite store (imports an older db.json once)
 │   │   ├── netguard.py             # SSRF guard for every outbound fetch
 │   │   ├── publishing.py           # Direct publishing, per-post lock, auto-publish scheduler
 │   │   ├── mcp_server.py           # MCP server (2025-11-25, Streamable HTTP), seven tools
@@ -240,7 +240,7 @@ Key design points:
 │   │   │   ├── humanizer.py        # AI-pattern detection, rewrite, translation chain, fact guard
 │   │   │   ├── formatter.py        # Hashtags, alt text, SEO, platform limits
 │   │   │   ├── renderer.py         # Pillow images and carousels
-│   │   │   ├── reels.py            # 9:16 motion videos (script, animation, ffmpeg)
+│   │   │   ├── reels/             # 9:16 motion videos: story, draw, colours, styles, render
 │   │   │   ├── photos.py           # Pexels / Openverse stock photos, uploads
 │   │   │   ├── trends.py           # Tavily search + extract
 │   │   │   ├── freesearch.py       # Google News RSS / DuckDuckGo fallback
@@ -492,7 +492,9 @@ With no keys at all, everything still runs:
 
 - Set `NEBIUS_API_KEY`, `TAVILY_API_KEY` and `MONOPLUS_ACCESS_KEY`.
 - Set `PUBLIC_API_URL` and `PUBLIC_APP_URL` to the public URLs, and `CORS_ORIGINS` to the web app's origin.
-- Mount a persistent volume at `/data` (JSON store and rendered media).
+- Mount a persistent volume at `/data` (the SQLite database and rendered media). Unused media older than two days is
+  cleaned up at start and through `POST /api/maintenance/cleanup`.
+- Set `MONOPLUS_ACCESS_KEY` before putting the app online; the server warns at start when it isn't set.
 
 The web app is a standard Next.js build with `NEXT_PUBLIC_API_URL` pointing at the API.
 
@@ -523,10 +525,30 @@ The web app is a standard Next.js build with `NEXT_PUBLIC_API_URL` pointing at t
 - **Publishing**: each post records how it was published (`direct`, `webhook` or `manual`), the remote id and URL, or the platform's error.
 - **Server log**: search fallbacks, model auto-selection and failed fetches are logged by the backend.
 
+## Operations
+
+- **Rate limits:** each client can start 6 campaigns per 10 minutes, make 12 reels per 5 minutes, run 10 research
+  tasks per 10 minutes, upload 40 images and ask for 40 rewrites per 5 minutes (`MONOPLUS_RATE_LIMITS=0` turns them off).
+- **Reel rendering:** `MONOPLUS_REEL_RENDERS` reels render at once (default 2); more wait their turn, and a queue of
+  more than eight is asked to try again in a minute.
+- **Time zones:** posts go out at each platform's best hour in the brand's own time zone (from its country).
+- **Redrawing:** when post designs change, older campaigns show a banner to redraw their images with the newest
+  designs, keeping their words, photos and approvals (`POST /api/campaigns/{id}/redraw`).
+- **Checks:** GitHub Actions runs the backend tests and lint, the frontend lint, type check and build, and a browser smoke
+  test that opens every page (`backend/scripts/ui_smoke.py`). Tests use their own temporary data folder, and the
+  Nemotron code paths are exercised with a stand-in model (`tests/test_model_paths.py`).
+
 ## Limitations
 
 - **Direct posting is untested on live accounts.** It is unit-tested against mocked Instagram, Facebook, LinkedIn and X APIs, and real use needs your own app credentials. Instagram requires a Business or Creator account linked to a Facebook Page.
-- **Single-tenant by design.** One JSON store for one business; there are no user accounts or multi-tenant database.
+- **Single-tenant by design.** One store for one business, protected by an optional access key; there are no user accounts.
+- **Reels are motion graphics from photos.** Zooms, transitions and animated text over the brand's stills, with no footage,
+  voiceover or music (music is added from each app's licensed library when posting).
+- **Urdu is drawn in Segoe UI / DejaVu, not Nastaliq.** Proper Nastaliq needs a text-shaping engine Pillow doesn't ship with on
+  Windows; the letters are joined and right to left, but the style is Naskh-like.
+- **No feedback from results yet.** Learning from likes and reach needs each platform's insights API and approved apps.
+- **Sites that draw everything with JavaScript and embed no data** still give no products; most embed their data
+  (Next.js, Nuxt, Redux, JSON-LD, Shopify, Indolj), which MonoPlus reads.
 - **No image-generation model.** Images are designed from templates, brand colours and licensed photos. This keeps them on-brand, but they are less varied than generated images.
 - **Thin sites give thin brand kits.** A single landing page doesn't give much to work with; the app flags this and lets the owner edit the kit.
 

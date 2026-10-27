@@ -392,10 +392,89 @@ def shopify_currency(html: str) -> str:
     return m.group(1) if m else ""
 
 
+NAME_KEYS = ("name", "title", "productName", "product_name", "item_name")
+PRICE_KEYS = ("price", "salePrice", "sale_price", "finalPrice", "final_price", "amount", "priceRange")
+IMAGE_KEYS = ("image", "imageUrl", "image_url", "img", "thumbnail", "featuredImage", "featured_image", "images", "photo", "src")
+STATE_SCRIPT = re.compile(r"(?:__NEXT_DATA__|__NUXT__|__INITIAL_STATE__|__PRELOADED_STATE__|__APOLLO_STATE__)\s*=\s*", re.I)
+
+
+def _first(d: dict, keys: tuple[str, ...]):
+    for k in keys:
+        if d.get(k) not in (None, "", [], {}):
+            return d[k]
+    return None
+
+
+def _image_value(v) -> str:
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list) and v:
+        return _image_value(v[0])
+    if isinstance(v, dict):
+        return str(_first(v, ("url", "src", "originalSrc", "transformedSrc", "large", "medium")) or "")
+    return ""
+
+
+def _price_value(v) -> str:
+    if isinstance(v, dict):
+        v = _first(v, ("amount", "value", "min", "minVariantPrice", "price", "formatted"))
+        return _price_value(v)
+    return str(v) if isinstance(v, (int, float, str)) else ""
+
+
+def embedded_json_products(soup: BeautifulSoup, base: str) -> list[Product]:
+    """Shops whose pages are drawn by JavaScript usually embed the data they draw from (Next.js
+    __NEXT_DATA__, Nuxt, Redux state, application/json blocks). Anything shaped like a product
+    (a name, a price and an image) is one."""
+    blobs = []
+    for script in soup.find_all("script"):
+        text = script.string or script.get_text() or ""
+        kind = (script.get("type") or "").lower()
+        if script.get("id") == "__NEXT_DATA__" or kind == "application/json":
+            blobs.append(text)
+        elif STATE_SCRIPT.search(text):
+            blobs.append(STATE_SCRIPT.split(text, 1)[1].rstrip().rstrip(";"))
+    out: list[Product] = []
+
+    def walk(node, depth: int = 0) -> None:
+        if depth > 14 or len(out) >= MAX_PRODUCTS:
+            return
+        if isinstance(node, dict):
+            name, price, image = _first(node, NAME_KEYS), _first(node, PRICE_KEYS), _first(node, IMAGE_KEYS)
+            img = _image_value(image)
+            if isinstance(name, str) and 2 < len(name) < 140 and price is not None and img and _usable(img):
+                amount = _price_value(price)
+                currency = str((price.get("currencyCode") or price.get("currency")) if isinstance(price, dict) else "") \
+                    or str(node.get("currencyCode") or node.get("currency") or "")
+                if re.search(r"[^\d.,\s]", amount):
+                    shown = amount  # already displayed with its currency ("Rs. 2,500")
+                else:
+                    shown = format_price(amount, currency) if currency else (f"{float(amount):,.0f}" if re.fullmatch(r"\d+(\.\d+)?", amount) else amount)
+                link = node.get("url") or node.get("href") or node.get("slug") or node.get("handle") or ""
+                out.append(Product(name=_name(name), price=_clean(shown, 30), image_url=urljoin(base, img),
+                                   url=urljoin(base, str(link)) if isinstance(link, str) else "",
+                                   category=_clean(str(node.get("category") or node.get("product_type") or ""), 60)))
+                return
+            for v in node.values():
+                walk(v, depth + 1)
+        elif isinstance(node, list):
+            for v in node[:200]:
+                walk(v, depth + 1)
+
+    for blob in blobs:
+        try:
+            walk(json.loads(blob))
+        except (ValueError, RecursionError):
+            continue
+    return out
+
+
 def extract_products(soup: BeautifulSoup, base: str) -> list[Product]:
     found: list[Product] = []
     for finder in (jsonld_products, microdata_products, data_attr_products):
         found += finder(soup, base)
+    if len(found) < 3:
+        found += embedded_json_products(soup, base)
     if len(found) < 3:
         found += card_products(soup, base)
     seen, out = set(), []

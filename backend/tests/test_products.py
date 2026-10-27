@@ -283,3 +283,18 @@ def test_interface_icons_are_never_product_photos_or_logos():
     white = Image.new("RGBA", (100, 40), (0, 0, 0, 0))
     white.paste((255, 255, 255, 255), (10, 10, 90, 30))
     assert ingestor.darken_light_logo(white).getpixel((50, 20))[:3] == (24, 24, 28)
+
+
+def test_products_from_data_embedded_for_javascript_pages():
+    from app.scraper.products import embedded_json_products
+
+    html = """<html><body><div id="root"></div><script id="__NEXT_DATA__" type="application/json">
+    {"props": {"pageProps": {"collection": {"items": [
+      {"title": "Linen Kurta", "price": {"amount": "4990", "currencyCode": "PKR"}, "featuredImage": {"url": "https://cdn.example/kurta.jpg"}, "handle": "/p/linen-kurta"},
+      {"title": "Silk Dupatta", "price": "Rs. 2,500", "images": ["https://cdn.example/dupatta.jpg"], "handle": "/p/dupatta"},
+      {"title": "Menu", "href": "/menu"}
+    ]}}}}</script></body></html>"""
+    found = embedded_json_products(BeautifulSoup(html, "html.parser"), "https://shop.example/")
+    assert [(p.name, p.image_url) for p in found] == [("Linen Kurta", "https://cdn.example/kurta.jpg"),
+                                                       ("Silk Dupatta", "https://cdn.example/dupatta.jpg")]
+    assert found[1].price == "Rs. 2,500" and found[0].price == "PKR 4,990" and found[0].url == "https://shop.example/p/linen-kurta"

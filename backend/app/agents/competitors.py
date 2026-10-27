@@ -414,7 +414,7 @@ def rule_advice(kit: BrandKit, brand: CompetitorProfile, rivals: list[Competitor
     if "tiktok" in platform_gaps or "youtube" in platform_gaps:
         p = "TikTok" if "tiktok" in platform_gaps else "YouTube"
         recs.append(Recommendation(title=f"Start on {p}",
-                                   why=f"Competitors are building audiences there and you aren't visible.",
+                                   why="Competitors are building audiences there and you aren't visible.",
                                    how="Turn your carousels into 10–15 second videos: one product, three angles, price on screen."))
     hero = sorted(kit.products, key=lambda p: -(amount(p.was_price) - amount(p.price)) if p.was_price else 0)[:1]
     if hero:
@@ -441,7 +441,7 @@ def rule_advice(kit: BrandKit, brand: CompetitorProfile, rivals: list[Competitor
     ]
     ideas = [
         "This or that: two of your bestsellers, vote A or B",
-        f"\"Why our prices are what they are\": materials and making" if market and brand.median_price > market else
+        "\"Why our prices are what they are\": materials and making" if market and brand.median_price > market else
         "\"Same quality, fairer price\": a close-up of the details",
         "3 ways to wear or use one hero product (carousel)",
         "Customer photo of the week, with their permission",

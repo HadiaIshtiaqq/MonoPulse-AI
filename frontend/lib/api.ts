@@ -156,6 +156,7 @@ export interface Campaign {
   days: number;
   platforms: Platform[];
   status: "GENERATING" | "DRAFT" | "APPROVED" | "PUBLISHED" | "FAILED";
+  design_version?: number;
   strategy: Strategy | null;
   trends: TrendItem[];
   posts: SocialPost[];
@@ -270,6 +271,8 @@ export interface Health {
   tavily: boolean;
   pexels: boolean;
   models: Record<string, string>;
+  design_version?: number;
+  protected?: boolean;
 }
 
 export interface Pattern {
@@ -343,12 +346,20 @@ function locked() {
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const isForm = typeof FormData !== "undefined" && init?.body instanceof FormData;
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: { ...(isForm ? {} : { "Content-Type": "application/json" }), ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
-    cache: "no-store",
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: { ...(isForm ? {} : { "Content-Type": "application/json" }), ...authHeaders(), ...((init?.headers as Record<string, string>) || {}) },
+      cache: "no-store",
+    });
+  } catch {
+    throw new Error("Can't reach MonoPlus right now. Check your internet connection and try again in a moment.");
+  }
   if (res.status === 401) locked();
+  if (res.status >= 500) {
+    throw new Error("Something went wrong on our side. Please try again; if it keeps happening, refresh the page.");
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -370,7 +381,9 @@ export const api = {
   campaigns: () => req<CampaignSummary[]>("/api/campaigns"),
   campaign: (id: string) => req<Campaign>(`/api/campaigns/${id}`),
   deleteCampaign: (id: string) => req<void>(`/api/campaigns/${id}`, { method: "DELETE" }),
-  approveAll: (id: string) => req<Campaign>(`/api/campaigns/${id}/approve-all`, { method: "POST" }),
+  approveAll: (id: string) => req<Campaign & { approved_ids: string[] }>(`/api/campaigns/${id}/approve-all`, { method: "POST" }),
+  undoApprove: (id: string, postIds: string[]) => req<Campaign>(`/api/campaigns/${id}/undo-approve`, json("POST", { post_ids: postIds })),
+  redraw: (id: string) => req<Campaign>(`/api/campaigns/${id}/redraw`, { method: "POST" }),
   updateBrand: (id: string, body: Partial<Pick<BrandKit, "name" | "tagline" | "primary_color" | "secondary_color" | "accent_color" | "brand_voice_prompt">> & {
     logo_upload_id?: string;
     remove_logo?: boolean;

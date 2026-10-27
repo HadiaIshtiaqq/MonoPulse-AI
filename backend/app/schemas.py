@@ -195,6 +195,7 @@ class Campaign(BaseModel):
     days: int
     platforms: list[Platform]
     status: CampaignStatus = CampaignStatus.GENERATING
+    design_version: int = 0  # the post-design version its images were drawn with (config.DESIGN_VERSION)
     strategy: CampaignStrategy | None = None
     trends: list[TrendItem] = []
     posts: list[SocialPost] = []

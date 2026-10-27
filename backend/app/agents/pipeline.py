@@ -15,7 +15,7 @@ from ..schemas import Campaign, CampaignStatus, Job, JobStep, Slide, SocialPost,
 from ..netguard import UnsafeURL
 from ..scraper.ingestor import SiteUnavailable, ingest
 from ..store import store
-from . import formatter, humanizer, photos, renderer, research, strategist, trends, variety
+from . import calendar, formatter, humanizer, photos, renderer, research, strategist, trends, variety
 
 log = logging.getLogger(__name__)
 
@@ -148,6 +148,7 @@ async def attach_site_photos(kit, posts: list[SocialPost], slide_products: dict[
 # Looks for photo posts, rotated so neighbouring posts never look alike: (layout, text position).
 PHOTO_LOOKS = [("photo", "auto"), ("poster", "auto"), ("frame", "auto"), ("photo", "top"), ("minimal", "auto"),
                ("poster", "center"), ("photo", "center"), ("frame", "auto"), ("minimal", "auto")]
+BANNER_LOOKS = [("frame", "auto"), ("minimal", "auto")]  # the headline sits beside the photo, never on it
 COVER_LOOKS = [("photo", "auto"), ("poster", "auto"), ("photo", "top"), ("poster", "center")]  # carousel covers
 
 
@@ -157,7 +158,7 @@ def assign_layouts(posts: list[SocialPost]) -> None:
     ideas: dict[str, list[SocialPost]] = {}
     for p in posts:
         ideas.setdefault(p.group_id or p.id, []).append(p)
-    photo_i = graphic_i = cover_i = 0
+    photo_i = graphic_i = cover_i = banner_i = 0
     last = None
     for versions in ideas.values():
         first = versions[0]
@@ -168,6 +169,11 @@ def assign_layouts(posts: list[SocialPost]) -> None:
             look = ("quote", "auto")
         elif first.kind == "duo" and has_photo and first.gallery:
             look = ("duo", "auto")
+        elif has_photo and not first.product:
+            # A site photo that isn't a product shot is usually a banner with its own lettering:
+            # keep our headline beside it, not on top of it.
+            look = BANNER_LOOKS[banner_i % len(BANNER_LOOKS)]
+            banner_i += 1
         elif has_photo:
             look = PHOTO_LOOKS[photo_i % len(PHOTO_LOOKS)]
             photo_i += 1
@@ -183,7 +189,7 @@ def assign_layouts(posts: list[SocialPost]) -> None:
             cover_i += 1
         for p in versions:
             # Carousel covers rotate through their own looks (with room for the swipe chip).
-            p.layout, p.text_position = cover if (p.format == "carousel" and has_photo) else look
+            p.layout, p.text_position = cover if (p.format == "carousel" and has_photo and first.product) else look
         last = look
 
 
@@ -248,6 +254,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
             copies = await strategist.write_all(kit, campaign.strategy, slots, findings)
             posts = []
             group_ids: dict[int, str] = {}
+            zone = calendar.local_zone(kit.country)
             for slot, copy in zip(slots, copies):
                 day = campaign.start_date + timedelta(days=slot.day)
                 # Each platform posts at its own best hour; a second idea that day goes 3 hours later.
@@ -271,7 +278,8 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                         layout=GRAPHIC_LAYOUTS[slot.group % len(GRAPHIC_LAYOUTS)],
                         format=slot.format,
                         slides=[Slide(**s) for s in copy.get("slides", [])] if slot.format == "carousel" else [],
-                        publish_at=datetime.combine(day, dtime(hour=min(hour, 21)), tzinfo=timezone.utc),
+                        # The best hour in the brand's own time zone (11 am in Karachi, not 11 am UTC).
+                        publish_at=datetime.combine(day, dtime(hour=min(hour, 21)), tzinfo=zone).astimezone(timezone.utc),
                     )
                 )
                 if slot.format == "carousel" and slot.slide_products:
@@ -310,6 +318,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
                               + (f" · {own} with photos from your site" if own else "") + (f" · {stock} with stock photos" if stock else ""))
 
         campaign.status = CampaignStatus.DRAFT
+        campaign.design_version = config.DESIGN_VERSION
         campaign.target_month = campaign.start_date.strftime("%Y-%m")
         job.status = "done"
     except Exception as exc:  # noqa: BLE001 - reported to the UI via the job
