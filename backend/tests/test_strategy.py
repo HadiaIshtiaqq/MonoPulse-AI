@@ -128,3 +128,4 @@ def test_headlines_drop_product_codes_and_keep_whole_words():
     cut = strategist.fit_headline("Bonanza Satrangi's vibrant Pakistani fashion, offering unstitched, stitched clothing")
     assert cut == "Bonanza Satrangi's vibrant Pakistani fashion"
     assert strategist.fit_headline("New in: 2-Piece Co-ord Set") == "New in: 2-Piece Co-ord Set"
+    assert strategist.fit_headline("Getting the most from the The Majesty") == "Getting the most from the Majesty"

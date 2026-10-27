@@ -234,3 +234,30 @@ def test_wide_post_with_tall_product_photo_uses_split(tmp_path):
     assert img.size == renderer.SIZES[Platform.X]
     assert img.getpixel((img.width - 50, img.height // 2)) == (10, 10, 10)  # the photo, uncropped, on the right
     assert config.MEDIA_DIR.exists()
+
+
+def test_indolj_menu_becomes_products_and_branches():
+    from app.scraper import products as pf
+
+    item = lambda iid, name, price, photo="https://assets.indolj.io/upload/a b.jpg?q=10": {  # noqa: E731
+        "item_id": iid, "item_name": name, "photo": photo, "prices": [{"price": price, "pretty_price": f"Rs. {price:,}"}]}
+    menu = {"details": {
+        "1": {"title": "Burgers", "items": {"10": item("10", "ZINGER BURGER", 450), "11": item("11", "Extra Cheese", 100)}},
+        "2": {"title": "Popular Items", "items": {"20": item("20", "Chicken Mandi", 1150), "21": item("21", "Raita", 50)}},
+        "3": {"title": "Beverages", "items": {"30": item("30", "Cold Drink Can", 150),
+                                               "31": item("31", "Milkshake", 530, "https://assets.indolj.io/upload/placholde-general2.png")}},
+    }}
+    got = pf.indolj_products(menu, "https://kj.example")
+    assert [(p.name, p.price, p.category) for p in got] == [("Chicken Mandi", "Rs. 1,150", "Popular Items"), ("Zinger Burger", "Rs. 450", "Burgers")]
+    assert got[0].image_url == "https://assets.indolj.io/upload/a%20b.jpg"
+
+    html = ('<img src="https://assets.indolj.io/upload/logo.png"><script>self.__next_f.push([1,"{\\"token\\":\\"eyJa.eyJb.sig\\",'
+            '\\"active_branches\\":[{\\"name\\":\\"PECHS Block 2 Karachi\\"},{\\"name\\":\\"Gulberg  Lahore\\"},{\\"name\\":\\"Clifton Karachi\\"}]}"])</script>')
+    assert pf.is_indolj(html) and pf.indolj_token(html) == "eyJa.eyJb.sig"
+    branches = pf.indolj_branches(html)
+    assert branches == ["PECHS Block 2 Karachi", "Gulberg Lahore", "Clifton Karachi"]
+    assert ingestor.branch_cities(branches) == ["Karachi", "Lahore"]
+
+
+def test_fast_food_reads_as_food_and_beverage():
+    assert ingestor.guess_industry("Product: Zinger Burger (Burgers)\nProduct: Crispy Wings\nFried chicken and fries") == "Food & Beverage"

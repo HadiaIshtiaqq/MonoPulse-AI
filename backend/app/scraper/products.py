@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections import deque
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup, Tag
 
@@ -283,6 +283,80 @@ def shopify_products(data: dict, origin: str, currency: str = "") -> list[Produc
                            url=f"{origin}/products/{p.get('handle', '')}", image_url=str(images[0].get("src") or ""),
                            category=_clean(p.get("product_type") or "", 60)))
     return out
+
+
+# Indolj runs online ordering for many restaurant chains (Kababjees, …). Their sites draw the menu
+# in the browser from a public endpoint, using a visitor token that is embedded in every page.
+INDOLJ_MENU_URL = "https://console.indolj.io/mobileapp/WebApiV2/StructuredMenu"
+INDOLJ_TOKEN_RE = re.compile(r'\\?"token\\?":\\?"(eyJ[\w-]+\.[\w-]+\.[\w-]+)')
+SIDE_ITEM = re.compile(r"^(extra|add[- ]?on)\b|\b(sauce|dip|raita|water|cold drink|ketchup|mayo)\b", re.I)
+FEATURED_CATEGORY = re.compile(r"popular|best ?sell|signature|new arrival|new", re.I)
+
+
+def is_indolj(html: str) -> bool:
+    return "assets.indolj.io" in html and bool(INDOLJ_TOKEN_RE.search(html))
+
+
+def indolj_token(html: str) -> str:
+    m = INDOLJ_TOKEN_RE.search(html)
+    return m.group(1) if m else ""
+
+
+def _menu_name(text: str) -> str:
+    name = _name(text).rstrip(" .")
+    letters = [c for c in name if c.isalpha()]
+    shouting = letters and sum(c.isupper() for c in letters) / len(letters) > 0.7  # "PLAIN CRISPY WINGS 8 pcs"
+    return re.sub(r"(\w)'S\b", r"\1's", name.title()) if shouting else name
+
+
+def indolj_products(data: dict, origin: str) -> list[Product]:
+    """Real menu items with photos and prices: popular and new items first, then one from
+    each category in turn so a campaign covers the menu, not ten kinds of wings."""
+    categories = [c for c in ((data or {}).get("details") or {}).values() if isinstance(c, dict)]
+    categories.sort(key=lambda c: not FEATURED_CATEGORY.search(str(c.get("title") or "")))
+    queues: list[list[Product]] = []
+    for cat in categories:
+        title = _clean(cat.get("title") or "", 60)
+        items = cat.get("items") or {}
+        keys = cat.get("sortedItemKeys") or list(items)
+        queue = []
+        for key in keys:
+            it = items.get(str(key)) or {}
+            photo = str(it.get("photo") or "")
+            prices = it.get("prices") or [{}]
+            amount = _amount(prices[0].get("price"))
+            if not it.get("item_name") or not photo or "placholde" in photo or it.get("addon_item"):
+                continue
+            if SIDE_ITEM.search(it["item_name"]) or 0 < amount < 200:
+                continue
+            queue.append(Product(name=_menu_name(it["item_name"]), price=_clean(prices[0].get("pretty_price") or "", 30),
+                                 url=origin, image_url=quote(photo.split("?")[0], safe=":/%"), category=title))
+        if queue:
+            queues.append(queue)
+    out: list[Product] = []
+    seen: set[str] = set()
+    while queues and len(out) < MAX_PRODUCTS:
+        for queue in list(queues):
+            p = queue.pop(0)
+            if p.name.lower() not in seen:
+                seen.add(p.name.lower())
+                out.append(p)
+            if not queue:
+                queues.remove(queue)
+    return out[:MAX_PRODUCTS]
+
+
+def indolj_branches(html: str) -> list[str]:
+    """Branch names from the page's store data ("PECHS Block 2 Karachi", …)."""
+    text = html.replace('\\"', '"')
+    start = text.find('"active_branches":[')
+    if start < 0:
+        return []
+    try:
+        branches, _ = json.JSONDecoder().raw_decode(text, start + len('"active_branches":'))
+    except ValueError:
+        return []
+    return [" ".join(str(b.get("name") or "").split()) for b in branches if isinstance(b, dict) and b.get("name")]
 
 
 def _amount(value) -> float:

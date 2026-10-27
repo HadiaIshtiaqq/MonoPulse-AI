@@ -612,6 +612,7 @@ TRAILING_SMALL_WORDS = {"on", "at", "the", "for", "and", "with", "of", "to", "in
 def fit_headline(text: str, limit: int = 60) -> str:
     """Trim an image headline to whole words (never "…offering unsti")."""
     text = strip_codes(" ".join(text.split()))
+    text = re.sub(r"\b(the|a|our)\s+(?:the|a)\b", r"\1", text, flags=re.I)  # "from the The Majesty"
     if len(text) <= limit:
         return text
     words = text[: limit + 1].split()[:-1] or [text[:limit]]

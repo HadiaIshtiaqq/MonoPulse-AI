@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Loader2 } from "lucide-react";
 import { accessKey, api } from "@/lib/api";
+import { BrandMark } from "./BrandMark";
 
 /** Shows an unlock screen only when the server has MONOPLUS_ACCESS_KEY set and we don't hold it. */
 export function AccessGate({ children }: { children: React.ReactNode }) {
@@ -44,7 +45,10 @@ export function AccessGate({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid min-h-screen place-items-center bg-[#F7F7FB] p-4">
       <form onSubmit={unlock} className="card w-full max-w-sm animate-scale-in p-6 text-center shadow-pop">
-        <span className="mx-auto grid h-12 w-12 place-items-center animate-pop-in rounded-2xl bg-brand-gradient text-white shadow-glow"><KeyRound size={20} /></span>
+        <span className="relative mx-auto block w-fit animate-pop-in">
+          <BrandMark size={52} className="rounded-2xl shadow-glow" />
+          <span className="absolute -bottom-1 -right-1 grid h-6 w-6 place-items-center rounded-full bg-white text-brand shadow-lift"><KeyRound size={12} /></span>
+        </span>
         <h1 className="mt-4 text-xl font-bold">Unlock MonoPlus</h1>
         <p className="mt-1 text-sm text-slate-500">Enter the access key for this workspace.</p>
         <input autoFocus type="password" className="input mt-5" placeholder="Access key" value={key} onChange={(e) => setKey(e.target.value)} />

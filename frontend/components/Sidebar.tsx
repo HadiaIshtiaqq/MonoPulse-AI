@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FlaskConical, LayoutGrid, Menu, Plus, Search, Wand2, X } from "lucide-react";
 import { useCommandPalette } from "./CommandPalette";
+import { BrandMark } from "./BrandMark";
 
 const NAV = [
   { href: "/campaigns", label: "Campaigns", icon: LayoutGrid, match: (p: string) => p.startsWith("/campaign") },
@@ -15,9 +16,7 @@ const NAV = [
 function Logo() {
   return (
     <Link href="/" className="group flex items-center gap-2.5">
-      <span className="grid h-9 w-9 place-items-center rounded-xl bg-brand-gradient-wide bg-[length:200%_auto] text-lg font-bold text-white shadow-glow transition-all duration-500 group-hover:rotate-[-6deg] group-hover:scale-105 group-hover:bg-right">
-        M
-      </span>
+      <BrandMark size={36} className="rounded-xl shadow-glow transition-transform duration-500 group-hover:rotate-[-6deg] group-hover:scale-105" />
       <span className="font-display text-lg font-bold tracking-tight">
         Mono<span className="text-brand">Plus</span>
       </span>

@@ -45,7 +45,9 @@ INDUSTRY_KEYWORDS = {
                           "ready to wear", "co-ord", "embroidered", "trousers", "abaya", "shalwar", "jacket"],
     "Jewellery": ["jewel", "necklace", "earring", "bracelet", "bangle", "pendant", "diamond", "gold plated"],
     "Furniture & Home": ["furniture", "sofa", "mattress", "home decor", "cushion", "dining table", "wardrobe", "bedding"],
-    "Food & Beverage": ["restaurant", "cafe", "coffee", "bakery", "menu", "pizza", "kitchen", "dining", "brunch"],
+    "Food & Beverage": ["restaurant", "cafe", "coffee", "bakery", "menu", "pizza", "kitchen", "dining", "brunch",
+                        "fried chicken", "burger", "zinger", "wings", "fries", "biryani", "shawarma", "kebab", "kabab",
+                        "sandwich", "meal deal", "takeaway", "dine-in", "dine in", "nuggets", "steak", "noodles"],
     "Fitness & Wellness": ["gym", "fitness", "yoga", "pilates", "wellness", "workout", "trainer", "spa"],
     "Beauty": ["salon", "beauty", "hair", "nails", "skincare", "makeup", "barber", "cosmetic"],
     "Real Estate": ["real estate", "property", "realtor", "homes for sale", "apartment", "listing"],
@@ -75,6 +77,7 @@ class ScrapedSite:
     images: list[str] = field(default_factory=list)
     shop: dict = field(default_factory=dict)  # Shopify's public store info (/meta.json), when it's a Shopify store
     socials: list[str] = field(default_factory=list)  # platforms the site links to: instagram, tiktok…
+    branches: list[str] = field(default_factory=list)  # store / restaurant branch names, when the site lists them
     text: str = ""  # the page's visible text (trimmed), for promises made in banners and footers
 
     def text_blob(self, limit: int = 4000) -> str:
@@ -436,7 +439,53 @@ async def fetch_site(url: str, client: httpx.AsyncClient) -> ScrapedSite:
                     site.products = product_finder.shopify_products(r.json(), origin, currency) or site.products
             except (httpx.HTTPError, UnsafeURL, ValueError):
                 pass
+    elif product_finder.is_indolj(html):
+        await read_indolj(site, html, client)
     return site
+
+
+async def read_indolj(site: ScrapedSite, html: str, client: httpx.AsyncClient) -> None:
+    """Restaurant sites on Indolj draw their menu in the browser, so the page itself has no
+    dishes or photos. Ask the menu endpoint the page uses, with the page's own visitor token."""
+    host = urlparse(site.url).netloc
+    origin = f"{urlparse(site.url).scheme}://{host}"
+    site.branches = product_finder.indolj_branches(html)
+    try:
+        r = await client.get(product_finder.INDOLJ_MENU_URL, params={"domain": host.removeprefix("www."), "json": 1},
+                             headers={"Authorization": f"Bearer {product_finder.indolj_token(html)}", "Origin": origin,
+                                      "Referer": origin + "/"}, timeout=12)
+        if r.status_code == 200 and isinstance(r.json(), dict):
+            menu = product_finder.indolj_products(r.json(), origin)
+            if menu:
+                site.products = menu
+                site.images = list(dict.fromkeys([*site.images, *(p.image_url for p in menu)]))[:24]
+    except (httpx.HTTPError, UnsafeURL, ValueError):
+        pass
+    cities = branch_cities(site.branches)
+    if len(site.branches) >= 2:
+        where = f" across {join_cities(cities)}" if cities else ""
+        site.paragraphs.insert(0, f"{len(site.branches)} branches{where}.")
+    if cities:
+        site.address_hint = site.address_hint or cities[0]
+
+
+CITIES = {"karachi": "Karachi", "lahore": "Lahore", "islamabad": "Islamabad", "rawalpindi": "Rawalpindi",
+          "hyderabad": "Hyderabad", "faisalabad": "Faisalabad", "multan": "Multan", "peshawar": "Peshawar",
+          "quetta": "Quetta", "sialkot": "Sialkot", "gujranwala": "Gujranwala", "sukkur": "Sukkur",
+          "dubai": "Dubai", "abu dhabi": "Abu Dhabi", "sharjah": "Sharjah", "riyadh": "Riyadh", "jeddah": "Jeddah",
+          "doha": "Doha", "london": "London", "manchester": "Manchester", "birmingham": "Birmingham",
+          "toronto": "Toronto", "new york": "New York", "chicago": "Chicago", "mumbai": "Mumbai", "delhi": "Delhi",
+          "bangalore": "Bangalore", "dhaka": "Dhaka", "sydney": "Sydney", "melbourne": "Melbourne"}
+
+
+def branch_cities(branches: list[str]) -> list[str]:
+    """Cities a chain is in, most branches first ("Karachi", "Lahore", "Hyderabad")."""
+    counts = Counter(name for b in branches for key, name in CITIES.items() if re.search(rf"\b{key}\b", b.lower()))
+    return [city for city, _ in counts.most_common()]
+
+
+def join_cities(cities: list[str]) -> str:
+    return cities[0] if len(cities) == 1 else f"{', '.join(cities[:3][:-1])} and {cities[:3][-1]}"
 
 
 async def stylesheet_colors(site: ScrapedSite, client: httpx.AsyncClient) -> list[str]:
@@ -543,7 +592,7 @@ CLAIMS = [(r"nationwide (?:delivery|shipping)|(?:delivery|shipping) (?:all )?acr
           (r"made (?:in[- ]house|from scratch|fresh daily)|baked (?:fresh|daily)", "Made fresh, in-house"),
           (r"cash on delivery|\bCOD\b", "Cash on delivery"), (r"easy (?:returns|exchange)|free returns|\d+[- ]day returns?", "Easy returns"),
           (r"warranty|guarantee", "Warranty"), (r"handmade|hand[- ]crafted", "Handmade"), (r"since (?:19|20)\d\d", None),
-          (r"\b\d{2,4}\+? (?:stores|outlets|branches)", None), (r"installments?", "Pay in installments")]
+          (r"\b\d{2,4}\+? (?:stores|outlets|branches)(?: (?:across|in) [^.!?]{3,60})?", None), (r"installments?", "Pay in installments")]
 
 
 def detect_country(kit: BrandKit, site: ScrapedSite, shop: dict | None = None) -> str:
@@ -741,6 +790,9 @@ async def _finish_site_kit(kit: BrandKit, site: ScrapedSite, client: httpx.Async
     kit.logo_url, kit.logo_path = logo_url, logo_path
     kit.products, kit.images = site.products, site.images
     kit.country = detect_country(kit, site, site.shop)
+    cities = branch_cities(site.branches)
+    if not kit.location and cities:
+        kit.location = f"{cities[0]}, {COUNTRY_NAMES.get(kit.country, kit.country).removeprefix('the ')}".strip(", ")
     if not kit.location and site.shop.get("city"):
         country = str(site.shop.get("country") or "")
         kit.location = f"{site.shop['city']}, {COUNTRY_NAMES.get(country, country).removeprefix('the ')}".strip(", ")
