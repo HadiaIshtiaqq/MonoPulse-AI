@@ -139,6 +139,8 @@ class SocialPost(BaseModel):
     text_scale: float = 1.0
     image_url: str | None = None
     image_urls: list[str] = []  # every rendered page (1 for single posts)
+    video_url: str | None = None  # a 9:16 reel made from the post (Instagram Reels, Shorts, TikTok)
+    video_poster: str | None = None
     publish_at: datetime
     status: PostStatus = PostStatus.DRAFT
     published_via: str | None = None  # direct | webhook | manual

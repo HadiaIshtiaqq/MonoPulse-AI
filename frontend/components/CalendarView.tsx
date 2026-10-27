@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Layers } from "lucide-react";
+import { Film, Layers } from "lucide-react";
 import { groupKey, groupPosts, groupStatus, KIND_LABELS, localDayKey, media, type SocialPost } from "@/lib/api";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 
@@ -134,6 +134,11 @@ export function CalendarView({
                           {g.some((v) => v.format === "carousel") && (
                             <span className="absolute right-1 top-1 flex items-center gap-0.5 rounded-md bg-black/60 px-1 py-0.5 text-[9px] font-semibold text-white">
                               <Layers size={9} /> {Math.max(...g.map((v) => v.image_urls.length))}
+                            </span>
+                          )}
+                          {g.some((v) => v.video_url) && (
+                            <span title="Has a reel" className="absolute bottom-1 right-1 grid h-5 w-5 animate-pop-in place-items-center rounded-md bg-brand-gradient text-white shadow">
+                              <Film size={10} />
                             </span>
                           )}
                           {posted > 0 && (

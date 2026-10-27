@@ -104,7 +104,7 @@ def test_tools_list_schemas(client):
     tools = rpc(client, "tools/list", session=sid).json()["result"]["tools"]
     names = {t["name"] for t in tools}
     assert names == {"create_campaign", "get_campaign_status", "list_upcoming_posts", "approve_posts", "humanize_text",
-                     "research_market", "get_brand_profile"}
+                     "research_market", "get_brand_profile", "make_reel"}
     for t in tools:
         assert t["inputSchema"]["type"] == "object" and t["description"] and t["title"]
 

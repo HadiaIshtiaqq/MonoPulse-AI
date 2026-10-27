@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, mcp_server, publishing
-from .agents import humanizer, memory, photos, pipeline, renderer, research, strategist
+from .agents import humanizer, memory, photos, pipeline, reels, renderer, research, strategist
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
 from .publishing import share_links
@@ -250,7 +250,7 @@ async def update_brand(campaign_id: str, req: BrandUpdateRequest) -> Campaign:
 
 @app.get("/api/campaigns/{campaign_id}/export")
 def export_campaign(campaign_id: str):
-    """ZIP of every image plus a CSV with captions, hashtags and schedule, ready for any scheduler."""
+    """ZIP of every image and reel plus a CSV with captions, hashtags and schedule, ready for any scheduler."""
     c = _campaign(campaign_id)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -267,6 +267,11 @@ def export_campaign(campaign_id: str):
                     names.append(name)
             w.writerow([f"{p.publish_at:%Y-%m-%d}", f"{p.publish_at:%H:%M}", p.platform.value, p.format, p.status.value,
                         p.headline, p.caption, " ".join(p.hashtags), ";".join(names), p.alt_text])
+        for url in sorted({p.video_url.split("?")[0] for p in c.posts if p.video_url}):
+            src = config.MEDIA_DIR / url.removeprefix("/media/")
+            post = next(p for p in c.posts if p.video_url and p.video_url.startswith(url))
+            if src.exists():
+                z.write(src, f"reels/{post.publish_at:%Y-%m-%d}_{(post.group_id or post.id)[:6]}.mp4")
         z.writestr("posts.csv", rows.getvalue())
         credits = sorted({p.background.credit for p in c.posts if p.background and p.background.source == "stock"})
         if credits:
@@ -428,6 +433,19 @@ async def rewrite_post(post_id: str, req: RewriteRequest) -> SocialPost:
         await _rerender(campaign, post)
     store.save()
     return post
+
+
+@app.post("/api/posts/{post_id}/reel")
+async def make_reel(post_id: str) -> dict:
+    """A 9:16 motion video of the post for Instagram Reels, YouTube Shorts, TikTok and Facebook Reels,
+    shared by every platform version of the post."""
+    campaign, post = _post(post_id)
+    try:
+        info = await reels.make_reel(campaign, post)
+    except reels.ReelError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    store.save()
+    return {"post": post, **info}
 
 
 @app.get("/api/posts/{post_id}/share")

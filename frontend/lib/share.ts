@@ -59,3 +59,35 @@ export async function shareToApp(urls: string[], caption: string, baseName: stri
   const files = await Promise.all(urls.map(async (u, i) => new File([await imageBlob(u)], `${baseName}-${i + 1}.png`, { type: "image/png" })));
   await navigator.share({ files, text: caption });
 }
+
+async function videoBlob(url: string): Promise<Blob> {
+  const res = await fetch(media(url), { cache: "no-store" });
+  if (!res.ok) throw new Error("Couldn't load the video.");
+  return res.blob();
+}
+
+/** Save a post's reel (MP4) to the computer. */
+export async function downloadVideo(url: string, baseName: string): Promise<void> {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await videoBlob(url));
+  a.download = `${baseName}-reel.mp4`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/** Whether this device can hand a video to another app (Instagram, TikTok…) through the share sheet. */
+export function canShareVideo(): boolean {
+  if (typeof navigator === "undefined" || !navigator.canShare) return false;
+  try {
+    return navigator.canShare({ files: [new File([new Uint8Array(1)], "reel.mp4", { type: "video/mp4" })] });
+  } catch {
+    return false;
+  }
+}
+
+export async function shareVideo(url: string, caption: string, baseName: string): Promise<void> {
+  const file = new File([await videoBlob(url)], `${baseName}-reel.mp4`, { type: "video/mp4" });
+  await navigator.share({ files: [file], text: caption });
+}

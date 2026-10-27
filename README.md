@@ -27,6 +27,8 @@ Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** 
 - **Parallel copywriting**: Captions and carousel slides are generated in concurrent batches. A post's platform versions always go in the same batch so they stay consistent, and a 30-day, four-platform campaign (120 versions) takes minutes.
 - **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
 - **Branded design**: Renders single images and 1080×1350 carousels (cover, one page per product, CTA) with the brand's logo at the top, its colours, and the product's price. It uses the brand's own photos first, then licensed stock or uploads. No watermarks.
+
+- **Reels from any post**: One click turns a post into a 10–15 second 1080×1920 video for Instagram Reels, TikTok, YouTube Shorts and Facebook Reels. Nemotron writes the on-screen script (a hook, a few words per photo, a call to action); the video shows the brand's real product photos with slow zooms, text that slides in, prices on chips, the logo on every scene and an animated end card. Frames are drawn with Pillow on several threads and encoded with ffmpeg (H.264 plus a silent track, so each app's licensed music can be added when posting).
 - **Scheduling and direct posting**: Drag-and-drop calendar, one-click approval, and automatic publishing at each post's time through the official Instagram Graph, Facebook Pages, LinkedIn and X v2 APIs.
 - **Competitor research and strategy agent** ([competitors.py](backend/app/agents/competitors.py)): this runs automatically for every new campaign, from the Research tab, or from the command line (`python scripts/competitor_research.py bata.com.pk`). It works in four steps:
   1. **Finds competitors:** a few web searches ("X competitors", "brands like X", "best footwear brands in Pakistan"), plus reading the round-up articles they return for brands linked to their own websites. It also uses any competitors you name. With a key, Nemotron picks the direct competitors.
@@ -188,6 +190,7 @@ Without `TAVILY_API_KEY`, free Google News RSS and DuckDuckGo are used ([freesea
 | **Humanizer** | `agents/humanizer.py` | `humanize` | caption → rewritten caption + before/after score | Rule pass, then Nemotron 3 Ultra; fact guard in code |
 | **Formatter** | `agents/formatter.py` | `format` | posts → hashtags, alt text, SEO keywords | Nemotron Nano; limits enforced in code |
 | **Designer** | `agents/renderer.py` | `render` | post + brand kit → PNG images | Pillow (no model) |
+| **Reel maker** | `agents/reels.py` | on demand | post + brand photos → 9:16 MP4 | Nemotron 3 Ultra script (rule-based fallback); Pillow + ffmpeg |
 | **Research agent** | `agents/research.py` | separate task | topic → cited report + `ResearchInsights` | Ultra plans, Tavily searches and extracts, Ultra writes, Nano extracts insights |
 
 Key design points:
@@ -230,6 +233,7 @@ Key design points:
 │   │   │   ├── humanizer.py        # AI-pattern detection, rewrite, translation chain, fact guard
 │   │   │   ├── formatter.py        # Hashtags, alt text, SEO, platform limits
 │   │   │   ├── renderer.py         # Pillow images and carousels
+│   │   │   ├── reels.py            # 9:16 motion videos (script, animation, ffmpeg)
 │   │   │   ├── photos.py           # Pexels / Openverse stock photos, uploads
 │   │   │   ├── trends.py           # Tavily search + extract
 │   │   │   ├── freesearch.py       # Google News RSS / DuckDuckGo fallback
@@ -303,6 +307,10 @@ The full campaign: brand kit, strategy, trends, and every post with caption, has
 
 Edit and re-render a post. Any of `headline`, `caption`, `cta`, `hashtags`, `publish_at`, `status`, `layout` (`bold | split | quote | photo`), `slides`, `text_position`, `text_scale` (0.6–1.5).
 
+### `POST /api/posts/{post_id}/reel`
+
+Makes a 9:16 MP4 reel of the post and attaches it to every platform version (`video_url`, `video_poster`). Returns the post plus `seconds`, the script's `scenes`, `used_llm` and `render_ms`. Reels are included in the campaign export under `reels/`.
+
 ### `POST /api/posts/{post_id}/publish`
 
 Posts directly to the platform's API and returns the post with `remote_id` and `remote_url`. Returns `400` if the platform isn't connected and `409` if the post is already published.
@@ -371,8 +379,9 @@ Creates a research task; poll `GET /api/research/tasks/{id}` for the cited `repo
 | `humanize_text` | Fact-guarded rewrite with before and after scores |
 | `research_market` | Cited research summary with content ideas |
 | `get_brand_profile` | Colours, logo, voice and value props |
+| `make_reel` | Turn a post into a 9:16 reel and return the video link |
 
-The server was verified with the official MCP Python SDK client, which negotiated `2025-11-25`, listed all seven tools, and ran a full campaign.
+The server was verified with the official MCP Python SDK client, which negotiated `2025-11-25`, listed all the tools, and ran a full campaign.
 
 ## Run locally (step-by-step)
 

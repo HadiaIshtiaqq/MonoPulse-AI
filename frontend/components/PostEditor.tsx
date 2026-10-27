@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  Check, ChevronLeft, ChevronRight, Copy, Download, ExternalLink, History, ImageOff, Loader2, Palette, PenLine, Plus,
+  Check, ChevronLeft, ChevronRight, Clapperboard, Copy, Download, ExternalLink, History, ImageOff, Loader2, Palette, PenLine, Plus,
   RefreshCw, Rocket, Send, Trash2, Wand2, X,
 } from "lucide-react";
 import {
@@ -12,6 +12,7 @@ import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 import { PostPreview } from "@/components/PostPreview";
 import { PhotoPicker } from "@/components/PhotoPicker";
 import { TellScore } from "@/components/TellScore";
+import { ReelPanel, ReelPlayer } from "@/components/ReelPanel";
 import { canShareFiles, copyImage, copyText, downloadAll, pasteKey, shareToApp } from "@/lib/share";
 
 /** What to do in the platform's tab after "Open …", given what MonoPlus could hand over. */
@@ -38,7 +39,7 @@ function shareSteps(platform: SocialPost["platform"], imageOnClipboard: boolean,
   return [`${label} is open with your caption already in the post box.`, multi ? attach.replace("Click in the post box and press", "Press") : attach, "Click Post."];
 }
 
-type Tab = "design" | "copy" | "publish";
+type Tab = "design" | "copy" | "reel" | "publish";
 const LAYOUTS: { id: Layout; label: string }[] = [
   { id: "bold", label: "Bold" },
   { id: "split", label: "Split" },
@@ -257,9 +258,13 @@ export function PostEditor({
         <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[1fr_1.05fr] md:overflow-hidden">
           {/* preview */}
           <div className="flex flex-col items-center gap-3 bg-[radial-gradient(circle_at_top,#EFEDFF,transparent_60%)] p-5 md:overflow-y-auto">
-            <div key={post.id} className="animate-scale-in" style={{ width: previewWidth(post) }}>
-              <PostPreview post={{ ...post, caption: showDraft && post.original_caption ? post.original_caption : caption, hashtags: hashtags.split(/\s+/).filter(Boolean) }} brand={brand} />
-            </div>
+            {tab === "reel" ? (
+              <ReelPlayer post={post} brandName={brand?.name ?? ""} />
+            ) : (
+              <div key={post.id} className="animate-scale-in" style={{ width: previewWidth(post) }}>
+                <PostPreview post={{ ...post, caption: showDraft && post.original_caption ? post.original_caption : caption, hashtags: hashtags.split(/\s+/).filter(Boolean) }} brand={brand} />
+              </div>
+            )}
             {post.background?.credit && post.background.source === "stock" && (
               <a href={post.background.credit_url} target="_blank" rel="noreferrer" className="max-w-[380px] truncate text-[11px] text-slate-500 hover:text-ink">
                 {post.background.credit}
@@ -276,9 +281,10 @@ export function PostEditor({
           {/* controls */}
           <div className="flex min-h-0 flex-col border-l border-slate-100">
             <div className="flex gap-1 border-b border-slate-100 px-4 pt-3">
-              {([["design", "Design", Palette], ["copy", "Caption", PenLine], ["publish", "Post", Rocket]] as const).map(([key, label, Icon]) => (
+              {([["design", "Design", Palette], ["copy", "Caption", PenLine], ["reel", "Reel", Clapperboard], ["publish", "Post", Rocket]] as const).map(([key, label, Icon]) => (
                 <button key={key} onClick={() => setTab(key)} data-active={tab === key} className="tab px-3 py-2">
                   <Icon size={14} /> {label}
+                  {key === "reel" && post.video_url && <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-label="reel ready" />}
                 </button>
               ))}
             </div>
@@ -470,6 +476,7 @@ export function PostEditor({
                 </>
               )}
 
+              {tab === "reel" && <ReelPanel post={post} brandName={brand?.name ?? ""} caption={fullCaption} onChange={onChange} />}
               {tab === "publish" && (
                 <>
                   <section>

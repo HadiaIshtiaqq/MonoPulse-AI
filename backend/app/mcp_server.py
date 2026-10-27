@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from . import config
-from .agents import humanizer, pipeline, research
+from .agents import humanizer, pipeline, reels, research
 from .schemas import CreateCampaignRequest, PostStatus, ResearchTask
 from .store import store
 
@@ -92,6 +92,14 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {"campaign_id": {"type": "string"}, "post_ids": {"type": "array", "items": {"type": "string"}}},
             "required": ["campaign_id"],
         },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "make_reel",
+        "title": "Make a reel",
+        "description": "Turn a post into a 10-15 second vertical video (Instagram Reels, YouTube Shorts, TikTok) from the brand's "
+                       "own photos: an AI-written hook, a few words over each product with its price, and an end card with the logo.",
+        "inputSchema": {"type": "object", "properties": {"post_id": {"type": "string"}}, "required": ["post_id"]},
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     },
     {
@@ -207,6 +215,19 @@ async def call_tool(name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any
         store.save()
         total = sum(p.status is not PostStatus.DRAFT for p in c.posts)
         return f"Approved {changed} post{'s' if changed != 1 else ''}.", {"campaign_id": c.id, "approved_now": changed, "approved_total": total, "posts": len(c.posts)}
+
+    if name == "make_reel":
+        found = store.find_post(str(args.get("post_id") or ""))
+        if not found:
+            raise ToolError("I couldn't find that post.")
+        campaign, post = found
+        try:
+            info = await reels.make_reel(campaign, post)
+        except reels.ReelError as exc:
+            raise ToolError(str(exc)) from exc
+        store.save()
+        url = f"{config.PUBLIC_API_URL}{post.video_url.split('?')[0]}"
+        return f"Made a {info['seconds']:.0f}-second reel.", {"post_id": post.id, "video_url": url, **info}
 
     if name == "humanize_text":
         text = str(args.get("text") or "").strip()

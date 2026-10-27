@@ -91,6 +91,8 @@ export interface SocialPost {
   text_scale: number;
   image_url: string | null;
   image_urls: string[];
+  video_url?: string | null;
+  video_poster?: string | null;
   publish_at: string;
   status: PostStatus;
   published_via: string | null;
@@ -357,6 +359,8 @@ export const api = {
   humanizePost: (id: string, mode: HumanizeMode = "standard") =>
     req<HumanizeResult & { post: SocialPost }>(`/api/posts/${id}/humanize`, json("POST", { mode })),
   rewritePost: (id: string, tone: string) => req<SocialPost>(`/api/posts/${id}/rewrite`, json("POST", { tone })),
+  makeReel: (id: string) =>
+    req<{ post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number }>(`/api/posts/${id}/reel`, { method: "POST" }),
   share: (id: string) =>
     req<{ platform: Platform; url: string; caption: string; image_url: string | null; image_urls: string[]; note: string }>(`/api/posts/${id}/share`),
   markPublished: (id: string) => req<SocialPost>(`/api/posts/${id}/mark-published`, { method: "POST" }),
