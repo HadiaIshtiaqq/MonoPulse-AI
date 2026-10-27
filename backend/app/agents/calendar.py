@@ -119,12 +119,28 @@ COUNTRY_TZ = {
 }
 
 
-def local_zone(country: str):
-    """The brand's time zone, or UTC when the country isn't known."""
+# Countries with more than one time zone: the city in the brand's location decides.
+CITY_TZ = {
+    "los angeles": "America/Los_Angeles", "san francisco": "America/Los_Angeles", "san diego": "America/Los_Angeles",
+    "seattle": "America/Los_Angeles", "las vegas": "America/Los_Angeles",
+    "phoenix": "America/Phoenix", "denver": "America/Denver", "salt lake": "America/Denver",
+    "chicago": "America/Chicago", "houston": "America/Chicago", "dallas": "America/Chicago", "austin": "America/Chicago",
+    "san antonio": "America/Chicago", "minneapolis": "America/Chicago", "new orleans": "America/Chicago",
+    "vancouver": "America/Vancouver", "calgary": "America/Edmonton", "edmonton": "America/Edmonton",
+    "winnipeg": "America/Winnipeg", "halifax": "America/Halifax", "montreal": "America/Toronto",
+    "perth": "Australia/Perth", "adelaide": "Australia/Adelaide", "brisbane": "Australia/Brisbane",
+    "darwin": "Australia/Darwin", "melbourne": "Australia/Melbourne", "hobart": "Australia/Hobart",
+    "jakarta": "Asia/Jakarta", "bali": "Asia/Makassar", "denpasar": "Asia/Makassar",
+}
+
+
+def local_zone(country: str, location: str = ""):
+    """The brand's time zone (from its city where the country spans several), or UTC when unknown."""
     from datetime import timezone
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-    name = COUNTRY_TZ.get((country or "").upper())
+    place = (location or "").lower()
+    name = next((tz for city, tz in CITY_TZ.items() if city in place), None) or COUNTRY_TZ.get((country or "").upper())
     try:
         return ZoneInfo(name) if name else timezone.utc
     except ZoneInfoNotFoundError:

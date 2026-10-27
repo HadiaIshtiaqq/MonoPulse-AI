@@ -436,5 +436,12 @@ def test_redraw_undo_approve_and_media_cleanup(client, monkeypatch):
     os.utime(stale, (two_days_ago, two_days_ago))
     used = config.MEDIA_DIR / c.posts[0].image_url.split("?")[0].removeprefix("/media/")
     os.utime(used, (two_days_ago, two_days_ago))
+    upload = config.MEDIA_DIR / "up_holiday.jpg"  # your own photo, not used yet: kept for a fortnight
+    upload.write_bytes(_png_bytes())
+    os.utime(upload, (two_days_ago, two_days_ago))
     media_gc.cleanup()
-    assert not stale.exists() and fresh.exists() and used.exists()  # only old, unused files go
+    assert not stale.exists() and fresh.exists() and used.exists() and upload.exists()  # only old, unused files go
+    weeks_ago = time.time() - 15 * 24 * 3600
+    os.utime(upload, (weeks_ago, weeks_ago))
+    media_gc.cleanup()
+    assert not upload.exists()

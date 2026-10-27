@@ -213,6 +213,9 @@ def test_posts_go_out_at_the_brands_local_hour():
     when = datetime(2026, 11, 2, 11, tzinfo=zone).astimezone(timezone.utc)
     assert when.hour == 6  # 11 am in Karachi is 6 am UTC
     assert calendar.local_zone("") is timezone.utc
+    assert str(calendar.local_zone("US", "Austin, Texas")) == "America/Chicago"  # not New York's clock
+    assert str(calendar.local_zone("AU", "Perth, Western Australia")) == "Australia/Perth"
+    assert str(calendar.local_zone("US", "Brooklyn, NY")) == "America/New_York"
 
 
 def test_expensive_calls_are_rate_limited_per_client(monkeypatch):

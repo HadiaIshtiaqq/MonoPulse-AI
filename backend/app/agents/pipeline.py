@@ -254,7 +254,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
             copies = await strategist.write_all(kit, campaign.strategy, slots, findings)
             posts = []
             group_ids: dict[int, str] = {}
-            zone = calendar.local_zone(kit.country)
+            zone = calendar.local_zone(kit.country, kit.location)
             for slot, copy in zip(slots, copies):
                 day = campaign.start_date + timedelta(days=slot.day)
                 # Each platform posts at its own best hour; a second idea that day goes 3 hours later.

@@ -14,6 +14,7 @@ from .store import store
 
 log = logging.getLogger(__name__)
 KEEP_SECONDS = 2 * 24 * 3600
+KEEP_UPLOAD_SECONDS = 14 * 24 * 3600  # your own photos: kept a fortnight in case you come back for them
 
 
 def referenced() -> set[str]:
@@ -44,7 +45,8 @@ def cleanup(now: float | None = None) -> dict:
     keep = referenced()
     removed, freed = 0, 0
     for f in config.MEDIA_DIR.glob("*"):
-        if not f.is_file() or f.name in keep or now - f.stat().st_mtime < KEEP_SECONDS:
+        age = KEEP_UPLOAD_SECONDS if f.name.startswith("up_") else KEEP_SECONDS
+        if not f.is_file() or f.name in keep or now - f.stat().st_mtime < age:
             continue
         try:
             size = f.stat().st_size
