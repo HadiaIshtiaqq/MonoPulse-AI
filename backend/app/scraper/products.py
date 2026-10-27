@@ -21,7 +21,10 @@ PRICE_RE = re.compile(rf"{CURRENCY}\s?\d[\d,]*(?:\.\d{{1,2}})?|\d[\d,]*(?:\.\d{{
 # Attributes that hold a full-size image, best first. Store themes put the big image in data-*.
 LARGE_ATTRS = ("data-large-0", "data-hi-res-0", "data-zoom-image", "data-zoom", "data-full", "data-large", "data-original")
 IMG_ATTRS = ("data-lazy-src", "data-src", "src")
-SKIP_IMG = re.compile(r"logo|icon|sprite|avatar|badge|payment|flag|placeholder|spinner|loader|pixel|blank|transparent|banner-ad|rating|star", re.I)
+SKIP_IMG = re.compile(r"logo|icon|sprite|avatar|badge|payment|flag|placeholder|spinner|loader|pixel|blank|transparent|banner-ad|rating|star"
+                      r"|^(?:add|plus|minus|cart|bag|basket|wishlist|heart|close|cross|search|arrow|chevron|menu|hamburger|user|account"
+                      r"|share|zoom|quick-?view|play|pause)[-_.\d]", re.I)
+ICON_ALT = re.compile(r"\bicons?\b|\b(?:plus|add to (?:cart|bag)|wishlist|quick view|close|search)\b", re.I)
 BG_URL_RE = re.compile(r"background(?:-image)?\s*:[^;]*url\(\s*['\"]?([^'\")]+)")
 MAX_PRODUCTS = 24
 MAX_IMAGES = 16
@@ -52,8 +55,9 @@ def _largest_from_srcset(srcset: str) -> str:
 
 
 def image_of(tag: Tag, base: str) -> str:
-    """Best full-size image URL in an element (itself or anything inside it)."""
-    nodes = [tag, *tag.find_all(True)]
+    """Best full-size image URL in an element (itself or anything inside it). Interface icons
+    ("plus icon", a cart, a heart) are never taken for the product's photo."""
+    nodes = [n for n in [tag, *tag.find_all(True)] if not ICON_ALT.search(str(n.get("alt") or ""))]
     for node in nodes:
         for attr in LARGE_ATTRS:
             val = node.get(attr)
@@ -211,8 +215,16 @@ def data_attr_products(soup: BeautifulSoup, base: str) -> list[Product]:
                 continue
             if not isinstance(data, dict) or not data.get("name"):
                 continue
-            out.append(Product(name=_name(data["name"]), price=_displayed_price(el) or format_price(data.get("price"), str(data.get("currency") or "")),
-                               url=_link_of(el, base), image_url=image_of(el, base), category=_clean(data.get("category") or "", 60)))
+            # The data often sits on a small button (a "+" or a heart); its photo and price are in the
+            # surrounding product card, a few levels up.
+            card = el
+            for _ in range(6):
+                if image_of(card, base) and _displayed_price(card) or card.parent is None:
+                    break
+                card = card.parent
+            out.append(Product(name=_name(data["name"]),
+                               price=_displayed_price(card) or format_price(data.get("price"), str(data.get("currency") or "")),
+                               url=_link_of(card, base), image_url=image_of(card, base), category=_clean(data.get("category") or "", 60)))
             break
     return out
 
@@ -257,6 +269,8 @@ def card_products(soup: BeautifulSoup, base: str) -> list[Product]:
     """Generic fallback: an image inside a link whose surrounding card shows a price."""
     out = []
     for img in soup.find_all("img"):
+        if ICON_ALT.search(str(img.get("alt") or "")):
+            continue
         link = img.find_parent("a", href=True)
         if not link:
             continue

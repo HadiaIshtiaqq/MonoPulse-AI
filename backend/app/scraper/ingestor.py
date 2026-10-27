@@ -13,7 +13,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -188,11 +188,21 @@ def parse_html(html: str, base_url: str) -> ScrapedSite:
     # "logo" images (unless there are many: that's a customer logo wall, not the brand).
     header_logos: list[str] = []
     other_logos: list[str] = []
+    # A logo drawn as SVG right in the page ("<a class=header__logo><svg>…"): many shops have no logo file at all.
+    for a in soup.find_all("a"):
+        hay = " ".join([" ".join(a.get("class", [])), a.get("aria-label", ""), a.get("id", "")]).lower()
+        svg = a.find("svg") if "logo" in hay else None
+        if svg is not None and len(str(svg)) < 200_000:
+            header_logos.append("data:image/svg+xml;utf8," + quote(str(svg)))
+            break
     for img in soup.find_all("img"):
         src = img.get("src") or img.get("data-src") or ""
         if not src:
             continue
         hay = " ".join([src, img.get("alt", ""), " ".join(img.get("class", [])), img.get("id", "")]).lower()
+        if "logo" not in hay and (product_finder.ICON_ALT.search(img.get("alt", "")) or
+                                  product_finder.SKIP_IMG.search(src.lower().split("?")[0].rsplit("/", 1)[-1])):
+            continue  # a cart, a "+", a heart: interface icons, not the brand's logo
         in_header = img.find_parent(["header", "nav"]) is not None
         home_link = img.find_parent("a", href=re.compile(r"^(/|\./|#?$|" + re.escape(base_url) + ")$"))
         if (in_header or home_link) and ("logo" in hay or home_link):
@@ -502,22 +512,45 @@ async def stylesheet_colors(site: ScrapedSite, client: httpx.AsyncClient) -> lis
     return extract_colors("\n".join(sheets))
 
 
+def darken_light_logo(img: Image.Image) -> Image.Image:
+    """A white logo (made for a dark header) disappears on the white chip posts put logos on:
+    draw it in near-black instead, keeping its shape."""
+    rgba = img.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    if not alpha.getbbox():
+        return rgba
+    gray = rgba.convert("L")
+    opaque = [g for g, a in zip(gray.getdata(), alpha.getdata()) if a > 128]
+    if opaque and sum(opaque) / len(opaque) > 225 and len(opaque) < rgba.width * rgba.height * 0.9:
+        dark = Image.new("RGBA", rgba.size, (24, 24, 28, 255))
+        dark.putalpha(alpha)
+        return dark
+    return rgba
+
+
 async def download_logo(candidates: list[str], client: httpx.AsyncClient, brand_id: str) -> tuple[str | None, str | None, bytes | None]:
     for url in candidates[:5]:
         try:
-            r = await client.get(url, timeout=8)
-            if r.status_code != 200 or len(r.content) < 200:
-                continue
-            data = r.content
-            if is_svg(url, r.headers.get("content-type", ""), data):
-                data = rasterize_svg(data)
+            if url.startswith("data:image/svg+xml;utf8,"):  # an inline SVG logo, read from the page itself
+                data = rasterize_svg(unquote(url.split(",", 1)[1]).encode())
+                url = None
+            else:
+                r = await client.get(url, timeout=8)
+                if r.status_code != 200 or len(r.content) < 200:
+                    continue
+                data = r.content
+                if is_svg(url, r.headers.get("content-type", ""), data):
+                    data = rasterize_svg(data)
             img = Image.open(io.BytesIO(data))
             img.load()
-            if min(img.size) < 32:
+            if min(img.size) < 32 and max(img.size) < 120:
                 continue
             path = config.MEDIA_DIR / f"logo_{brand_id}.png"
-            img.convert("RGBA").save(path)
-            return url, str(path), data
+            img = darken_light_logo(img)
+            img.save(path)
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            return url, str(path), buf.getvalue()
         except Exception:  # noqa: BLE001 - any broken image just means "try the next one"
             continue
     return (candidates[0] if candidates else None), None, None

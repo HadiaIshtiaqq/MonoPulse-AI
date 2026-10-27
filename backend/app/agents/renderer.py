@@ -193,8 +193,18 @@ def swipe_chip(draw, w: int, h: int, m: int, color, text_color) -> None:
     draw.text((x1 - tw - pad, y1 - f.size - pad // 2), label, font=f, fill=text_color)
 
 
+def flat(img: Image.Image) -> Image.Image:
+    """RGB with any transparency on white: transparent pixels would otherwise turn black."""
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        out = Image.new("RGB", rgba.size, (255, 255, 255))
+        out.paste(rgba, mask=rgba.getchannel("A"))
+        return out
+    return img.convert("RGB")
+
+
 def cover_photo(path: str, size: tuple[int, int]) -> Image.Image:
-    img = Image.open(path).convert("RGB")
+    img = flat(Image.open(path))
     # Product shots are usually portrait with the subject's face near the top; keep it in frame.
     centering = (0.5, 0.2) if img.height > img.width * 1.15 and size[1] < img.height * size[0] / img.width else (0.5, 0.45)
     return ImageOps.fit(img, size, Image.LANCZOS, centering=centering)
@@ -462,7 +472,10 @@ def render_duo(kit: BrandKit, post: SocialPost, size: tuple[int, int]) -> Image.
         lf = font(int(r * 1.1))
         draw.text((x + m // 2 + r - draw.textlength(letter, font=lf) / 2, head_h + m + m // 2 + r * 0.35), letter, font=lf, fill=text_on(accent))
         if product:
-            name = product.name if len(product.name) <= 26 else product.name[:25].rsplit(" ", 1)[0] + "…"
+            from .strategist import short_name  # "3 Piece - Embroidered Net Suit" -> "Embroidered Net Suit"
+
+            label = short_name(product.name)
+            name = label if len(label) <= 26 else label[:25].rsplit(" ", 1)[0] + "…"
             ty = head_h + m + ph + int(m * 0.6)
             nf = font(int(label_h * 0.3))
             draw.text((x, ty), name, font=nf, fill=secondary)

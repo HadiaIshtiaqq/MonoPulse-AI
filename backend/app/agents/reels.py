@@ -757,9 +757,12 @@ def _complement(p, a, i):
 
 def _custom(color):
     def make(p, a, i):
+        # The picked colour is what people notice (caption blocks, stickers, bars, price chips),
+        # so it's the accent; a deep shade of it is the background.
         c = rgb(color)
-        other = p if sum(abs(x - y) for x, y in zip(p, c)) > 160 else hue_shift(c, 150, 0.6)
-        return c, other, shade(c, 0.15)
+        accent = c if luminance(c) > 0.06 else shade(c, 0.6)
+        base = shade(c, 0.3) if luminance(c) > 0.12 else c
+        return base, accent, shade(c, 0.12)
     return make
 
 
@@ -1358,7 +1361,6 @@ async def make_reel(campaign: Campaign, post: SocialPost, edited: list[ReelScene
         for s, t in zip(scenes, texts):
             s.text = t
     festive = occasions.OCCASIONS.get(occasion_key) if topic == "occasion" else None
-    trend_key = occasion_key if topic == "trend" else ""
     if festive and not (options and options.palette) and (edited is None or not post.reel_options.palette or post.reel_topic != "occasion"):
         opts.palette = "occasion"  # festive colours unless the owner picked a palette
     key = f"{campaign.id}_{post.group_id or post.id}_reel"

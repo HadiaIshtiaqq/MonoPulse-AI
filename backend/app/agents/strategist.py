@@ -348,7 +348,7 @@ async def write_batch(kit: BrandKit, strategy: CampaignStrategy, slots: list[Slo
     for j, s in enumerate(slots):
         entry = {"slot": offset + j, "group": s.group, "platform": s.platform.value, "format": s.format, "pillar": s.pillar,
                  "post_type": variety.KIND_LABELS.get(effective_kind(s), s.kind), "weekly_theme": s.theme,
-                 "caption_shape": variety.SHAPE_HINTS[variety.caption_shape(s.group, s.platform.value)]}
+                 "caption_shape": variety.SHAPE_HINTS[variety.caption_shape(s.group + brand_seed(kit), s.platform.value)]}
         if s.compare:
             entry["compare_with"] = product_brief(s.compare)
         if s.occasion:
@@ -483,6 +483,7 @@ def shop_link(kit: BrandKit, p: Product) -> str:
     return url.split("//")[-1].rstrip("/")
 
 
+GENERIC_NAME = re.compile(r"^(?:\d+\s*-?\s*(?:pc|pcs|piece|pieces)|unstitched|stitched|ready to wear|rtw|new|sale|basics?)$", re.I)
 AUDIENCE_SUFFIX = re.compile(r"^(.+?)\s+[-–—]\s+(men|women|ladies|kids|boys|girls|toddlers?|junior|infants?|unisex)\b", re.I)
 
 
@@ -495,6 +496,11 @@ def short_name(name: str, max_words: int = 6) -> str:
     m = AUDIENCE_SUFFIX.match(name)
     if m:
         return f"{m.group(1).strip()} for {m.group(2).lower()}"
+    parts = re.split(r"\s+[-|–—:]\s+", name, maxsplit=1)
+    if len(parts) == 2 and GENERIC_NAME.match(parts[0].strip()) and parts[1].strip():
+        # "3 Piece - Embroidered Light Khaddar Suit": the part before the dash is just a type,
+        # the part after tells products apart.
+        name = parts[1].strip()
     base = re.split(r"\s+(?:with|for|in|by)\s+|\s+[-|–—:]\s+|\s*\(", name, maxsplit=1, flags=re.I)[0].strip() or name
     words = base.split()
     return " ".join(words[:max_words]) if len(words) > max_words else base
@@ -572,8 +578,9 @@ def product_angle(kit: BrandKit, slot: Slot, p: Product) -> tuple[str, str]:
     family = variety.headline_family(kind, angle, is_wearable(kit))
     fields = headline_fields(kit, slot, p)
     idea_family = family if family in variety.PRODUCT_IDEAS else "tip"
-    headline = variety.pick(variety.PRODUCT_HEADLINES[family], slot.nth).format(**fields)
-    idea = variety.pick(variety.PRODUCT_IDEAS[idea_family], slot.nth).format(**fields)
+    n = slot.nth + brand_seed(kit)
+    headline = variety.pick(variety.PRODUCT_HEADLINES[family], n).format(**fields)
+    idea = variety.pick(variety.PRODUCT_IDEAS[idea_family], n).format(**fields)
     return headline, idea
 
 
@@ -590,12 +597,18 @@ def price_line(p: Product) -> str:
     return f" {tidy_price(p.price)}."
 
 
-def closer(slot: Slot, kind: str, category: str) -> str:
+def brand_seed(kit: BrandKit) -> int:
+    """Where this brand starts in every wording rotation, so two brands' campaigns don't open
+    with the same headlines and captions ("3 picks worth a closer look" for everyone)."""
+    return sum(map(ord, kit.name or "")) % 97
+
+
+def closer(slot: Slot, kind: str, category: str, seed: int = 0) -> str:
     platform = slot.platform.value
     options = (variety.CLOSERS.get(f"{platform}_{kind}") or (variety.CLOSERS.get(f"{platform}_carousel") if slot.format == "carousel" else None)
                or variety.CLOSERS.get(platform, [""]))
     # Rotate by idea, so consecutive posts on a platform end differently.
-    return variety.pick(options, slot.group).format(category=category)
+    return variety.pick(options, slot.group + seed).format(category=category)
 
 
 def flavour(kit: BrandKit) -> str:
@@ -606,7 +619,8 @@ def flavour(kit: BrandKit) -> str:
 def shaped_caption(kit: BrandKit, slot: Slot, p: Product, headline: str, idea: str, price: str, shape: str) -> str:
     """The post's idea told in one of several shapes (see variety.CAPTION_SHAPES)."""
     # A shape comes round every len(CAPTION_SHAPES) posts: count its uses, so its lines rotate too.
-    f, g = flavour(kit), slot.group // len(variety.CAPTION_SHAPES) + variety.PLATFORM_ORDER.index(slot.platform.value)
+    f = flavour(kit)
+    g = (slot.group + brand_seed(kit)) // len(variety.CAPTION_SHAPES) + variety.PLATFORM_ORDER.index(slot.platform.value) + brand_seed(kit)
     price = price.strip()
     tail = f" {price}" if price else ""
     if shape == "hook":
@@ -638,10 +652,10 @@ def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
     else:
         price = price_line(p)
     link = shop_link(kit, p)
-    close = closer(slot, kind, playbook_for(kit.industry).category)
+    close = closer(slot, kind, playbook_for(kit.industry).category, brand_seed(kit))
     cta_family = "instagram" if slot.platform is Platform.INSTAGRAM else "linkedin" if slot.platform is Platform.LINKEDIN else "linked"
-    cta = variety.pick(variety.CTAS[cta_family], slot.group).format(link=link) if (link or cta_family == "instagram") else f"Shop {kit.name} online"
-    shape = variety.caption_shape(slot.group, slot.platform.value)
+    cta = variety.pick(variety.CTAS[cta_family], slot.group + brand_seed(kit)).format(link=link) if (link or cta_family == "instagram") else f"Shop {kit.name} online"
+    shape = variety.caption_shape(slot.group + brand_seed(kit), slot.platform.value)
     if kind == "duo" and shape == "details":
         shape = "question"  # a fact list doesn't fit a "pick one" post
     if slot.platform is Platform.X:
@@ -662,7 +676,7 @@ def fallback_product_copy(kit: BrandKit, slot: Slot, p: Product) -> dict:
 def adapt_to_platform(kit: BrandKit, slot: Slot, caption: str, kind: str = "") -> tuple[str, str]:
     """Give generic (non-product) copy each platform's own shape, ending and call to action."""
     site = (kit.website_url or "").split("//")[-1].strip("/")
-    close = closer(slot, kind, playbook_for(kit.industry).category)
+    close = closer(slot, kind, playbook_for(kit.industry).category, brand_seed(kit))
     if slot.platform is Platform.X:
         return caption.split(". ")[0].rstrip(".") + ".", site or kit.name
     if slot.platform is Platform.LINKEDIN:
@@ -775,23 +789,23 @@ def fallback_copy(kit: BrandKit, slot: Slot) -> dict:
     fields = {"item": item, "brand": name, "moment": moment or "the season", "n": min(4, len(claims) or 1) + 1}
     H = variety.GENERIC_HEADLINES
     if slot.format == "carousel":
-        headline = variety.pick(H["carousel"], slot.nth)
+        headline = variety.pick(H["carousel"], slot.nth + brand_seed(kit))
         caption = f"A few things worth knowing about {name}, from {item} to how we work. Swipe through.{claim}"
     elif kind == "moment" and moment:
-        headline = variety.pick(H["moment"], slot.nth)
+        headline = variety.pick(H["moment"], slot.nth + brand_seed(kit))
         caption = f"{moment} is coming up. Plan ahead with {item} from {name}.{claim}"
     elif kind == "question":
-        headline = variety.pick(H["question"], slot.nth)
+        headline = variety.pick(H["question"], slot.nth + brand_seed(kit))
         caption = (f"Tell us: what do you always get at {name}? {Item}, or something else?" if food
                    else f"Tell us: what brings you to {name}? {Item}, or something else?") + claim
     elif kind == "tip":
-        headline = variety.pick(H["tip"], slot.nth)
+        headline = variety.pick(H["tip"], slot.nth + brand_seed(kit))
         caption = f"Good to know before you visit {name}:{claim or ' ask us anything.'}"
     elif pillar_angle(slot.pillar) == "craft":
-        headline = variety.pick(H["craft"], slot.nth)
+        headline = variety.pick(H["craft"], slot.nth + brand_seed(kit))
         caption = f"A look at how {name} makes {item}.{claim}"
     else:
-        headline = variety.pick(H["spotlight" if food else "spotlight_other"], slot.nth)
+        headline = variety.pick(H["spotlight" if food else "spotlight_other"], slot.nth + brand_seed(kit))
         caption = f"{Item} at {name}.{claim}"
     caption, cta = adapt_to_platform(kit, slot, caption, kind)
     return {"headline": fit_headline(headline.format(**fields)), "caption": caption, "cta": cta}

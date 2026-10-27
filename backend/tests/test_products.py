@@ -261,3 +261,25 @@ def test_indolj_menu_becomes_products_and_branches():
 
 def test_fast_food_reads_as_food_and_beverage():
     assert ingestor.guess_industry("Product: Zinger Burger (Burgers)\nProduct: Crispy Wings\nFried chicken and fries") == "Food & Beverage"
+
+
+def test_interface_icons_are_never_product_photos_or_logos():
+    from app.agents import strategist
+
+    html = """<html><body><header><a class="header__logo" aria-label="Brand logo" href="/"><svg viewBox="0 0 10 10"><rect width="10" height="10" fill="#fff"/></svg></a></header>
+    <div class="product-tile" data-gtm='{"name": "3 Piece - Embroidered Net Suit", "price": "14990"}'>
+      <a href="/p/1"><img class="tile-image lazyload" src="data:image/gif;base64,R0lGOD" data-src="https://cdn.example/net-suit.jpg?sw=1000"
+         alt="Embroidered Net Suit"></a>
+      <span class="price">Rs.14,990</span>
+      <button class="quick-view"><img src="/images/add.png" alt="plus icon"></button>
+    </div></body></html>"""
+    site = ingestor.parse_html(html, "https://shop.example/")
+    assert site.logo_candidates[0].startswith("data:image/svg+xml")  # the header's own SVG logo, not the "+" icon
+    assert not any("add.png" in u for u in site.logo_candidates)
+    (p,) = [x for x in site.products if "Net" in x.name][:1]
+    assert p.image_url == "https://cdn.example/net-suit.jpg?sw=1000" and p.price == "Rs.14,990"
+    assert strategist.short_name(p.name) == "Embroidered Net Suit"
+    # A white logo is drawn dark so it shows on the white logo chip.
+    white = Image.new("RGBA", (100, 40), (0, 0, 0, 0))
+    white.paste((255, 255, 255, 255), (10, 10, 90, 30))
+    assert ingestor.darken_light_logo(white).getpixel((50, 20))[:3] == (24, 24, 28)

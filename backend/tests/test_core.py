@@ -152,8 +152,9 @@ def test_platform_versions_are_written_for_each_platform():
     by_platform = {s.platform: c for s, c in zip(slots, copies)}
     assert len({c["headline"] for c in copies}) == 1  # the same image headline everywhere
     assert len({c["caption"] for c in copies}) == 4  # but each caption is written for its platform
-    assert "Save this" in by_platform[Platform.INSTAGRAM]["caption"]
-    assert "comments" in by_platform[Platform.FACEBOOK]["caption"]
+    from app.agents import variety
+    assert by_platform[Platform.INSTAGRAM]["caption"].splitlines()[-1] in variety.CLOSERS["instagram"]
+    assert any(c in by_platform[Platform.FACEBOOK]["caption"] for c in variety.CLOSERS["facebook"])
     assert by_platform[Platform.LINKEDIN]["caption"].startswith("From the Bluebird Bakery team")
     assert len(by_platform[Platform.X]["caption"]) < len(by_platform[Platform.INSTAGRAM]["caption"])
 

@@ -4,7 +4,7 @@ from datetime import date
 import pytest
 
 from app import config
-from app.agents import calendar, strategist
+from app.agents import calendar, strategist, variety
 from app.agents.playbooks import brand_facts, playbook_for
 from app.schemas import BrandKit, TrendItem
 from app.scraper import ingestor
@@ -100,7 +100,7 @@ def test_a_bakery_without_product_listings_gets_a_real_plan():
     assert any("Black Friday" in t for t in s.weekly_themes)
     slots = strategist.plan_slots(s, [], [strategist.Platform.INSTAGRAM], 4, 1)
     heads = [strategist.fallback_copy(kit, sl)["headline"] for sl in slots]
-    assert heads[0] == "On the menu: special order cakes" and "take" not in " ".join(heads).lower()
+    assert heads[0].endswith("special order cakes") and "take" not in " ".join(heads).lower()
 
 
 def test_calendar_dates():
@@ -117,7 +117,7 @@ def test_sale_products_get_sale_copy():
     slot = strategist.Slot(day=0, platform=strategist.Platform.INSTAGRAM, pillar="Offers & Occasions", theme="", trend=None,
                            product=kit.products[0], kind="sale")
     copy = strategist.fallback_copy(kit, slot)
-    assert copy["headline"] == "30% off: Power for men"
+    assert copy["headline"] in [h.format(pct=30, name="Power for men", price="Rs.4,199") for h in variety.PRODUCT_HEADLINES["sale"]]
     assert "Now Rs.4,199, was Rs.5,999." in copy["caption"]
     assert strategist.short_name("Bubble Gummers - Toddler (2 Years - 5 Years)") == "Bubble Gummers for toddler"
 

@@ -51,7 +51,8 @@ def test_a_month_of_copy_has_no_repeated_headlines_or_endings():
     ctas = [c["cta"] for c in copies]
     assert all(a != b for a, b in zip(ctas, ctas[1:]))
     by_kind = {s.kind: c for s, c in zip(slots, copies)}
-    assert by_kind["duo"]["headline"] in ("This or that?", "Pick one: Power for men or Comfit for women?") or "or" in by_kind["duo"]["headline"]
+    duo_heads = [h.format(a="Power for men", b="Comfit for women") for h in variety.PRODUCT_HEADLINES["duo"]]
+    assert by_kind["duo"]["headline"] in duo_heads or " or " in by_kind["duo"]["headline"]
     assert "-" not in by_kind["quote"]["headline"] and by_kind["quote"]["headline"]
     sale_heads = [c["headline"] for s, c in zip(slots, copies) if s.kind == "sale"]
     assert sale_heads and all(any(w in h for w in ("% off", "Price drop", "Sale pick", "Now ")) for h in sale_heads)

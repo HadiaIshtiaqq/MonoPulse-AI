@@ -431,7 +431,7 @@ export function ReelPanel({ post, brand, caption, onChange, onPreview }: {
   const effectiveOccasion = occasion || opts?.suggested_occasion || opts?.occasions[0]?.key || "";
   const occasionInfo = opts?.occasions.find((o) => o.key === effectiveOccasion);
   const festive = effectiveTopic === "occasion" && occasionInfo ? occasionInfo.colors : null;
-  const previewColors = palette === "occasion" && festive ? festive : palette === "custom" ? [color, brand?.accent_color ?? "#FFFFFF"]
+  const previewColors = palette === "occasion" && festive ? festive : palette === "custom" ? [color, color]
     : opts?.palettes.find((p) => p.key === palette)?.colors ?? (festive && !has ? festive : undefined);
   useEffect(() => { onPreview(focus !== null && draft[focus] ? draft[focus] : null, previewColors); },
     // eslint-disable-next-line react-hooks/exhaustive-deps
