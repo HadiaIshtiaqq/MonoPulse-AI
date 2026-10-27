@@ -57,6 +57,22 @@ class VerificationNeeded(BrowserPostError):
     """The platform showed a human check. Only the person can answer it."""
 
 
+def explain(exc: Exception) -> str:
+    """A browser failure in words a person can act on. The full log goes to the server log, never the page."""
+    log.warning("browser failed: %s", exc)
+    text = str(exc)
+    if re.search(r"has been closed|already in use|ProcessSingleton|SingletonLock|lock file", text, re.I):
+        return ("MonoPlus's browser is already open in another window (perhaps one left from before), and only one "
+                "can use your sign-ins at a time. Close every MonoPlus browser window, then try again.")
+    if re.search(r"Executable doesn't exist|playwright install", text, re.I):
+        return "The browser isn't installed yet. On this computer run: python -m playwright install chromium"
+    if re.search(r"DISPLAY|headed|no display|XServer", text, re.I):
+        return "This computer can't show a browser window (it looks like a server without a screen)."
+    if re.search(r"Timeout", text):
+        return "The browser took too long to respond. Try again in a moment."
+    return f"The browser couldn't do that ({type(exc).__name__}). Close MonoPlus's browser windows and try again."
+
+
 def available() -> bool:
     try:
         import playwright.sync_api  # noqa: F401
@@ -128,7 +144,10 @@ class BrowserPoster:
     # ------------------------------------------------------------------ posting
 
     def _post(self, platform: Platform, caption: str, files: list[Path], submit: bool) -> str:
-        page = self._page()
+        try:
+            page = self._page()
+        except Exception as exc:  # noqa: BLE001 - the browser wouldn't start
+            raise BrowserPostError(explain(exc)) from exc
         flow = {Platform.LINKEDIN: _linkedin, Platform.X: _x, Platform.FACEBOOK: _facebook, Platform.INSTAGRAM: _instagram}[platform]
         try:
             flow(page, caption, [str(f) for f in files], submit)
@@ -347,7 +366,8 @@ def move_old_profile() -> None:
             shutil.move(str(old), str(new))
             log.info("moved the browser profile to %s", new)
         except OSError as exc:  # a browser still holding it open
-            log.warning("couldn't move the browser profile out of the project (%s)", exc)
+            log.warning("couldn't move the browser profile out of the project yet (%s); using it where it is", exc)
+            poster.profile = old  # your sign-ins stay usable; it moves on a later start
 
 
 poster = BrowserPoster()

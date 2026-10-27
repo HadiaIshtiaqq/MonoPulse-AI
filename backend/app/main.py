@@ -761,8 +761,8 @@ async def browser_status() -> dict:
         return {"available": False, "signed_in": {}, "scheduled": store.settings.browser_publish}
     try:
         signed_in = await browser.poster.status()
-    except Exception as exc:  # noqa: BLE001 - e.g. no display on a server
-        return {"available": False, "error": f"Couldn't start the browser here: {exc}", "signed_in": {},
+    except Exception as exc:  # noqa: BLE001 - e.g. a window already open, or no display on a server
+        return {"available": True, "error": browser.explain(exc), "signed_in": browser.poster.signed_in,
                 "scheduled": store.settings.browser_publish}
     return {"available": True, "signed_in": signed_in, "scheduled": store.settings.browser_publish}
 
@@ -777,7 +777,7 @@ async def browser_login(platform: Platform) -> dict:
     try:
         await browser.poster.login(platform)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(503, f"Couldn't open the browser on this computer: {exc}") from exc
+        raise HTTPException(503, browser.explain(exc)) from exc
     return {"opened": True, "note": f"A browser window opened on {platform.value.title()}'s sign-in page. Sign in there, then come back."}
 
 
@@ -787,7 +787,10 @@ async def browser_sign_out() -> dict:
     from .social import browser
 
     if browser.available():
-        await browser.poster.sign_out()
+        try:
+            await browser.poster.sign_out()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(503, browser.explain(exc)) from exc
     store.settings.browser_publish = False
     store.save()
     return {"signed_out": True}

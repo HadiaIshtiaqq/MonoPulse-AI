@@ -65,6 +65,8 @@ async def browser_post(post: SocialPost, submit: bool, media: str = "images") ->
         message = await browser.poster.post(post.platform, full_caption(post), post_files(post, media), submit)
     except browser.BrowserPostError as exc:
         raise PublishError(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - anything else the browser threw: say what to do, not a stack
+        raise PublishError(browser.explain(exc)) from exc
     if submit:
         post.status, post.published_via, post.publish_error = PostStatus.PUBLISHED, "browser", None
         store.save()

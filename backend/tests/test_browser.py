@@ -116,3 +116,25 @@ def test_a_human_check_stops_posting_and_hands_the_window_over():
         browser._signed_in_or_raise(Page(), "LinkedIn")
     Page.url = "https://www.instagram.com/"
     browser._check_for_challenge(Page(), "Instagram")  # an ordinary page is fine
+
+
+def test_browser_failures_are_explained_not_dumped():
+    locked = RuntimeError("BrowserContext.cookies: Target page, context or browser has been closed\nBrowser logs: <launching> "
+                          "C:\ms-playwright\chrome.exe --disable-field-trial-config ...")
+    msg = browser.explain(locked)
+    assert "already open" in msg and "Browser logs" not in msg and "--disable" not in msg
+    assert "playwright install" in browser.explain(RuntimeError("Executable doesn't exist at /x/chrome"))
+
+
+def test_a_browser_that_wont_start_is_reported_calmly(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    async def broken():
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    monkeypatch.setattr(browser.poster, "status", broken)
+    with TestClient(app) as client:
+        body = client.get("/api/browser").json()
+    assert body["available"] and "Close every MonoPlus browser window" in body["error"]

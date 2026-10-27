@@ -95,7 +95,7 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
       {status === null ? (
         <div className="mt-3 flex items-center gap-2 text-xs text-slate-500"><Loader2 size={13} className="animate-spin" /> Checking the browser…</div>
       ) : !status.available ? (
-        <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <p className="mt-3 break-words rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
           {status.error ?? "This needs Playwright on the computer running MonoPlus:"}{" "}
           {!status.error && <code className="font-mono">pip install playwright &amp;&amp; python -m playwright install chromium</code>}
         </p>
@@ -111,6 +111,12 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
               {busy === "check" ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Check
             </button>
           </div>
+          {status.error && (
+            <div className="mt-2 flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="min-w-0 flex-1 break-words">{status.error}</p>
+              <button onClick={check} disabled={busy !== null} className="shrink-0 font-medium underline">Check again</button>
+            </div>
+          )}
 
           {!signedIn ? (
             <button onClick={signIn} disabled={busy !== null} className="btn-primary mt-3 w-full">
