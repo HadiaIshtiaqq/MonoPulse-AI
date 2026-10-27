@@ -151,7 +151,9 @@ Plain-text version (for contexts that don't render Mermaid):
 - **Writes are deterministic code.** Models only return text and JSON. Publishing, scheduling and storage are plain Python.
 - **No double posting.** Each post is locked while publishing, and a post that is already published returns `409`.
 - **SSRF guard.** Every server-side fetch of a user-supplied URL (websites, logos, photos, webhooks) is checked on each request, including redirects. Private, loopback and link-local addresses are blocked.
-- **Access key.** With `MONOPLUS_ACCESS_KEY` set, every `/api` call and `/mcp` need the key. The web app asks for it once.
+- **Access key.** With `MONOPLUS_ACCESS_KEY` set, every `/api` call and `/mcp` need the key. The web app asks for it once and the server keeps it in an httpOnly cookie, out of reach of page scripts.
+- **Your accounts stay on your computer.** Calls that post or drive the browser (`/api/browser*`, publish, publishing settings, maintenance) only answer the computer MonoPlus runs on, or a caller with the key. Behind a reverse proxy, set `MONOPLUS_TRUST_PROXY=1` so the real client address is checked.
+- **Sign-ins outside the project.** MonoPlus's browser profile lives in `%LOCALAPPDATA%/MonoPlus/browser-profile` (`MONOPLUS_BROWSER_PROFILE` to change it), and "Sign out everywhere" deletes it. If a platform shows a captcha or security check, MonoPlus stops and leaves it for you to answer.
 - **No secrets in the UI.** Tokens and model details never reach the browser.
 
 ### How NVIDIA Nemotron on Nebius Token Factory is used
@@ -493,7 +495,7 @@ Fill in the `META_*`, `INSTAGRAM_ACCOUNT_ID`, `LINKEDIN_*` and `X_USER_ACCESS_TO
 ### 9. Run the tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest -q
+cd backend && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest -q
 ```
 
 There are 109 tests, with every external API mocked. They cover:
@@ -521,8 +523,9 @@ With no keys at all, everything still runs:
 
 - Set `NEBIUS_API_KEY`, `TAVILY_API_KEY` and `MONOPLUS_ACCESS_KEY`.
 - Set `PUBLIC_API_URL` and `PUBLIC_APP_URL` to the public URLs, and `CORS_ORIGINS` to the web app's origin.
-- Mount a persistent volume at `/data` (the SQLite database and rendered media). Unused media older than two days is
-  cleaned up at start and through `POST /api/maintenance/cleanup`.
+- Mount a persistent volume at `/data` (the SQLite database and rendered media). Unused media older than two days (your
+  uploads: two weeks) is cleaned up at start and through `POST /api/maintenance/cleanup`.
+- Behind a reverse proxy, set `MONOPLUS_TRUST_PROXY=1`; otherwise every request looks like it comes from the proxy.
 - Set `MONOPLUS_ACCESS_KEY` before putting the app online; the server warns at start when it isn't set.
 
 The web app is a standard Next.js build with `NEXT_PUBLIC_API_URL` pointing at the API.
