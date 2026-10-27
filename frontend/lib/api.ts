@@ -18,6 +18,7 @@ export type ReelOptionsInfo = {
   languages: { key: ReelLanguage; label: string }[];
   trends: { key: string; label: string }[];
 };
+export type ReelResult = { post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string; topic: string; occasion: string };
 export type ReelPhoto = { url: string; label: string; price: string; remote: boolean };
 export type ReelStyle = { key: string; label: string; blurb: string };
 
@@ -406,9 +407,16 @@ export const api = {
   humanizePost: (id: string, mode: HumanizeMode = "standard") =>
     req<HumanizeResult & { post: SocialPost }>(`/api/posts/${id}/humanize`, json("POST", { mode })),
   rewritePost: (id: string, tone: string) => req<SocialPost>(`/api/posts/${id}/rewrite`, json("POST", { tone })),
-  makeReel: (id: string, body: { scenes?: ReelScene[]; style?: string; options?: ReelOptions; topic?: string; occasion?: string; trend?: string } = {}) =>
-    req<{ post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string; topic: string; occasion: string }>(
-      `/api/posts/${id}/reel`, json("POST", body)),
+  /** Renders in the background on the server and resolves when the reel is ready (it can take a while). */
+  makeReel: async (id: string, body: { scenes?: ReelScene[]; style?: string; options?: ReelOptions; topic?: string; occasion?: string; trend?: string } = {}) => {
+    const { job_id } = await req<{ job_id: string }>(`/api/posts/${id}/reel?background=true`, json("POST", body));
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const job = await req<{ status: "running" | "done" | "error"; result?: ReelResult; error?: string }>(`/api/reel-jobs/${job_id}`);
+      if (job.status === "done" && job.result) return job.result;
+      if (job.status === "error") throw new Error(job.error || "The reel couldn't be made. Please try again.");
+    }
+  },
   reelStyles: () => req<ReelStyle[]>("/api/reel-styles"),
   reelOptions: (id: string) => req<ReelOptionsInfo>(`/api/posts/${id}/reel/options`),
   captionLanguage: (id: string, language: ReelLanguage) =>

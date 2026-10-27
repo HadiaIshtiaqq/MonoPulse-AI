@@ -126,6 +126,31 @@ def test_make_reel_through_the_api(client, monkeypatch):  # noqa: F811
     assert {t["key"] for t in opts["topics"]} == set(reels.TOPICS) and opts["palettes"] and opts["occasions"]
 
 
+def test_reels_render_in_the_background(client, monkeypatch):  # noqa: F811
+    import time
+
+    monkeypatch.setattr(reels.render, "FPS", 3)
+    post = _campaign_with_posts(days=1).posts[0]
+    r = client.post(f"/api/posts/{post.id}/reel?background=true")
+    assert r.status_code == 202 and r.json()["status"] == "running"
+    job_id = r.json()["job_id"]
+    for _ in range(120):
+        job = client.get(f"/api/reel-jobs/{job_id}").json()
+        if job["status"] != "running":
+            break
+        time.sleep(0.5)
+    assert job["status"] == "done", job
+    assert job["result"]["post"]["video_url"].startswith("/media/")
+    bad = client.post(f"/api/posts/{post.id}/reel?background=true", json={"style": "sparkles"}).json()["job_id"]
+    for _ in range(20):
+        job = client.get(f"/api/reel-jobs/{bad}").json()
+        if job["status"] != "running":
+            break
+        time.sleep(0.2)
+    assert job["status"] == "error" and job["code"] == 422
+    assert client.get("/api/reel-jobs/nope").status_code == 404
+
+
 def test_owner_edits_and_options_then_rerenders(client, monkeypatch):  # noqa: F811
     monkeypatch.setattr(reels.render, "FPS", 3)
     c = _campaign_with_posts(days=2)

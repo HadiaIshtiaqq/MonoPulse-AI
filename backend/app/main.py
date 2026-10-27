@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,6 +45,7 @@ from .schemas import (
     SetBackgroundRequest,
     SocialPost,
     UpdatePostRequest,
+    new_id,
 )
 from .store import store
 
@@ -543,12 +545,52 @@ async def rewrite_post(post_id: str, req: RewriteRequest) -> SocialPost:
     return post
 
 
+# Reels rendering in the background: {job id: {"status", "result" | "error", "code", "at"}}. Kept in
+# memory for an hour, which is plenty for the page that asked to collect its reel.
+REEL_JOBS: dict[str, dict] = {}
+_reel_tasks: set[asyncio.Task] = set()
+
+
 @app.post("/api/posts/{post_id}/reel")
-async def make_reel(post_id: str, req: ReelRequest | None = None) -> dict:
+async def make_reel(post_id: str, req: ReelRequest | None = None, background: bool = False):
     """A 9:16 motion video of the post for Instagram Reels, YouTube Shorts, TikTok and Facebook Reels,
     shared by every platform version of the post. Send `scenes` to render the owner's edits;
-    leave them out to write a fresh script."""
+    leave them out to write a fresh script. With ?background=true it answers at once with a job
+    id to poll at /api/reel-jobs/{id}, so a long render never holds a request open."""
     campaign, post = _post(post_id)
+    if not background:
+        return await _render_reel(campaign, post, req)
+    now = datetime.now(timezone.utc)
+    for k in [k for k, j in REEL_JOBS.items() if now - j["at"] > timedelta(hours=1)]:
+        REEL_JOBS.pop(k, None)
+    job_id = new_id()
+    REEL_JOBS[job_id] = {"status": "running", "post_id": post.id, "at": now}
+
+    async def run() -> None:
+        try:
+            result = await _render_reel(campaign, post, req)
+            REEL_JOBS[job_id].update(status="done", result=jsonable_encoder(result))
+        except HTTPException as exc:
+            REEL_JOBS[job_id].update(status="error", error=exc.detail, code=exc.status_code)
+        except Exception as exc:  # noqa: BLE001 - reported to the page that's waiting
+            logging.getLogger(__name__).exception("reel job %s failed", job_id)
+            REEL_JOBS[job_id].update(status="error", error=f"The reel couldn't be made ({type(exc).__name__}).", code=500)
+
+    task = asyncio.create_task(run())
+    _reel_tasks.add(task)
+    task.add_done_callback(_reel_tasks.discard)
+    return JSONResponse({"job_id": job_id, "status": "running"}, status_code=202)
+
+
+@app.get("/api/reel-jobs/{job_id}")
+def reel_job(job_id: str) -> dict:
+    job = REEL_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "That reel job has finished and been cleared, or never existed. Make the reel again.")
+    return {k: v for k, v in job.items() if k != "at"}
+
+
+async def _render_reel(campaign: Campaign, post: SocialPost, req: ReelRequest | None) -> dict:
     try:
         info = await reels.make_reel(campaign, post, req.scenes if req else None, req.style if req else None,
                                      req.options if req else None, req.topic if req else None, req.occasion if req else None,
