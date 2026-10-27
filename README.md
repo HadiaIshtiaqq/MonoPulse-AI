@@ -318,6 +318,19 @@ Edit and re-render a post. Any of `headline`, `caption`, `cta`, `hashtags`, `pub
 
 Makes a 9:16 MP4 reel of the post and attaches it to every platform version (`video_url`, `video_poster`, and the editable `reel_scenes`). Send `{"scenes": [...]}` to render the owner's edited scenes instead of writing a new script; `GET /api/posts/{post_id}/reel/photos` lists the photos a scene can use. Returns the post plus `seconds`, the script's `scenes`, `used_llm` and `render_ms`. Reels are included in the campaign export under `reels/`.
 
+### Instagram handles
+
+A campaign can start from an Instagram profile (`@brand` or its URL). Instagram only shows profiles to signed-in people or
+to approved apps, so MonoPlus reads one of two honest ways, best first:
+
+1. **Instagram's official API** ("Business Discovery"): set `META_ACCESS_TOKEN` and `INSTAGRAM_ACCOUNT_ID` for an Instagram
+   Business account and it reads any business or creator profile: name, bio, website, profile picture and recent posts.
+2. **MonoPlus's browser**: when you've signed in to Instagram there, it opens the profile the way you would and reads it.
+
+The name, bio and category describe the brand, the profile picture is the logo and gives the colours, recent post photos
+become the campaign's photos, and a website in the bio is read too. Without either way, a web search may find the brand's
+site, but only a result that clearly belongs to the handle is used.
+
 ### Posting from MonoPlus's browser
 
 The same way Claude posts for you: MonoPlus opens LinkedIn, Facebook, Instagram or X in its own browser window on your

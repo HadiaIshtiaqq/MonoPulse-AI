@@ -135,7 +135,29 @@ class BrowserPoster:
             return f"Posted on {platform.value.title()} from your browser."
         return f"{platform.value.title()} is open with the post filled in. Check it and press Post in that window."
 
+    def _read_instagram(self, username: str) -> dict:
+        """Open a profile the way you would (no window needed) and read what's on it."""
+        from ..scraper.instagram import READ_PROFILE_JS
+
+        temporary = self._ctx is None
+        ctx = self._context(headless=True) if temporary else self._ctx  # no window pops up just to read
+        page = ctx.new_page()
+        page.set_default_timeout(STEP_MS)
+        try:
+            page.goto(f"https://www.instagram.com/{username}/")
+            page.wait_for_selector("header", timeout=STEP_MS)
+            page.wait_for_timeout(1500)  # post thumbnails load after the header
+            return page.evaluate(READ_PROFILE_JS)
+        finally:
+            page.close()
+            if temporary:
+                ctx.close()
+                self._ctx = None
+
     # ------------------------------------------------------------------ async-friendly entry points
+
+    async def read_instagram(self, username: str) -> dict:
+        return await self.run(self._read_instagram, username)
 
     async def run(self, fn, *args):
         import asyncio

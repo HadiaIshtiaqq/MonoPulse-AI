@@ -785,27 +785,80 @@ def apply_palette(kit: BrandKit, palette: list[str], ink: str | None = None) -> 
 # --------------------------------------------------------------------------- entry point
 
 
+def handle_name(handle: str) -> str:
+    """"fitt.ote0" -> "Fitt Ote0", "the_bake_shop" -> "The Bake Shop": a readable name until a real one is found."""
+    return " ".join(w[:1].upper() + w[1:] for w in re.split(r"[._]+", handle) if w) or handle
+
+
+def site_belongs_to(handle: str, url: str, site: "ScrapedSite") -> bool:
+    """A search result is only this brand's site if it says so: its address carries the handle's
+    name, or the page mentions the handle. (Searching "fitt.ote0" found fitt.com, someone else.)"""
+    compact = re.sub(r"[^a-z0-9]", "", handle.lower())
+    host = urlparse(url).netloc.lower().removeprefix("www.").split(".")[0]
+    core = re.sub(r"[^a-z0-9]", "", host)
+    text = f"{site.title} {site.description} {site.text}".lower()
+    if handle.lower() in text or f"@{handle.lower()}" in text:
+        return True
+    return bool(core) and (core == compact or (core in compact and len(core) >= 0.8 * len(compact)) or compact in core)
+
+
+async def kit_from_instagram(profile, raw_input: str, client: httpx.AsyncClient) -> BrandKit:
+    """A brand kit from the brand's own Instagram profile, plus its website when the bio links one."""
+    kit = BrandKit(source_input=raw_input, source_type="handle", name=profile.full_name or handle_name(profile.username))
+    photos = [u for u, _ in profile.posts]
+    text = profile.text()
+    if profile.website:
+        try:
+            site = await fetch_site(profile.website, client)
+            kit.website_url = site.url
+            kit = await _finish_site_kit(kit, site, client, extra_text=text)
+            kit.images = list(dict.fromkeys(photos + kit.images))[:24]
+            if not kit.logo_path and profile.picture:
+                kit.logo_url, kit.logo_path, _ = await download_logo([profile.picture], client, kit.id)
+            kit.description = kit.description or profile.bio
+            return kit
+        except (httpx.HTTPError, UnsafeURL, SiteUnavailable) as exc:
+            log.info("@%s's website couldn't be read (%s); using the profile alone", profile.username, exc)
+    site = ScrapedSite(url=f"https://www.instagram.com/{profile.username}/", title=kit.name, description=profile.bio,
+                       paragraphs=[c for _, c in profile.posts if len(c) > 30][:10], images=photos, text=text[:4000])
+    logo_task = download_logo([profile.picture] if profile.picture else [], client, kit.id)
+    (logo_url, logo_path, logo_bytes), kit = await asyncio.gather(logo_task, enrich(kit, text))
+    kit.logo_url, kit.logo_path = logo_url, logo_path
+    kit.images = photos[:24]
+    kit.description = profile.bio or kit.description
+    logo_colors = dominant_colors_from_image(logo_bytes) if logo_bytes else []
+    kit = apply_palette(kit, choose_palette(None, logo_colors, []), ink=ink_color_from_image(logo_bytes) if logo_colors else None)
+    return heuristic_kit(site, kit)
+
+
 async def ingest(raw_input: str, search_fn=None) -> BrandKit:
     """search_fn(query) -> list[TrendItem]; used to research social handles."""
+    from . import instagram
+
     kind, value = detect_input(raw_input)
     headers = {"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}
     async with safe_client(headers=headers, follow_redirects=True, timeout=12) as client:
         if kind == "handle":
-            kit = BrandKit(source_input=raw_input, source_type="handle", name=value.replace("_", " ").title())
+            ig = instagram.instagram_handle(raw_input) or (value if instagram.HANDLE.match(value) else None)
+            profile = await instagram.read_profile(ig) if ig else None
+            if profile:
+                return await kit_from_instagram(profile, raw_input, client)
+            kit = BrandKit(source_input=raw_input, source_type="handle", name=handle_name(value))
             research = ""
             if search_fn:
                 results = await search_fn(f"{value} business official website about")
                 research = "\n".join(f"{r.title}: {r.snippet}" for r in results)
-                site_url = next(
-                    (r.url for r in results if r.url and not any(h in r.url for h in SOCIAL_HOSTS)), None
-                )
-                if site_url:
+                for r in results[:4]:
+                    if not r.url or any(h in r.url for h in SOCIAL_HOSTS):
+                        continue
                     try:
-                        site = await fetch_site(site_url, client)
+                        site = await fetch_site(r.url, client)
+                    except (httpx.HTTPError, UnsafeURL, SiteUnavailable):
+                        continue
+                    if site_belongs_to(value, r.url, site):
                         kit.website_url = site.url
                         return await _finish_site_kit(kit, site, client, extra_text=research)
-                    except (httpx.HTTPError, UnsafeURL, SiteUnavailable):
-                        pass
+                    log.info("search result %s isn't @%s's site; skipped", r.url, value)
             kit.description = research[:400]
             kit = heuristic_kit(ScrapedSite(url="", description=research), kit)
             kit = apply_palette(kit, [])

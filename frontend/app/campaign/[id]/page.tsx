@@ -230,7 +230,19 @@ function CampaignPage() {
       {b.source_type === "handle" && !b.website_url && !b.logo_url && tab !== "brand" && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <Palette size={18} className="shrink-0 text-amber-600" />
-          <p className="min-w-0 flex-1">We couldn&apos;t find a website for this handle, so your posts use default colours. Add your logo and brand colours to make them yours.</p>
+          <p className="min-w-0 flex-1">
+            {/instagram\.com|^@/i.test(campaign.source_input)
+              ? <>MonoPlus couldn&apos;t read this Instagram profile: Instagram only shows profiles to signed-in people. Sign in to Instagram in
+                MonoPlus&apos;s browser, then try again, and the name, bio, logo, colours and post photos come from the profile.</>
+              : <>We couldn&apos;t find a website for this handle, so your posts use default colours. Add your logo and brand colours to make them yours.</>}
+          </p>
+          {/instagram\.com|^@/i.test(campaign.source_input) && (
+            <>
+              <button onClick={async () => { try { toast((await api.browserLogin("instagram")).note, "info"); } catch (e) { toast((e as Error).message, "error"); } }}
+                className="btn-ghost btn-sm">Sign in to Instagram</button>
+              <button onClick={retry} className="btn-primary btn-sm">Try again</button>
+            </>
+          )}
           <button onClick={() => setTab("brand")} className="btn-dark btn-sm">Set up brand kit</button>
         </div>
       )}
