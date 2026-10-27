@@ -23,7 +23,7 @@ import httpx
 
 from . import config
 from .schemas import Campaign, Platform, PostStatus, SocialPost
-from .social import linkedin, meta, x
+from .social import browser, linkedin, meta, x
 from .social.base import Published, PublishError, full_caption
 from .store import store
 
@@ -41,8 +41,34 @@ def connections() -> dict[str, bool]:
     return {p.value: check() for p, (check, _) in DIRECT.items()}
 
 
+def browser_ready(platform: Platform) -> bool:
+    """Scheduled posts may use the browser when it's switched on and you're signed in there."""
+    return store.settings.browser_publish and browser.poster.signed_in.get(platform.value, False)
+
+
 def can_publish(platform: Platform) -> bool:
-    return DIRECT[platform][0]() or bool(config.PUBLISH_WEBHOOK_URL)
+    return DIRECT[platform][0]() or bool(config.PUBLISH_WEBHOOK_URL) or browser_ready(platform)
+
+
+def post_files(post: SocialPost, media: str = "images") -> list:
+    """The post's own files on disk: its images (every carousel page), or its reel."""
+    urls = [post.video_url] if media == "reel" and post.video_url else (post.image_urls or [post.image_url])
+    files = [config.MEDIA_DIR / u.split("?")[0].removeprefix("/media/") for u in urls if u]
+    return [f for f in files if f.exists()]
+
+
+async def browser_post(post: SocialPost, submit: bool, media: str = "images") -> str:
+    """Fill in (and, with submit, post) the post in MonoPlus's signed-in browser."""
+    if not browser.available():
+        raise PublishError("Posting from the browser needs Playwright: pip install playwright && python -m playwright install chromium")
+    try:
+        message = await browser.poster.post(post.platform, full_caption(post), post_files(post, media), submit)
+    except browser.BrowserPostError as exc:
+        raise PublishError(str(exc)) from exc
+    if submit:
+        post.status, post.published_via, post.publish_error = PostStatus.PUBLISHED, "browser", None
+        store.save()
+    return message
 
 
 def absolute(url: str | None) -> str | None:
@@ -144,6 +170,9 @@ async def _publish(post: SocialPost, campaign: Campaign) -> SocialPost:
             result, via = await direct(post), "direct"
         elif config.PUBLISH_WEBHOOK_URL:
             result, via = await send_webhook(post, campaign), "webhook"
+        elif browser_ready(post.platform):
+            await browser_post(post, submit=True)
+            return post
         else:
             raise PublishError(f"{post.platform.value.title()} isn't connected yet.")
     except PublishError as exc:

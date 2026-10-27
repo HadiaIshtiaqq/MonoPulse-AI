@@ -15,3 +15,4 @@ imageio-ffmpeg>=0.5
 arabic-reshaper>=3.0
 python-bidi>=0.4
 tzdata>=2024.1
+playwright>=1.45  # posting from MonoPlus's browser (optional)

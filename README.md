@@ -318,6 +318,22 @@ Edit and re-render a post. Any of `headline`, `caption`, `cta`, `hashtags`, `pub
 
 Makes a 9:16 MP4 reel of the post and attaches it to every platform version (`video_url`, `video_poster`, and the editable `reel_scenes`). Send `{"scenes": [...]}` to render the owner's edited scenes instead of writing a new script; `GET /api/posts/{post_id}/reel/photos` lists the photos a scene can use. Returns the post plus `seconds`, the script's `scenes`, `used_llm` and `render_ms`. Reels are included in the campaign export under `reels/`.
 
+### Posting from MonoPlus's browser
+
+The same way Claude posts for you: MonoPlus opens LinkedIn, Facebook, Instagram or X in its own browser window on your
+computer (a saved Chromium profile in `data/browser-profile`), where you sign in once yourself. For a post it opens the
+composer, attaches the images or the reel, types the caption, and either leaves it for you to check and press Post
+("Fill in for review") or presses Post itself. With "post approved posts automatically" on, scheduled posts go out the same
+way for platforms that have no API connection. No developer apps or API approvals are needed.
+
+- `GET /api/browser` shows where the browser is signed in; `POST /api/browser/login/{platform}` opens a sign-in page.
+- `POST /api/posts/{post_id}/browser-post` with `{"submit": false|true, "media": "images"|"reel"}`.
+- `PUT /api/browser/scheduled` turns scheduled browser posting on or off.
+
+It needs Playwright (`pip install playwright && python -m playwright install chromium`) and a screen, so it runs where
+MonoPlus runs on your own computer, not on a headless server. Platforms change their pages and discourage automated
+posting: each step looks for its button several ways and says which step failed, and review mode is the default.
+
 ### `POST /api/posts/{post_id}/publish`
 
 Posts directly to the platform's API and returns the post with `remote_id` and `remote_url`. Returns `400` if the platform isn't connected and `409` if the post is already published.

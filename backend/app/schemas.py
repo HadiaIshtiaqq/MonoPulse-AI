@@ -373,6 +373,7 @@ class BrandUpdateRequest(BaseModel):
 
 class AppSettings(BaseModel):
     auto_publish: bool = False
+    browser_publish: bool = False  # scheduled posts may go out through MonoPlus's signed-in browser
     webhook_secret: str = Field(default_factory=lambda: uuid.uuid4().hex)
 
 

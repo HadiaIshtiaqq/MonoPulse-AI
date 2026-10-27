@@ -34,6 +34,7 @@ from .schemas import (
     CreateCampaignRequest,
     CreateResearchTaskRequest,
     HumanizeRequest,
+    Platform,
     PostStatus,
     ReelRequest,
     ReelScene,
@@ -59,6 +60,11 @@ async def lifespan(app: FastAPI):
             t.status = "retry"  # the server restarted mid-run
     workers = [asyncio.create_task(research.worker()), asyncio.create_task(publishing.scheduler())]
     workers.append(asyncio.create_task(asyncio.to_thread(media_gc.cleanup)))  # tidy up old renders once at start
+    if store.settings.browser_publish:  # scheduled browser posts need to know where you're signed in
+        from .social import browser
+
+        if browser.available():
+            workers.append(asyncio.create_task(browser.poster.status()))
     yield
     for w in workers:
         w.cancel()
@@ -633,6 +639,66 @@ async def publish_now(post_id: str) -> SocialPost:
         return await publishing.publish_post(post, campaign)
     except publishing.PublishError as exc:
         raise HTTPException(502, str(exc)) from exc
+
+
+class BrowserSettingRequest(BaseModel):
+    enabled: bool
+
+
+class BrowserPostRequest(BaseModel):
+    submit: bool = False  # False fills the composer in for you to check and press Post
+    media: str = "images"  # images | reel
+
+
+@app.get("/api/browser")
+async def browser_status() -> dict:
+    """Which platforms MonoPlus's own browser is signed in to."""
+    from .social import browser
+
+    if not browser.available():
+        return {"available": False, "signed_in": {}, "scheduled": store.settings.browser_publish}
+    try:
+        signed_in = await browser.poster.status()
+    except Exception as exc:  # noqa: BLE001 - e.g. no display on a server
+        return {"available": False, "error": f"Couldn't start the browser here: {exc}", "signed_in": {},
+                "scheduled": store.settings.browser_publish}
+    return {"available": True, "signed_in": signed_in, "scheduled": store.settings.browser_publish}
+
+
+@app.post("/api/browser/login/{platform}")
+async def browser_login(platform: Platform) -> dict:
+    """Open the platform's sign-in page in MonoPlus's browser window; you sign in there yourself."""
+    from .social import browser
+
+    if not browser.available():
+        raise HTTPException(503, "Posting from the browser needs Playwright: pip install playwright && python -m playwright install chromium")
+    try:
+        await browser.poster.login(platform)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"Couldn't open the browser on this computer: {exc}") from exc
+    return {"opened": True, "note": f"A browser window opened on {platform.value.title()}'s sign-in page. Sign in there, then come back."}
+
+
+@app.put("/api/browser/scheduled")
+def browser_scheduled(req: BrowserSettingRequest) -> dict:
+    """Let approved posts go out at their scheduled time through the signed-in browser."""
+    store.settings.browser_publish = req.enabled
+    store.save()
+    return {"scheduled": store.settings.browser_publish}
+
+
+@app.post("/api/posts/{post_id}/browser-post")
+async def post_with_browser(post_id: str, req: BrowserPostRequest) -> dict:
+    """Open the platform in MonoPlus's signed-in browser with this post's images (or reel) and caption,
+    and with submit=true press Post too."""
+    campaign, post = _post(post_id)
+    if post.status is PostStatus.PUBLISHED and req.submit:
+        raise HTTPException(409, "This post is already published.")
+    try:
+        message = await publishing.browser_post(post, req.submit, req.media)
+    except publishing.PublishError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"post": post, "message": message}
 
 
 @app.get("/api/publishing")

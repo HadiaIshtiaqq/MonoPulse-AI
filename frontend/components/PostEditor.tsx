@@ -13,6 +13,7 @@ import { PostPreview } from "@/components/PostPreview";
 import { PhotoPicker } from "@/components/PhotoPicker";
 import { TellScore } from "@/components/TellScore";
 import { ReelPanel, ReelPlayer } from "@/components/ReelPanel";
+import { BrowserPostPanel } from "@/components/BrowserPostPanel";
 import { canShareFiles, copyImage, copyText, downloadAll, pasteKey, shareToApp } from "@/lib/share";
 
 /** What to do in the platform's tab after "Open …", given what MonoPlus could hand over. */
@@ -529,6 +530,7 @@ export function PostEditor({
                     </section>
                   ) : (
                     <>
+                      <BrowserPostPanel post={post} onChange={onChange} dirty={copyDirty} />
                       <section className="rounded-2xl border border-slate-200 p-4">
                         <p className="text-sm font-semibold">Post to {PLATFORM_META[post.platform].label}</p>
                         {connected ? (
