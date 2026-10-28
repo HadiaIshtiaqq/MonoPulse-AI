@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import csv
 import hmac
+import hashlib
 import io
 import json
 import logging
@@ -27,6 +28,7 @@ from .agents import calendar, humanizer, lang, memory, occasions, photos, pipeli
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
 from .publishing import share_links
+from .redact import install_log_redaction, redact
 from .schemas import (
     AutoPublishRequest,
     BrandUpdateRequest,
@@ -76,6 +78,8 @@ async def lifespan(app: FastAPI):
             await w
 
 
+install_log_redaction()  # before anything logs: keys never reach a log line
+
 app = FastAPI(title="MonoPlus", version="0.4.0", lifespan=lifespan)
 app.include_router(mcp_server.router)  # /mcp authenticates itself (Bearer token), see mcp_server._authorized
 
@@ -92,13 +96,24 @@ def _client_host(request: Request) -> str:
     return request.client.host if request.client else ""
 
 
+def _session_token() -> str:
+    """What the access cookie holds: derived from the key, so the key itself never sits in the browser."""
+    return hmac.new(config.ACCESS_KEY.encode(), b"monoplus-session-v1", hashlib.sha256).hexdigest()
+
+
 def _given_key(request: Request) -> str:
-    return (request.headers.get("x-access-key") or request.cookies.get(ACCESS_COOKIE)
-            or request.query_params.get("key") or "")
+    # Header or cookie only: a key in the address (?key=) would be written to access logs and browser history.
+    return request.headers.get("x-access-key") or ""
 
 
 def _key_ok(given: str) -> bool:
     return bool(config.ACCESS_KEY) and bool(given) and hmac.compare_digest(given.encode(), config.ACCESS_KEY.encode())
+
+
+def _authorised(request: Request) -> bool:
+    cookie = request.cookies.get(ACCESS_COOKIE) or ""
+    return _key_ok(_given_key(request)) or (bool(config.ACCESS_KEY) and bool(cookie)
+                                            and hmac.compare_digest(cookie.encode(), _session_token().encode()))
 
 
 @app.middleware("http")
@@ -107,9 +122,9 @@ async def require_access_key(request: Request, call_next):
     Instagram and other platforms download post images from there."""
     path = request.url.path
     if config.ACCESS_KEY and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
-        if not _key_ok(_given_key(request)):
+        if not _authorised(request):
             return JSONResponse({"detail": "Access key required."}, status_code=401)
-    if ACCOUNT_PATHS.match(path) and request.method != "OPTIONS" and not _key_ok(_given_key(request)) \
+    if ACCOUNT_PATHS.match(path) and request.method != "OPTIONS" and not _authorised(request) \
             and _client_host(request) not in LOCAL_CLIENTS:
         # Without a key, nobody else on the network can post to your accounts or drive your browser.
         return JSONResponse({"detail": "Posting to your accounts only works from the computer MonoPlus runs on, "
@@ -126,6 +141,20 @@ async def require_access_key(request: Request, call_next):
 
 app.add_middleware(CORSMiddleware, allow_origins=config.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"], allow_credentials=True,
                    expose_headers=["Mcp-Session-Id"])
+
+
+@app.exception_handler(HTTPException)
+async def redacted_http_error(request: Request, exc: HTTPException) -> JSONResponse:
+    """Error messages often carry an upstream error's text: no key or token ever rides along to the page."""
+    detail = redact(exc.detail) if isinstance(exc.detail, str) else exc.detail
+    return JSONResponse({"detail": detail}, status_code=exc.status_code, headers=getattr(exc, "headers", None))
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """A crash is logged (redacted) for the owner; the page only hears that something went wrong."""
+    logging.getLogger("monoplus").exception("unexpected error on %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "Something went wrong on our side. Please try again."}, status_code=500)
 app.mount("/media", StaticFiles(directory=config.MEDIA_DIR), name="media")
 
 _tasks: set[asyncio.Task] = set()
@@ -149,7 +178,7 @@ def root() -> RedirectResponse:
 @app.get("/api/access")
 def access(request: Request) -> dict:
     """Tells the UI whether a key is needed and whether the one it holds is right."""
-    return {"required": bool(config.ACCESS_KEY), "ok": not config.ACCESS_KEY or _key_ok(_given_key(request))}
+    return {"required": bool(config.ACCESS_KEY), "ok": not config.ACCESS_KEY or _authorised(request)}
 
 
 class AccessLogin(BaseModel):
@@ -164,7 +193,7 @@ def access_login(req: AccessLogin, request: Request) -> JSONResponse:
         return JSONResponse({"ok": False}, status_code=401)
     resp = JSONResponse({"ok": True})
     if config.ACCESS_KEY:
-        resp.set_cookie(ACCESS_COOKIE, req.key.strip(), httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30,
+        resp.set_cookie(ACCESS_COOKIE, _session_token(), httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30,
                         secure=request.url.scheme == "https")
     return resp
 
@@ -876,7 +905,7 @@ async def research_stream(
             async for ev in research.execute(task):
                 yield f"data: {json.dumps(ev, ensure_ascii=False, default=str)}\n\n"
         except Exception as exc:  # noqa: BLE001 - surfaced to the client
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)[:300]})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': redact(exc)[:300]})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

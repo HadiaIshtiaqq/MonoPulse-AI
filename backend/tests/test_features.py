@@ -152,7 +152,7 @@ def test_access_key_protects_api(client, monkeypatch):
     assert client.get("/api/campaigns").status_code == 401
     assert client.get("/api/campaigns", headers={"X-Access-Key": "wrong"}).status_code == 401
     assert client.get("/api/campaigns", headers={"X-Access-Key": "s3cret"}).status_code == 200
-    assert client.get("/api/campaigns?key=s3cret").status_code == 200  # for download links
+    assert client.get("/api/campaigns?key=s3cret").status_code == 401  # never in the address: it would land in logs and history
     assert client.get("/api/health").status_code == 200
     assert client.get("/api/access").json() == {"required": True, "ok": False}
     assert client.get("/api/access", headers={"X-Access-Key": "s3cret"}).json() == {"required": True, "ok": True}

@@ -22,6 +22,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from . import config
+from .redact import redact
 from .schemas import Campaign, Platform, PostStatus, SocialPost
 from .social import browser, linkedin, meta, x
 from .social.base import Published, PublishError, full_caption
@@ -178,11 +179,11 @@ async def _publish(post: SocialPost, campaign: Campaign) -> SocialPost:
         else:
             raise PublishError(f"{post.platform.value.title()} isn't connected yet.")
     except PublishError as exc:
-        post.publish_error = str(exc)
+        post.publish_error = redact(exc)
         store.save(campaign)
         raise
     except httpx.HTTPError as exc:
-        post.publish_error = f"Network error: {exc}"
+        post.publish_error = redact(f"Network error: {exc}")
         store.save(campaign)
         raise PublishError(post.publish_error) from exc
     post.status, post.published_via, post.publish_error = PostStatus.PUBLISHED, via, None

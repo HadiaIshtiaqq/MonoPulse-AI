@@ -19,6 +19,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from . import config
+from .redact import redact
 from .schemas import LLMCallRecord
 
 log = logging.getLogger(__name__)
@@ -145,7 +146,7 @@ class ModelRouter:
                 record.completion_tokens = resp.usage.completion_tokens
             return _THINK_RE.sub("", text).strip()
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller as LLMError
-            record.error = f"{type(exc).__name__}: {exc}"[:300]
+            record.error = redact(f"{type(exc).__name__}: {exc}")[:300]
             raise LLMError(record.error) from exc
         finally:
             record.latency_ms = int((time.perf_counter() - started) * 1000)
@@ -189,7 +190,7 @@ class ModelRouter:
             record.prompt_tokens, record.completion_tokens = usage.get("inputTokens"), usage.get("outputTokens")
             return _THINK_RE.sub("", text).strip()
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller as LLMError
-            record.error = f"{type(exc).__name__}: {exc}"[:300]
+            record.error = redact(f"{type(exc).__name__}: {exc}")[:300]
             raise LLMError(record.error) from exc
         finally:
             record.latency_ms = int((time.perf_counter() - started) * 1000)

@@ -59,7 +59,8 @@ async def via_graph(username: str) -> Profile | None:
               "media.limit(12){media_url,thumbnail_url,caption,media_type}}")
     try:
         async with httpx.AsyncClient(timeout=15) as c:
-            resp = await c.get(graph(config.INSTAGRAM_ACCOUNT_ID), params={"fields": fields, "access_token": config.META_ACCESS_TOKEN})
+            resp = await c.get(graph(config.INSTAGRAM_ACCOUNT_ID), params={"fields": fields},
+                                    headers={"Authorization": f"Bearer {config.META_ACCESS_TOKEN}"})
         if resp.status_code != 200:
             log.info("instagram business discovery for %s: %s", username, resp.text[:200])
             return None

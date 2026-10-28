@@ -49,6 +49,7 @@ def test_business_discovery_through_the_official_api(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["fields"] = request.url.params["fields"]
+        assert "access_token" not in str(request.url) and request.headers["authorization"] == "Bearer token"  # never in a URL
         return httpx.Response(200, json={"business_discovery": {
             "username": "fitt.ote0", "name": "FittOte Studio", "biography": "Women-only gym in Lahore",
             "website": "https://fittote.pk/", "profile_picture_url": "https://cdn.example/pic.jpg",

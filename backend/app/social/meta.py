@@ -29,16 +29,18 @@ def facebook_connected() -> bool:
     return bool(config.META_ACCESS_TOKEN and config.META_PAGE_ID)
 
 
-def _token() -> dict:
-    return {"access_token": config.META_ACCESS_TOKEN}
+def auth() -> dict:
+    """The token travels in the Authorization header, never in the URL, where it would end up in
+    error messages and logs."""
+    return {"Authorization": f"Bearer {config.META_ACCESS_TOKEN}"}
 
 
 async def _upload_page_photo(c, path, *, published: bool, message: str | None = None) -> dict:
-    data = _token() | {"published": "true" if published else "false"}
+    data = {"published": "true" if published else "false"}
     if message:
         data["message"] = message
     with open(path, "rb") as f:
-        resp = await c.post(graph(f"{config.META_PAGE_ID}/photos"), data=data, files={"source": (path.name, f.read(), "image/jpeg")})
+        resp = await c.post(graph(f"{config.META_PAGE_ID}/photos"), data=data, headers=auth(), files={"source": (path.name, f.read(), "image/jpeg")})
     raise_for(resp, "Facebook photo upload")
     return resp.json()
 
@@ -56,7 +58,7 @@ async def _hosted_urls(c, post: SocialPost) -> list[str]:
     urls = []
     for p in jpegs:
         photo = await _upload_page_photo(c, p, published=False)
-        resp = await c.get(graph(photo["id"]), params=_token() | {"fields": "images"})
+        resp = await c.get(graph(photo["id"]), params={"fields": "images"}, headers=auth())
         raise_for(resp, "Reading staged photo")
         images = resp.json().get("images") or []
         if not images:
@@ -67,7 +69,7 @@ async def _hosted_urls(c, post: SocialPost) -> list[str]:
 
 async def _wait_ready(c, container_id: str) -> None:
     for _ in range(POLL_TRIES):
-        resp = await c.get(graph(container_id), params=_token() | {"fields": "status_code"})
+        resp = await c.get(graph(container_id), params={"fields": "status_code"}, headers=auth())
         raise_for(resp, "Checking Instagram media")
         status = resp.json().get("status_code")
         if status == "FINISHED":
@@ -86,25 +88,25 @@ async def publish_instagram(post: SocialPost) -> Published:
     async with client() as c:
         urls = (await _hosted_urls(c, post))[:10]
         if len(urls) == 1:
-            resp = await c.post(graph(f"{ig}/media"), data=_token() | {"image_url": urls[0], "caption": caption})
+            resp = await c.post(graph(f"{ig}/media"), data={"image_url": urls[0], "caption": caption}, headers=auth())
             raise_for(resp, "Creating Instagram post")
             creation = resp.json()["id"]
         else:
             children = []
             for u in urls:
-                resp = await c.post(graph(f"{ig}/media"), data=_token() | {"image_url": u, "is_carousel_item": "true"})
+                resp = await c.post(graph(f"{ig}/media"), data={"image_url": u, "is_carousel_item": "true"}, headers=auth())
                 raise_for(resp, "Creating carousel slide")
                 children.append(resp.json()["id"])
             for child in children:
                 await _wait_ready(c, child)
-            resp = await c.post(graph(f"{ig}/media"), data=_token() | {"media_type": "CAROUSEL", "children": ",".join(children), "caption": caption})
+            resp = await c.post(graph(f"{ig}/media"), data={"media_type": "CAROUSEL", "children": ",".join(children), "caption": caption}, headers=auth())
             raise_for(resp, "Creating Instagram carousel")
             creation = resp.json()["id"]
         await _wait_ready(c, creation)
-        resp = await c.post(graph(f"{ig}/media_publish"), data=_token() | {"creation_id": creation})
+        resp = await c.post(graph(f"{ig}/media_publish"), data={"creation_id": creation}, headers=auth())
         raise_for(resp, "Publishing to Instagram")
         media_id = resp.json()["id"]
-        link = await c.get(graph(media_id), params=_token() | {"fields": "permalink"})
+        link = await c.get(graph(media_id), params={"fields": "permalink"}, headers=auth())
         permalink = link.json().get("permalink") if link.is_success else None
     return Published("instagram", media_id, permalink)
 
@@ -120,8 +122,8 @@ async def publish_facebook(post: SocialPost) -> Published:
             post_id = res.get("post_id") or res["id"]
         else:
             ids = [(await _upload_page_photo(c, p, published=False))["id"] for p in jpegs[:10]]
-            resp = await c.post(graph(f"{config.META_PAGE_ID}/feed"), data=_token() | {
-                "message": caption, "attached_media": json.dumps([{"media_fbid": i} for i in ids])})
+            resp = await c.post(graph(f"{config.META_PAGE_ID}/feed"), data={
+                "message": caption, "attached_media": json.dumps([{"media_fbid": i} for i in ids])}, headers=auth())
             raise_for(resp, "Publishing to Facebook")
             post_id = resp.json()["id"]
     return Published("facebook", post_id, f"https://www.facebook.com/{post_id}")

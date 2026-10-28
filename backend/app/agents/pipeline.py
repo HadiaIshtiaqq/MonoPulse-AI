@@ -11,6 +11,7 @@ import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
 
 from .. import config
+from ..redact import redact
 from ..schemas import Campaign, CampaignStatus, Job, JobStep, Slide, SocialPost, new_id
 from ..netguard import UnsafeURL
 from ..scraper.ingestor import SiteUnavailable, ingest
@@ -213,7 +214,7 @@ class StepTimer:
         self.campaign.timings[self.key] = elapsed
         if exc_type:
             self.step.status = "error"
-            self.step.detail = str(exc)[:200]
+            self.step.detail = redact(exc)[:200]
         elif self.step.status == "running":
             self.step.status = "done"
 
@@ -325,7 +326,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
         log.exception("campaign %s failed", campaign.id)
         campaign.status = CampaignStatus.FAILED
         job.status = "error"
-        job.error = (str(exc) if isinstance(exc, (SiteUnavailable, UnsafeURL)) else f"{type(exc).__name__}: {exc}")[:300]
+        job.error = redact(str(exc) if isinstance(exc, (SiteUnavailable, UnsafeURL)) else f"{type(exc).__name__}: {exc}")[:300]
     finally:
         campaign.timings["total"] = round(time.perf_counter() - t_start, 2)
         store.save(campaign)

@@ -30,6 +30,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .. import config
+from ..redact import redact
 from ..llm import LLMError, router
 from ..netguard import UnsafeURL, safe_client
 from ..schemas import BrandKit, CompetitorProfile, CompetitorReport, PlanWeek, Recommendation
@@ -293,7 +294,7 @@ async def analyse(name: str, url: str, found_via: str, client: httpx.AsyncClient
     except (ingestor.SiteUnavailable, UnsafeURL, httpx.HTTPError) as exc:
         site = await shopify_store_data(url, client) if isinstance(exc, ingestor.SiteUnavailable) else None
         if site is None:
-            return CompetitorProfile(name=name, url=url, found_via=found_via, reachable=False, note=str(exc)[:200])
+            return CompetitorProfile(name=name, url=url, found_via=found_via, reachable=False, note=redact(exc)[:200])
         found_via += " · read from its public store data"
     # A name from an article or the model ("Gul Ahmed") reads better than a page title; a name
     # guessed from a domain ("Gulahmedshop") doesn't, so use the site's own name then.

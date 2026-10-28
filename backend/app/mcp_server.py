@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from . import config
+from .redact import redact
 from .agents import humanizer, pipeline, reels, research
 from .schemas import CreateCampaignRequest, PostStatus, ResearchTask
 from .store import store
@@ -224,7 +225,7 @@ async def call_tool(name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any
         try:
             info = await reels.make_reel(campaign, post)
         except reels.ReelError as exc:
-            raise ToolError(str(exc)) from exc
+            raise ToolError(redact(exc)) from exc
         store.save()
         url = f"{config.PUBLIC_API_URL}{post.video_url.split('?')[0]}"
         return f"Made a {info['seconds']:.0f}-second reel.", {"post_id": post.id, "video_url": url, **info}
@@ -312,7 +313,7 @@ async def handle(message: dict, session_version: str = LATEST) -> tuple[dict | N
             body = {"content": [{"type": "text", "text": f"{summary}\n\n{json.dumps(result, ensure_ascii=False, default=str)}"}],
                     "structuredContent": result, "isError": False}
         except ToolError as exc:
-            body = {"content": [{"type": "text", "text": str(exc)}], "isError": True}
+            body = {"content": [{"type": "text", "text": redact(exc)}], "isError": True}
         except Exception as exc:  # noqa: BLE001 - tool failures are reported to the model, not as protocol errors
             log.exception("MCP tool %s failed", name)
             body = {"content": [{"type": "text", "text": f"{name} failed: {exc}"}], "isError": True}

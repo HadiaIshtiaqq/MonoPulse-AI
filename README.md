@@ -155,6 +155,7 @@ Plain-text version (for contexts that don't render Mermaid):
 - **Your accounts stay on your computer.** Calls that post or drive the browser (`/api/browser*`, publish, publishing settings, maintenance) only answer the computer MonoPlus runs on, or a caller with the key. Behind a reverse proxy, set `MONOPLUS_TRUST_PROXY=1` so the real client address is checked.
 - **Sign-ins outside the project.** MonoPlus's browser profile lives in `%LOCALAPPDATA%/MonoPlus/browser-profile` (`MONOPLUS_BROWSER_PROFILE` to change it), and "Sign out everywhere" deletes it. If a platform shows a captcha or security check, MonoPlus stops and leaves it for you to answer.
 - **No secrets in the UI.** Tokens and model details never reach the browser.
+- **Credentials never leak.** Platform tokens travel in request headers, never in URLs. Every log line, error message, saved post or job error and MCP reply passes through a redactor that hides configured keys and anything shaped like a credential (`access_token=…`, `Bearer …`). The access key is never accepted in a URL, and the browser's cookie holds a value derived from it, not the key itself. All `.env.*` files except the examples are git-ignored.
 
 ### How NVIDIA Nemotron on Nebius Token Factory is used
 

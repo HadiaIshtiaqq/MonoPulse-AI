@@ -11,3 +11,9 @@ frontend/next-env.d.ts
 
 # Earlier standalone experiment; only its research features were merged into MonoPlus.
 revenueradar/
+
+# Any env file except the blank examples: keys never get committed
+.env.*
+!.env.example
+*.pem
+*.key

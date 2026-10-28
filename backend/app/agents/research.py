@@ -13,6 +13,7 @@ import re
 from typing import AsyncIterator
 
 from .. import config
+from ..redact import redact
 from ..llm import LLMError, router
 from ..schemas import BrandKit, CompetitorReport, ResearchInsights, ResearchSource, ResearchTask, now_utc
 from ..scraper.ingestor import ingest
@@ -302,10 +303,10 @@ async def execute(task: ResearchTask) -> AsyncIterator[dict]:
                 errors.append(ev["message"])
             yield ev
         task.status, task.completed_at = "completed", now_utc()
-        task.error = "; ".join(errors) or None
+        task.error = redact("; ".join(errors)) or None
     except Exception as exc:
         task.status = "retry" if task.attempts < 3 else "failed"
-        task.error = str(exc)[:300]
+        task.error = redact(exc)[:300]
         raise
     finally:
         if task.status == "running":
