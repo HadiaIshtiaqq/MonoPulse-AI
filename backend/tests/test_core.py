@@ -155,7 +155,8 @@ def test_platform_versions_are_written_for_each_platform():
     from app.agents import variety
     assert by_platform[Platform.INSTAGRAM]["caption"].splitlines()[-1] in variety.CLOSERS["instagram"]
     assert any(c in by_platform[Platform.FACEBOOK]["caption"] for c in variety.CLOSERS["facebook"])
-    assert by_platform[Platform.LINKEDIN]["caption"].startswith("From the Bluebird Bakery team")
+    linkedin_endings = {e.split("{")[0] for e in variety.CLOSERS["linkedin"]}
+    assert any(by_platform[Platform.LINKEDIN]["caption"].splitlines()[-1].startswith(e) for e in linkedin_endings)
     assert len(by_platform[Platform.X]["caption"]) < len(by_platform[Platform.INSTAGRAM]["caption"])
 
 

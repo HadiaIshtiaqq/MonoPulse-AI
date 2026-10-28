@@ -12,6 +12,7 @@ A final check catches repeated headlines, including ones a model wrote, and repo
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 PRODUCT_CYCLE = ["spotlight", "carousel", "duo", "tip", "quote", "sale", "spotlight", "moment", "carousel", "duo", "tip", "spotlight"]
@@ -136,30 +137,63 @@ QUESTIONS = {
 
 CLOSERS = {
     "instagram": ["Save this post for later.", "Tag someone who needs to see this.", "Which one is your style? Tell us below.",
-                  "Share this with your shopping buddy.", "Double tap if it's a yes."],
+                  "Share this with your shopping buddy.", "Double tap if it's a yes.", "Send this to the friend who'd say yes.",
+                  "Thoughts? The comments are open.", "Keep this one for the weekend.", "Tell us in one emoji.",
+                  "Bookmark it before you forget.", "Would you? Yes or no below.", "Your turn: what would you add?",
+                  "Show this to someone who'd love it.", "Drop a 🔥 if you're in."],
     "instagram_carousel": ["Swipe to see them all, then tell us your favourite.", "Swipe through and save the one you want.",
                            "Which slide is your pick? Tell us below."],
     "instagram_duo": ["Vote in the comments: A or B?", "A or B? Tell us below.", "Comment your pick: A or B."],
-    "facebook": ["Have you seen it in person yet? Tell us in the comments.", "Would you wear this? Tell us below.",
-                 "Tag a friend who'd love this.", "Yes or no? Let us know in the comments."],
+    "facebook": ["Have you seen it in person yet? Tell us in the comments.", "Tag a friend who'd love this.",
+                 "Yes or no? Let us know in the comments.", "Share it with someone who'd like it.",
+                 "What would you add? Tell us below.", "We read every comment, so go ahead.", "Who's coming with you?"],
     "facebook_duo": ["Which would you pick? Tell us in the comments.", "A or B? We want to know."],
     "linkedin": ["We'd love to hear what you think of it.", "Thoughts? We read every comment.",
-                 "What do you look for when you choose {category}?", "Proud of how this one turned out."],
+                 "What do you look for when you choose {category}?", "Proud of how this one turned out.",
+                 "Curious how others see it. Share your view below.", "If this is useful to someone in your network, pass it on.",
+                 "More soon. Follow along if this is your kind of thing.", "Questions welcome in the comments.",
+                 "Small things, done well, add up.", "What would you like to see from us next?"],
 }
 CTAS = {
-    "instagram": ["Shop via the link in bio", "Tap the link in bio to shop", "Link in bio", "Find it through our bio", "Yours via the link in bio"],
+    "instagram": ["Shop via the link in bio", "Tap the link in bio to shop", "Link in bio", "Find it through our bio", "Yours via the link in bio",
+                  "It's one tap away in our bio", "Bio link, if you're curious", "Details in our bio", "Head to the link in bio",
+                  "All the details: link in bio", "The link in our bio has it", "Go on, check the bio"],
+    "instagram_info": ["More in our bio", "Link in bio", "Details in our bio", "Everything else: link in bio", "Find us through the bio",
+                       "Bio link for more", "The rest is in our bio"],
     "linked": ["Shop it here: {link}", "See it here: {link}", "Find it at {link}", "Get yours: {link}", "Take a closer look: {link}"],
     "linkedin": ["See the collection: {link}", "More at {link}", "See it here: {link}", "Explore it: {link}"],
 }
 
+NOT_FOR_EVERYONE = {
+    "wear": re.compile(r"\b(style|wear|outfit)\b", re.I),  # fashion talk, wrong for a bakery or a software firm
+    "shop": re.compile(r"\bshopping\b", re.I),  # shopping talk, wrong for a brand that doesn't sell products online
+}
+
+
+def closers_for(wearable: bool, sells: bool) -> dict[str, list[str]]:
+    """Endings that make sense for this kind of brand."""
+    def fits(line: str) -> bool:
+        return not ((not wearable and NOT_FOR_EVERYONE["wear"].search(line)) or (not sells and NOT_FOR_EVERYONE["shop"].search(line)))
+
+    return {k: [c for c in v if fits(c)] or v for k, v in CLOSERS.items()}
+
+
 GENERIC_HEADLINES = {
-    "spotlight": ["On the menu: {item}", "Spotlight: {item}", "Meet our {item}", "Fresh this week: {item}"],
-    "spotlight_other": ["Spotlight: {item}", "All about our {item}", "Meet our {item}", "This week: {item}"],
-    "craft": ["How we make {item}", "Behind our {item}", "Inside {brand}: {item}"],
-    "question": ["What's your go-to?", "Quick question for you", "Settle this for us", "Tell us your favourite"],
-    "tip": ["Good to know: {item}", "A tip from the {brand} team", "Before you visit: {item}"],
-    "moment": ["{moment}: {item}", "Ready for {moment}?", "{moment} is coming"],
-    "carousel": ["{n} things to know about {brand}", "{brand} in {n} slides", "Swipe: {n} things we love"],
+    "spotlight": ["On the menu: {item}", "Spotlight: {item}", "Meet our {item}", "Fresh this week: {item}", "Craving {item}?",
+                  "{item}, done right", "Today's pick: {item}", "You, us and {item}", "This week at {brand}", "A {brand} favourite",
+                  "Have you tried it?", "Say hello to {item}"],
+    "spotlight_other": ["Spotlight: {item}", "All about our {item}", "Meet our {item}", "This week: {item}", "Why people love our {item}",
+                        "{item}, explained", "Inside {brand}", "This week at {brand}", "What we do best", "Hello from {brand}"],
+    "craft": ["How we make {item}", "Behind our {item}", "Inside {brand}: {item}", "Behind the scenes", "The part you don't see",
+              "Made with care", "How it comes together"],
+    "question": ["What's your go-to?", "Quick question for you", "Settle this for us", "Tell us your favourite", "Your turn",
+                 "We need your vote", "Be honest", "Help us decide", "Over to you"],
+    "tip": ["Good to know: {item}", "A tip from the {brand} team", "Before you visit: {item}", "Save this tip", "Know before you go",
+            "Little tip, big difference", "First time here?"],
+    "moment": ["{moment}: {item}", "Ready for {moment}?", "{moment} is coming", "Counting down to {moment}", "{moment} plans, sorted"],
+    "carousel": ["{n} things to know about {brand}", "{brand} in {n} slides", "Swipe: {n} things we love", "Meet {brand}",
+                 "The {brand} basics", "Swipe through"],
+    "any": ["Hello from {brand}", "This week at {brand}", "Meet {brand}", "Inside {brand}", "From all of us at {brand}"],
 }
 
 
@@ -193,3 +227,72 @@ def variety_report(posts) -> dict:
         "layouts": len(looks),
         "repeated_headlines": sum(c - 1 for c in heads.values() if c > 1),
     }
+
+
+# --------------------------------------------------------------------------- one campaign, no repeats
+
+SENTENCE = re.compile(r"[^.!?\n]+[.!?]*")
+PRICE = re.compile(r"(rs\.?|pkr|usd|\$|£|€|aed|sar)\s?\d|\d[\d,]*(\.\d+)?\s?(rs|pkr)\b", re.I)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s.strip() for s in SENTENCE.findall(text) if s.strip()]
+
+
+def make_unique(platforms: list[str], copies: list[dict], closers: dict[str, list[str]] | None = None) -> int:
+    """No sentence said twice on one platform in a campaign, whoever wrote it (templates or the
+    model). A repeated sentence is dropped from the later post; a repeated ending is swapped for
+    an ending this platform hasn't used yet, or dropped; a repeated Instagram call to action is
+    swapped the same way. A product's name-and-price line, list lines and hashtags are left
+    alone: they're facts, not phrasing. Returns how many lines changed."""
+    closers = closers or CLOSERS
+    used: dict[str, set[str]] = {}
+    ended: dict[str, set[str]] = {}
+    cta_order: dict[str, list[str]] = {}  # calls to action, least recently used first
+    changed = 0
+    for platform, copy in zip(platforms, copies):
+        seen, ends = used.setdefault(platform, set()), ended.setdefault(platform, set())
+        paragraphs = str(copy.get("caption") or "").split("\n\n")
+        out = []
+        for i, para in enumerate(paragraphs):
+            ending = i == len(paragraphs) - 1 and len(paragraphs) > 1
+            lines = []
+            for line in para.split("\n"):
+                if ending or line.lstrip().startswith(("–", "-", "#", "•")) or PRICE.search(line):
+                    lines.append(line)  # endings are judged whole, below; facts stay
+                    continue
+                keys = [normalize(s) for s in _sentences(line)]
+                # A line is one thought ("Not sure where to start? Start with the bowls."): cutting a
+                # sentence out of it leaves a fragment, so a line with a repeat goes as a whole.
+                if any(len(k) >= 12 and k in seen for k in keys):
+                    changed += 1
+                    continue
+                seen.update(keys)
+                lines.append(line)
+            text = "\n".join(lines).strip()
+            if ending and text and normalize(text) in ends:
+                fresh = [c for c in closers.get(platform, []) if "{" not in c and normalize(c) not in ends and normalize(c) not in seen]
+                text = fresh[0] if fresh else ""
+                changed += 1
+            if ending and text:
+                ends.add(normalize(text))
+                seen.update(normalize(s) for s in _sentences(text))
+            if text:
+                out.append(text)
+            elif not ending and i == len(paragraphs) - 2 and not out and para.strip():
+                out.append(para.strip())  # never cut a caption down to only its ending: a repeat beats an empty post
+        if out:
+            copy["caption"] = "\n\n".join(out)
+        cta = str(copy.get("cta") or "")
+        if cta and platform == "instagram":
+            order = cta_order.setdefault(platform, [])
+            if cta in order:
+                pool = CTAS["instagram"] if re.search(r"shop|yours", cta, re.I) else CTAS["instagram_info"]
+                fresh = [c for c in pool if c not in order]
+                # Every wording used once already: reuse the one used longest ago, never the last one.
+                copy["cta"] = cta = fresh[0] if fresh else next((c for c in order if c in pool and c != order[-1]), cta)
+                changed += 1
+            if cta in order:
+                order.remove(cta)
+            order.append(cta)
+    return changed

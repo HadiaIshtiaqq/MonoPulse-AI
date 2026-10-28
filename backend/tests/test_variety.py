@@ -116,7 +116,7 @@ def test_captions_take_different_shapes_and_openings():
     ig = [c["caption"] for s, c in zip(slots, copies) if s.platform is Platform.INSTAGRAM]
     openings = Counter(" ".join(c.split()[:3]).lower() for c in ig)
     assert openings.most_common(1)[0][1] <= 3, openings.most_common(3)
-    assert sum("\n– " in c for c in ig) >= 2  # some posts are short fact lists
+    assert sum(", online at " in c for c in ig) >= 2  # some posts are just the facts: name, price, where to buy
     assert sum(c.rstrip().endswith("?") for c in ig) >= 2  # some end by asking the reader
     # A post's Instagram and Facebook versions are told differently, not copy-pasted.
     by_group = {}
@@ -169,3 +169,47 @@ def test_banner_photos_keep_the_headline_off_the_photo(tmp_path):
                         background=bg, publish_at=datetime.now(timezone.utc)) for i in range(4)]  # no product: site banners
     pipeline.assign_layouts(posts)
     assert {p.layout for p in posts} <= {"frame", "minimal"}
+
+
+def restaurant_kit() -> BrandKit:
+    """A brand whose site lists what it offers but no products with prices (most restaurants and services)."""
+    return BrandKit(source_input="saltbox.example", source_type="url", name="Saltbox Kitchen", industry="Food & Restaurant", location="Lahore, Pakistan",
+                    website_url="https://saltbox.example/", tagline="Wood-fired food since 2011",
+                    description="Saltbox Kitchen cooks over wood every day. Everything is made from scratch in our kitchen on MM Alam Road.",
+                    value_props=["Free delivery across Lahore", "Family platters for six"],
+                    offerings=["Wood-fired pizza", "Smash burgers", "Top restaurants of Lahore include", "Products and services"])
+
+
+def test_a_brand_without_products_gets_a_month_that_never_repeats_itself():
+    kit = restaurant_kit()
+    platforms = (Platform.INSTAGRAM, Platform.LINKEDIN, Platform.X)
+    slots, copies = month_of_copy(kit, platforms=platforms)
+    for platform in platforms:
+        caps = [c["caption"] for s, c in zip(slots, copies) if s.platform is platform]
+        sentences = Counter(variety.normalize(x) for c in caps for x in variety._sentences(c) if len(x) > 18)
+        assert max(sentences.values()) == 1, (platform, sentences.most_common(3))
+        firsts = Counter(variety.normalize(variety._sentences(c)[0]) for c in caps)
+        assert len(firsts) == len(caps), (platform, firsts.most_common(2))
+    text = " ".join(c["caption"] for c in copies).lower()
+    assert "include" not in text and "products and services" not in text  # scraped junk never becomes an "offering"
+    assert "style" not in text and "shopping buddy" not in text  # fashion endings don't go on a restaurant
+    assert "?." not in text
+
+
+def test_a_caption_names_what_its_headline_names():
+    kit = restaurant_kit()
+    slots, copies = month_of_copy(kit)
+    for c in copies:
+        for item in ("Wood-fired pizza", "Smash burgers"):
+            if item.lower() in c["headline"].lower() and c["headline"].lower().startswith(("spotlight", "meet", "on the menu")):
+                assert item.lower() in c["caption"].lower(), c
+
+
+def test_the_repeat_check_drops_whole_thoughts_and_never_leaves_only_an_ending():
+    copies = [{"caption": "Not sure where to start? Start with the bowls.\n\nSave this post for later."},
+              {"caption": "Not sure where to start? Start with the bowls.\n\nSave this post for later."},
+              {"caption": "Fresh bread today. Not sure where to start? Start with the bowls.\n\nTag a friend."}]
+    variety.make_unique(["instagram"] * 3, copies)
+    assert copies[1]["caption"].startswith("Not sure where to start?")  # a repeat beats an empty post
+    assert copies[1]["caption"].split("\n\n")[-1] != "Save this post for later."  # but the ending is swapped
+    assert copies[2]["caption"].startswith("Fresh bread today.") or "Start with the bowls." not in copies[2]["caption"].split("\n\n")[0]
