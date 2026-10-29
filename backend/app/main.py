@@ -16,6 +16,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +24,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, mcp_server, media_gc, publishing, ratelimit
+from . import config, connections, mcp_server, media_gc, publishing, ratelimit
 from .agents import calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, strategist, variety
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
@@ -79,6 +80,7 @@ async def lifespan(app: FastAPI):
 
 
 install_log_redaction()  # before anything logs: keys never reach a log line
+connections.load()  # keys you saved in the app (Connections) join the ones from .env
 
 app = FastAPI(title="MonoPlus", version="0.4.0", lifespan=lifespan)
 app.include_router(mcp_server.router)  # /mcp authenticates itself (Bearer token), see mcp_server._authorized
@@ -86,7 +88,7 @@ app.include_router(mcp_server.router)  # /mcp authenticates itself (Bearer token
 OPEN_PATHS = {"/api/health", "/api/access", "/api/access/login", "/api/access/logout"}
 ACCESS_COOKIE = "monoplus_access"
 # Calls that act on your social accounts or this computer's browser: allowed from this computer, or with the access key.
-ACCOUNT_PATHS = re.compile(r"^/api/(browser(/.*)?|posts/[^/]+/(browser-post|publish|mark-published)|publishing(/.*)?|maintenance/.*)$")
+ACCOUNT_PATHS = re.compile(r"^/api/(connections(/.*)?|browser(/.*)?|posts/[^/]+/(browser-post|publish|mark-published)|publishing(/.*)?|maintenance/.*)$")
 LOCAL_CLIENTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
@@ -779,6 +781,60 @@ class BrowserSettingRequest(BaseModel):
 class BrowserPostRequest(BaseModel):
     submit: bool = False  # False fills the composer in for you to check and press Post
     media: str = "images"  # images | reel
+
+
+class MetaConnectRequest(BaseModel):
+    token: str
+    app_id: str = ""
+    app_secret: str = ""
+
+
+class KeysRequest(BaseModel):
+    nebius_api_key: str | None = None
+    tavily_api_key: str | None = None
+
+
+@app.get("/api/connections")
+def get_connections() -> dict:
+    """What's connected (never the keys themselves)."""
+    return connections.status()
+
+
+@app.put("/api/connections/meta")
+async def connect_meta(req: MetaConnectRequest) -> dict:
+    """Connect Instagram and the Facebook Page through Meta's official API: no browser sign-in, no captchas."""
+    try:
+        result = await connections.connect_meta(req.token, req.app_id, req.app_secret)
+    except connections.ConnectionError_ as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Couldn't reach Meta: {exc}") from exc
+    return {**connections.status(), "result": result}
+
+
+@app.put("/api/connections/keys")
+async def save_keys(req: KeysRequest) -> dict:
+    """Save the Nemotron (Nebius) and Tavily keys, each checked with its service first."""
+    try:
+        if req.nebius_api_key:
+            await connections.check_nebius(req.nebius_api_key)
+            connections.save(NEBIUS_API_KEY=req.nebius_api_key.strip())
+        if req.tavily_api_key:
+            await connections.check_tavily(req.tavily_api_key)
+            connections.save(TAVILY_API_KEY=req.tavily_api_key.strip())
+    except connections.ConnectionError_ as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Couldn't reach the service: {exc}") from exc
+    return connections.status()
+
+
+@app.delete("/api/connections/{name}")
+def disconnect(name: str) -> dict:
+    if name not in ("meta", "nebius", "tavily"):
+        raise HTTPException(404, "Unknown connection.")
+    connections.disconnect(name)
+    return connections.status()
 
 
 @app.get("/api/browser")

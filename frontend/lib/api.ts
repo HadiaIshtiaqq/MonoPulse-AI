@@ -18,6 +18,12 @@ export type ReelOptionsInfo = {
   languages: { key: ReelLanguage; label: string }[];
   trends: { key: string; label: string }[];
 };
+export type Connections = {
+  meta: { connected: boolean; page: string; instagram: string; instagram_ready: boolean; from_env: boolean };
+  nebius: { connected: boolean; from_env: boolean };
+  tavily: { connected: boolean; from_env: boolean };
+  file: string;
+};
 export type ReelResult = { post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string; topic: string; occasion: string };
 export type ReelPhoto = { url: string; label: string; price: string; remote: boolean };
 export type ReelStyle = { key: string; label: string; blurb: string };
@@ -434,6 +440,11 @@ export const api = {
   browserLogin: (platform: Platform) => req<{ opened: boolean; note: string }>(`/api/browser/login/${platform}`, { method: "POST" }),
   browserPost: (id: string, submit: boolean, media: "images" | "reel") =>
     req<{ post: SocialPost; message: string }>(`/api/posts/${id}/browser-post`, json("POST", { submit, media })),
+  connections: () => req<Connections>("/api/connections"),
+  connectMeta: (body: { token: string; app_id?: string; app_secret?: string }) =>
+    req<Connections & { result: { page: string; instagram: string; lasting: boolean; note: string } }>("/api/connections/meta", json("PUT", body)),
+  saveKeys: (body: { nebius_api_key?: string; tavily_api_key?: string }) => req<Connections>("/api/connections/keys", json("PUT", body)),
+  disconnect: (name: "meta" | "nebius" | "tavily") => req<Connections>(`/api/connections/${name}`, { method: "DELETE" }),
   browserSignOut: () => req<{ signed_out: boolean }>("/api/browser/sign-out", { method: "POST" }),
   browserScheduled: (enabled: boolean) => req<{ scheduled: boolean }>("/api/browser/scheduled", json("PUT", { enabled })),
 

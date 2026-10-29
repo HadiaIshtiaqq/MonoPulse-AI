@@ -78,6 +78,9 @@
   .kbd {
     @apply inline-grid min-w-[1.4rem] place-items-center rounded-md border border-slate-200 bg-white px-1.5 py-px font-sans text-[10px] font-semibold text-slate-500 shadow-[0_1px_0_rgba(14,16,34,.06)];
   }
+  .link {
+    @apply font-medium text-brand underline decoration-brand/30 underline-offset-2 hover:decoration-brand;
+  }
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors duration-200;
   }

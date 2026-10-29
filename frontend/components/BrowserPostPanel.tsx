@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Clapperboard, Globe, Loader2, LogIn, LogOut, MousePointerClick, RefreshCw, Rocket } from "lucide-react";
 import { api, type SocialPost } from "@/lib/api";
@@ -134,6 +135,12 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
               {busy === "check" ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Check
             </button>
           </div>
+          {!signedIn && (post.platform === "instagram" || post.platform === "facebook") && (
+            <p className="mt-2 rounded-xl bg-brand-soft px-3 py-2 text-xs text-brand-700">
+              {label} keeps asking for a check or won&apos;t sign you in? Connect it officially instead: no browser, no captchas.{" "}
+              <Link href="/connections" className="font-semibold underline">Open Connections</Link>
+            </p>
+          )}
           {!signedIn && status.needs_check?.[post.platform] && (
             <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
               <p className="font-semibold">{label} is asking you to confirm it&apos;s you</p>
