@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Bot, Check, Clapperboard, Download, Film, Loader2, Plus, Sparkles, Trash2, Wand2, X } from "lucide-react";
+import { Bot, Camera, Check, Clapperboard, Download, Film, Loader2, Mic, Plus, Sparkles, Trash2, Upload, Wand2, X } from "lucide-react";
 import { api, media, type Campaign, type CampaignSummary, type UgcAd, type UgcAvatar, type UgcOverview } from "@/lib/api";
 import { useFeedback } from "@/components/Feedback";
+import { Recorder } from "@/components/Recorder";
 
 export default function UgcPage() {
   return <Suspense fallback={null}><Studio /></Suspense>;
@@ -23,7 +24,14 @@ function Studio() {
   const [format, setFormat] = useState("pov");
   const [lines, setLines] = useState<string[]>([]);
   const [writing, setWriting] = useState(false);
-  const [engine, setEngine] = useState<"builtin" | "avatar">("builtin");
+  const [engine, setEngine] = useState<"builtin" | "person" | "avatar">("builtin");
+  const [look, setLook] = useState("");
+  const [captionStyle, setCaptionStyle] = useState("");
+  const [voice, setVoice] = useState(false);
+  const [footage, setFootage] = useState<{ id: string; url: string; seconds: number } | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [avatars, setAvatars] = useState<UgcAvatar[] | null>(null);
   const [avatar, setAvatar] = useState<UgcAvatar | null>(null);
   const [job, setJob] = useState<{ step: string } | null>(null);
@@ -41,6 +49,14 @@ function Studio() {
     if (engine === "avatar" && info?.heygen && avatars === null) api.ugcAvatars().then(setAvatars).catch((e) => { setAvatars([]); toast((e as Error).message, "error"); });
   }, [engine, info, avatars, toast]);
 
+  async function takeClip(clip: Blob, name?: string) {
+    setRecording(false);
+    setUploading(true);
+    try { setFootage(await api.uploadFootage(clip, name)); }
+    catch (e) { toast((e as Error).message, "error"); }
+    finally { setUploading(false); }
+  }
+
   async function writeScript() {
     setWriting(true);
     try { setLines((await api.ugcScript(cid, { product, format })).lines); }
@@ -53,10 +69,12 @@ function Studio() {
   async function make() {
     setJob({ step: "Starting" });
     try {
-      const ad = await api.makeUgc(cid, { product, format, lines: lines.filter((l) => l.trim()), engine, avatar_id: avatar?.id, avatar_name: avatar?.name },
-        (step) => setJob({ step }));
+      const ad = await api.makeUgc(cid, {
+        product, format, lines: lines.filter((l) => l.trim()), engine, avatar_id: avatar?.id, avatar_name: avatar?.name,
+        look, caption: captionStyle, voice: engine === "builtin" && voice, footage: footage?.id,
+      }, (step) => setJob({ step }));
       setInfo((i) => (i ? { ...i, ads: [ad, ...i.ads] } : i));
-      toast(engine === "avatar" ? "Your AI presenter ad is ready" : "Your UGC ad is ready", "success");
+      toast(engine === "avatar" ? "Your AI presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
     } catch (e) { toast((e as Error).message, "error"); }
     finally { setJob(null); }
   }
@@ -85,6 +103,7 @@ function Studio() {
 
   return (
     <div className="space-y-6">
+      {recording && <Recorder script={lines.filter((l) => l.trim())} onClose={() => setRecording(false)} onDone={(clip) => takeClip(clip)} />}
       <Header brand={campaign.brand?.name} onSwitch={() => router.push("/ugc")} />
       {info.products.length === 0 ? (
         <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">No product photos were found for {campaign.brand?.name}. UGC ads are built around a product photo.</p>
@@ -142,16 +161,60 @@ function Studio() {
 
             <section className="card p-5">
               <p className="label mb-3">4. How it&apos;s made</p>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <button onClick={() => setEngine("builtin")} className={`rounded-xl border p-4 text-left ${engine === "builtin" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
-                  <p className="flex items-center gap-2 font-semibold"><Film size={16} /> Phone-style product video</p>
-                  <p className="mt-1 text-xs text-slate-600">Handheld camera feel on your product photo, big word-by-word captions. Free, made on this computer in about 10 seconds.</p>
+                  <p className="flex items-center gap-2 font-semibold"><Film size={16} /> Product video</p>
+                  <p className="mt-1 text-xs text-slate-600">Your product photo filmed phone-style, a new look every time, with an optional AI voice. Free, about 15 seconds.</p>
+                </button>
+                <button onClick={() => setEngine("person")} className={`rounded-xl border p-4 text-left ${engine === "person" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
+                  <p className="flex items-center gap-2 font-semibold"><Camera size={16} /> Real person</p>
+                  <p className="mt-1 text-xs text-slate-600">Record yourself (teleprompter included) or upload a clip. MonoPlus captions it, adds the product and an end card. Free.</p>
                 </button>
                 <button onClick={() => setEngine("avatar")} className={`rounded-xl border p-4 text-left ${engine === "avatar" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
                   <p className="flex items-center gap-2 font-semibold"><Bot size={16} /> AI presenter</p>
                   <p className="mt-1 text-xs text-slate-600">A realistic AI person speaks your script in front of the product (HeyGen). Takes a few minutes; uses your HeyGen credits.</p>
                 </button>
               </div>
+              {engine === "builtin" && (
+                <div className="mt-4 space-y-3">
+                  <Chips label="Look" value={look} onChange={setLook} options={[{ key: "", label: "Surprise me" }, ...info.looks]} />
+                  <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions]} />
+                  <label className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm ${info.voice ? "cursor-pointer border-slate-200" : "border-dashed border-slate-200 text-slate-400"}`}>
+                    <input type="checkbox" checked={voice} disabled={!info.voice} onChange={(e) => setVoice(e.target.checked)} className="mt-0.5 accent-brand" />
+                    <span>
+                      <span className="flex items-center gap-1.5 font-medium"><Mic size={14} /> AI voice reads the script</span>
+                      <span className="block text-xs text-slate-500">
+                        {info.voice ? "A free voice made on this computer (English). The first time, it downloads (about 60 MB)." : "Not installed on this computer: pip install piper-tts"}
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
+              {engine === "person" && (
+                <div className="mt-4 space-y-3">
+                  {footage ? (
+                    <div className="flex gap-3 rounded-xl border border-slate-200 p-3">
+                      <video src={media(footage.url)} className="h-40 w-24 rounded-lg bg-black object-cover" controls playsInline />
+                      <div className="text-sm">
+                        <p className="font-medium">Your clip · {Math.round(footage.seconds)}s</p>
+                        <p className="mt-1 text-xs text-slate-500">MonoPlus will trim it to the speech, caption what you say (in the script&apos;s spelling when you read it), show the product when you mention it, and add an end card.</p>
+                        <button onClick={() => setFootage(null)} className="btn-ghost btn-sm mt-2">Use another clip</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <button onClick={() => setRecording(true)} disabled={uploading} className="btn-primary"><Camera size={15} /> Record with teleprompter</button>
+                      <button onClick={() => fileRef.current?.click()} disabled={uploading} className="btn-ghost">
+                        {uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Upload a phone video
+                      </button>
+                      <input ref={fileRef} type="file" accept="video/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) takeClip(f, f.name); e.target.value = ""; }} />
+                    </div>
+                  )}
+                  <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions.filter((c) => c.key !== "karaoke")]} />
+                  {!info.listening && <p className="text-xs text-amber-700">Captions need speech recognition: pip install faster-whisper</p>}
+                  <p className="text-xs text-slate-500">Film yourself, your team, or a customer or creator who has agreed to appear. That&apos;s what real UGC is.</p>
+                </div>
+              )}
               {engine === "avatar" && !info.heygen && (
                 <p className="mt-3 rounded-xl bg-brand-soft px-3 py-2 text-xs text-brand-700">
                   Connect HeyGen first: <Link href="/connections" className="font-semibold underline">Open Connections</Link>.
@@ -176,7 +239,7 @@ function Studio() {
                   </p>
                 </div>
               )}
-              <button onClick={make} disabled={!!job || !lines.some((l) => l.trim()) || (engine === "avatar" && (!info.heygen || !avatar))}
+              <button onClick={make} disabled={!!job || !lines.some((l) => l.trim()) || (engine === "avatar" && (!info.heygen || !avatar)) || (engine === "person" && !footage)}
                 className="btn-gradient mt-4 w-full">
                 {job ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} {job ? job.step : "Make the ad"}
               </button>
@@ -197,6 +260,22 @@ function Studio() {
           </aside>
         </div>
       )}
+    </div>
+  );
+}
+
+function Chips({ label, value, options, onChange }: { label: string; value: string; options: { key: string; label: string }[]; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <p className="mb-1.5 text-xs font-medium text-slate-600">{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((o) => (
+          <button key={o.key || "auto"} onClick={() => onChange(o.key)}
+            className={`rounded-full border px-3 py-1 text-xs font-medium ${value === o.key ? "border-brand bg-brand-soft text-brand" : "border-slate-200 text-slate-600 hover:border-slate-300"}`}>
+            {o.key === "" ? <Sparkles size={11} className="mr-1 inline" /> : null}{o.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -222,7 +301,10 @@ function AdCard({ ad, campaign, onDelete }: { ad: UgcAd; campaign: Campaign; onD
     <div className="card overflow-hidden">
       <video src={media(ad.video_url)} poster={ad.poster_url ? media(ad.poster_url) : undefined} controls playsInline className="aspect-[9/16] max-h-[420px] w-full bg-black object-contain" />
       <div className="space-y-2 p-3 text-xs">
-        <p className="font-semibold">{ad.product} · {ad.format.replace("_", " ")}{ad.engine === "avatar" ? ` · AI presenter${ad.avatar ? ` (${ad.avatar})` : ""}` : ""}</p>
+        <p className="font-semibold">
+          {ad.product} · {ad.format.replace("_", " ")}
+          {ad.engine === "avatar" ? ` · AI presenter${ad.avatar ? ` (${ad.avatar})` : ""}` : ad.engine === "person" ? " · real person" : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
+        </p>
         <p className="line-clamp-2 text-slate-500">{ad.script.join(" / ")}</p>
         <div className="flex gap-1.5">
           <select value={target} onChange={(e) => setTarget(e.target.value)} className="input py-1 text-xs">

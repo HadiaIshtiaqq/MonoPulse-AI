@@ -4,7 +4,7 @@ import time
 import httpx
 
 from app import config
-from app.agents import reels, ugc
+from app.agents import reels, ugc, ugc_video
 from app.schemas import Product
 from test_core import _kit
 from test_features import _campaign_with_posts, _png_bytes, client, offline  # noqa: F401 - fixtures
@@ -30,7 +30,7 @@ def test_formats_fit_the_brand():
 
 
 def test_a_builtin_ugc_ad_end_to_end(client, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(ugc, "FPS", 4)
+    monkeypatch.setattr(ugc_video, "FPS", 4)
     c = _campaign_with_posts(days=1)
     photo = config.MEDIA_DIR / "up_ugcphoto.png"
     photo.write_bytes(_png_bytes(size=(900, 1200)))

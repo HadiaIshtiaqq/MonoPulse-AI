@@ -18,10 +18,11 @@ export type ReelOptionsInfo = {
   languages: { key: ReelLanguage; label: string }[];
   trends: { key: string; label: string }[];
 };
-export type UgcAd = { id: string; product: string; format: string; engine: "builtin" | "avatar"; script: string[]; video_url: string;
-  poster_url: string; seconds: number; avatar: string; created_at: string };
+export type UgcAd = { id: string; product: string; format: string; engine: "builtin" | "person" | "avatar"; script: string[]; video_url: string;
+  poster_url: string; seconds: number; avatar: string; look: string; caption: string; voice: boolean; created_at: string };
 export type UgcAvatar = { id: string; name: string; preview: string; gender: string };
-export type UgcOverview = { formats: { key: string; label: string; blurb: string }[]; heygen: boolean;
+export type UgcOverview = { formats: { key: string; label: string; blurb: string }[]; heygen: boolean; voice: boolean; listening: boolean;
+  looks: { key: string; label: string }[]; captions: { key: string; label: string }[];
   products: { index: number; name: string; price: string; image: string }[]; ads: UgcAd[] };
 export type Connections = {
   meta: { connected: boolean; page: string; instagram: string; instagram_ready: boolean; from_env: boolean };
@@ -454,7 +455,13 @@ export const api = {
   ugcScript: (cid: string, body: { product: number; format: string }) => req<{ lines: string[]; used_llm: boolean }>(`/api/campaigns/${cid}/ugc/script`, json("POST", body)),
   ugcAvatars: () => req<UgcAvatar[]>("/api/ugc/avatars"),
   /** Starts the ad in the background and resolves when it's made (an AI presenter can take minutes). */
-  makeUgc: async (cid: string, body: { product: number; format: string; lines: string[]; engine: string; avatar_id?: string; avatar_name?: string },
+  uploadFootage: (clip: Blob, name = "recording.webm") => {
+    const fd = new FormData();
+    fd.append("file", clip, name);
+    return req<{ id: string; url: string; seconds: number }>("/api/ugc/footage", { method: "POST", body: fd });
+  },
+  makeUgc: async (cid: string, body: { product: number; format: string; lines: string[]; engine: string; avatar_id?: string; avatar_name?: string;
+    look?: string; caption?: string; voice?: boolean; footage?: string },
     onStep?: (step: string) => void) => {
     const { job_id } = await req<{ job_id: string }>(`/api/campaigns/${cid}/ugc`, json("POST", body));
     for (;;) {

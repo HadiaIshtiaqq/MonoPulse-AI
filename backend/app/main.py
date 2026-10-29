@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import logging
+import random
 import re
 import shutil
 import uuid
@@ -15,6 +16,7 @@ import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -26,7 +28,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, connections, mcp_server, media_gc, publishing, ratelimit
-from .agents import calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, strategist, ugc, variety
+from .agents import (
+    calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, speech, strategist, ugc, ugc_video, variety,
+)
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
 from .publishing import share_links
@@ -741,7 +745,10 @@ async def ugc_overview(campaign_id: str) -> dict:
     c = _campaign(campaign_id)
     if not c.brand:
         raise HTTPException(409, "This campaign has no brand kit yet.")
-    return {"formats": ugc.formats_for(c.brand), "heygen": ugc.heygen_ready(),
+    return {"formats": ugc.formats_for(c.brand), "heygen": ugc.heygen_ready(), "voice": speech.tts_available(),
+            "listening": speech.whisper_available(),
+            "looks": [{"key": k, "label": v} for k, v in ugc_video.LOOK_LABELS.items()],
+            "captions": [{"key": k, "label": v} for k, v in ugc_video.CAPTION_LABELS.items()],
             "products": [{"index": i, "name": strategist.display_name(c.brand, p), "price": p.price, "image": p.image_url}
                          for i, p in enumerate(_products(c))],
             "ads": [a.model_dump(mode="json") for a in reversed(c.ugc_ads)]}
@@ -775,9 +782,13 @@ class UgcMakeRequest(BaseModel):
     product: int
     format: str = "pov"
     lines: list[str]
-    engine: str = "builtin"  # builtin | avatar
+    engine: str = "builtin"  # builtin (product video) | person (your own video) | avatar (HeyGen)
     avatar_id: str = ""
     avatar_name: str = ""
+    look: str = ""  # product video layout; "" = a different one each time
+    caption: str = ""  # caption style; "" = a different one each time
+    voice: bool = False  # a free AI voice reads the script (product video)
+    footage: str = ""  # the uploaded video, for engine "person"
 
 
 @app.post("/api/campaigns/{campaign_id}/ugc", status_code=202)
@@ -790,6 +801,16 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
     lines = [line.strip()[:140] for line in req.lines if line.strip()][:8]
     if not lines:
         raise HTTPException(422, "Write at least one line.")
+    if req.engine not in ("builtin", "person", "avatar"):
+        raise HTTPException(422, "Unknown way to make the ad.")
+    footage = None
+    if req.engine == "person":
+        try:
+            footage = photos.upload_path(req.footage)
+        except KeyError as exc:
+            raise HTTPException(404, "Record or upload your video first.") from exc
+    if req.voice and req.engine == "builtin" and not speech.tts_available():
+        raise HTTPException(409, "The AI voice isn't installed on this computer: pip install piper-tts")
     if req.engine == "avatar":
         if not ugc.heygen_ready():
             raise HTTPException(409, "Connect HeyGen on the Connections page to use AI presenters.")
@@ -808,21 +829,38 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
             path = photo.path if photo else str(config.MEDIA_DIR / product.image_url.split("?")[0].removeprefix("/media/"))
             token = uuid.uuid4().hex[:8]
             out, poster = config.MEDIA_DIR / f"ugc_{c.id}_{token}.mp4", config.MEDIA_DIR / f"ugc_{c.id}_{token}.jpg"
+            f = ugc.facts(c.brand, product)
+            end = (f["name"], f["price"], "Link in bio")
+            look = caption = ""
+            script = lines
             if req.engine == "avatar":
                 job["step"] = "HeyGen is filming your presenter (a few minutes)"
                 seconds = await ugc.heygen_video(path, req.avatar_id, " ".join(lines), out, poster,
                                                  on_progress=lambda s: job.update(step=s))
-            else:
-                job["step"] = "Filming and captioning"
+            elif req.engine == "person":
+                job["step"] = "Listening to your video and adding captions"
+                caption = req.caption if req.caption in ugc_video.CAPTIONS else random.choice(["outline", "box", "pop"])
                 async with reels.render_slots():
-                    seconds = await reels.render.run_in_worker(ugc.render_builtin, c.brand, path, lines, out, poster, abs(hash(token)) % 97)
-            ad = UgcAd(product=strategist.display_name(c.brand, product), format=req.format, engine=req.engine, script=lines,
+                    seconds, script = await reels.render.run_in_worker(
+                        ugc_video.make_person_ad, c.brand, str(footage), lines, path, [f["name"], f["price"]], out, poster,
+                        caption, int(token, 16) % 997, end)
+            else:
+                last = next((a for a in reversed(c.ugc_ads) if a.engine == "builtin"), None)
+                mix = ugc_video.choose_mix(len(lines), int(token, 16) % 99991, req.look, req.caption,
+                                           avoid={"look": last.look, "caption": last.caption} if last else None)
+                look, caption = mix.look, mix.caption
+                job["step"] = "Recording the voice, then filming" if req.voice else "Filming and captioning"
+                async with reels.render_slots():
+                    seconds = await reels.render.run_in_worker(ugc_video.make_product_ad, c.brand, path, lines, out, poster, mix,
+                                                               "en-female" if req.voice else "", end)
+            ad = UgcAd(product=strategist.display_name(c.brand, product), format=req.format, engine=req.engine, script=script,
                        video_url=f"/media/{out.name}", poster_url=f"/media/{poster.name}" if poster.exists() else "",
-                       seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else "")
+                       seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else "", look=look, caption=caption,
+                       voice=req.voice and req.engine == "builtin")
             c.ugc_ads.append(ad)
             store.save(c)
             job.update(status="done", result=ad.model_dump(mode="json"))
-        except (ugc.UgcError, reels.ReelError, httpx.HTTPError, ValueError, OSError) as exc:
+        except (ugc.UgcError, ugc_video.VideoError, speech.SpeechError, reels.ReelError, httpx.HTTPError, ValueError, OSError) as exc:
             job.update(status="error", error=redact(str(exc))[:300])
         except Exception as exc:  # noqa: BLE001 - reported to the page that's waiting
             logging.getLogger(__name__).exception("ugc job %s failed", job_id)
@@ -832,6 +870,41 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
     _ugc_tasks.add(task)
     task.add_done_callback(_ugc_tasks.discard)
     return {"job_id": job_id, "status": "running"}
+
+
+MAX_FOOTAGE_BYTES = 300 * 1024 * 1024
+MAX_FOOTAGE_SECONDS = 180
+FOOTAGE_TYPES = (".mp4", ".mov", ".webm", ".m4v", ".mkv")
+
+
+@app.post("/api/ugc/footage")
+async def upload_footage(file: UploadFile = File(...)) -> dict:
+    """A real person's clip (recorded in the app or filmed on a phone) for a UGC ad. Kept like other
+    uploads (two weeks unless an ad uses it)."""
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in FOOTAGE_TYPES and not (file.content_type or "").startswith("video/"):
+        raise HTTPException(422, "That isn't a video file (MP4, MOV or WebM).")
+    name = f"up_footage_{uuid.uuid4().hex[:12]}{ext if ext in FOOTAGE_TYPES else '.webm'}"
+    path = config.MEDIA_DIR / name
+    size = 0
+    with open(path, "wb") as fh:
+        while chunk := await file.read(1 << 20):
+            size += len(chunk)
+            if size > MAX_FOOTAGE_BYTES:
+                break
+            fh.write(chunk)
+    if size > MAX_FOOTAGE_BYTES:
+        path.unlink(missing_ok=True)
+        raise HTTPException(413, "Videos are limited to 300 MB.")
+    try:
+        seconds = await asyncio.to_thread(ugc_video.probe_duration, str(path))
+    except ugc_video.VideoError as exc:
+        path.unlink(missing_ok=True)
+        raise HTTPException(422, str(exc)) from exc
+    if seconds > MAX_FOOTAGE_SECONDS:
+        path.unlink(missing_ok=True)
+        raise HTTPException(422, "Keep it under 3 minutes: UGC ads work best at 15 to 45 seconds.")
+    return {"id": name, "url": f"/media/{name}", "seconds": round(seconds, 1)}
 
 
 @app.get("/api/ugc-jobs/{job_id}")
