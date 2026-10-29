@@ -14,7 +14,7 @@ from .. import config
 from ..redact import redact
 from ..schemas import Campaign, CampaignStatus, Job, JobStep, Slide, SocialPost, new_id
 from ..netguard import UnsafeURL
-from ..scraper.ingestor import SiteUnavailable, ingest
+from ..scraper.ingestor import SiteUnavailable, clean_input, ingest
 from ..store import store
 from . import calendar, formatter, humanizer, photos, renderer, research, strategist, trends, variety
 
@@ -48,12 +48,13 @@ def start(req) -> tuple[Campaign, Job]:
     if len(_running) >= config.CAMPAIGNS_AT_ONCE + config.CAMPAIGN_QUEUE:
         raise Busy("Lots of campaigns are being made right now. Please try again in a few minutes.")
     platforms = list(dict.fromkeys(req.platforms)) or list(renderer.SIZES)
-    campaign = Campaign(source_input=req.input.strip(), start_date=req.start_date or date.today(), days=req.days,
-                        platforms=platforms, research_ids=list(dict.fromkeys(req.research_ids)))
+    source = clean_input(req.input)
+    campaign = Campaign(source_input=source, start_date=req.start_date or date.today(), days=req.days, platforms=platforms,
+                        research_ids=list(dict.fromkeys(req.research_ids)), posts_per_day=req.posts_per_day)
     job = new_job(campaign.id)
     store.campaigns[campaign.id] = campaign
     store.jobs[job.id] = job
-    task = asyncio.get_running_loop().create_task(_in_turn(job, campaign, req.input, req.posts_per_day))
+    task = asyncio.get_running_loop().create_task(_in_turn(job, campaign, source, req.posts_per_day))
     _running.add(task)
     task.add_done_callback(_running.discard)
     return campaign, job
@@ -346,6 +347,7 @@ async def run_campaign(job: Job, campaign: Campaign, raw_input: str, posts_per_d
         campaign.status = CampaignStatus.FAILED
         job.status = "error"
         job.error = redact(str(exc) if isinstance(exc, (SiteUnavailable, UnsafeURL)) else f"{type(exc).__name__}: {exc}")[:300]
+        campaign.error = job.error
     finally:
         campaign.timings["total"] = round(time.perf_counter() - t_start, 2)
         store.save(campaign)

@@ -369,6 +369,33 @@ def clean_name(site: ScrapedSite) -> str:
     return (labels[0] if labels else host).replace("-", " ").title()
 
 
+# Ad and analytics tags that end up in links copied from ads and search results. They say nothing
+# about the brand, and they made one site look like many.
+TRACKING = re.compile(r"(?i)^(utm_[a-z]+|gclid|gbraid|wbraid|gad_source|gad_campaignid|srsltid|fbclid|msclkid|igshid|igsh|"
+                      r"mc_cid|mc_eid|_ga|_gl|yclid|dclid|ttclid|twclid|li_fat_id|ref_src|si)$")
+
+
+def clean_input(raw: str) -> str:
+    """The website or handle as typed, minus tracking tags and the trailing "?" or "#" they leave."""
+    raw = raw.strip()
+    if raw.startswith("@") or "?" not in raw and "#" not in raw:
+        return raw
+    parts = urlparse(raw if re.match(r"^https?://", raw, re.I) else f"https://{raw}")
+    query = urlencode([(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not TRACKING.match(k)])
+    cleaned = parts._replace(query=query, fragment="").geturl()
+    return cleaned if re.match(r"^https?://", raw, re.I) else cleaned.removeprefix("https://")
+
+
+def source_key(raw: str) -> str:
+    """What makes two campaigns "the same brand": the site's address without www, tags or a trailing
+    slash, or the handle."""
+    kind, value = detect_input(clean_input(raw))
+    if kind == "handle":
+        return "@" + value.lower()
+    p = urlparse(value)
+    return (p.netloc.lower().removeprefix("www.") + p.path.rstrip("/").lower() + (f"?{p.query}" if p.query else ""))
+
+
 def detect_input(raw: str) -> tuple[str, str]:
     """Return (kind, normalized) where kind is 'website' or 'handle'."""
     raw = raw.strip()
@@ -835,7 +862,10 @@ def apply_palette(kit: BrandKit, palette: list[str], ink: str | None = None) -> 
 
 
 def handle_name(handle: str) -> str:
-    """"fitt.ote0" -> "Fitt Ote0", "the_bake_shop" -> "The Bake Shop": a readable name until a real one is found."""
+    """"the_bake_shop" -> "The Bake Shop": a readable name until a real one is found. A handle with
+    numbers in it isn't made of words ("fitt.ote0" isn't "Fitt Ote0"), so it stays as written."""
+    if re.search(r"\d", handle):
+        return "@" + handle.lstrip("@")
     return " ".join(w[:1].upper() + w[1:] for w in re.split(r"[._]+", handle) if w) or handle
 
 

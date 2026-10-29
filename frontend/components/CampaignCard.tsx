@@ -2,15 +2,27 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CalendarDays, Download, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { CalendarDays, Download, RotateCcw, Trash2 } from "lucide-react";
 import { api, media, timeAgo, type CampaignSummary } from "@/lib/api";
 import { PlatformIcon } from "@/components/PlatformIcon";
+import { useFeedback } from "@/components/Feedback";
 
 export function CampaignCard({ c, onDelete }: { c: CampaignSummary; onDelete?: (id: string) => void }) {
   const pct = c.posts ? Math.round((c.approved / c.posts) * 100) : 0;
   const failed = c.status === "FAILED";
   const generating = c.status === "GENERATING";
   const [filled, setFilled] = useState(false);
+  const router = useRouter();
+  const { toast } = useFeedback();
+  const [retrying, setRetrying] = useState(false);
+  async function retry() {
+    setRetrying(true);
+    try {
+      const { campaign_id, job_id } = await api.retryCampaign(c.id);
+      router.push(`/campaign/${campaign_id}?job=${job_id}`);
+    } catch (e) { toast((e as Error).message, "error"); setRetrying(false); }
+  }
   useEffect(() => { const t = setTimeout(() => setFilled(true), 250); return () => clearTimeout(t); }, []);
   return (
     <div className="card card-hover group flex flex-col overflow-hidden">
@@ -46,6 +58,7 @@ export function CampaignCard({ c, onDelete }: { c: CampaignSummary; onDelete?: (
             {c.platforms.map((p) => <span key={p} className="grid h-6 w-6 place-items-center rounded-md bg-slate-50"><PlatformIcon platform={p} size={12} /></span>)}
           </div>
         </div>
+        {failed && c.error && <p className="mt-3 line-clamp-2 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs text-red-700">{c.error}</p>}
         <div className="mt-4">
           <div className="flex justify-between text-xs text-slate-500">
             <span>{c.approved}/{c.posts} approved{c.published ? ` · ${c.published} published` : ""}</span>
@@ -56,7 +69,11 @@ export function CampaignCard({ c, onDelete }: { c: CampaignSummary; onDelete?: (
           </div>
         </div>
         <div className="mt-4 flex items-center gap-2">
-          <Link href={`/campaign/${c.id}`} className="btn-ghost btn-sm flex-1">Open</Link>
+          {failed && c.source && !c.posts ? (
+            <button onClick={retry} disabled={retrying} className="btn-ghost btn-sm flex-1"><RotateCcw size={14} /> Try again</button>
+          ) : (
+            <Link href={`/campaign/${c.id}`} className="btn-ghost btn-sm flex-1">Open</Link>
+          )}
           {c.posts > 0 && (
             <a href={api.exportUrl(c.id)} className="btn-ghost btn-sm" title="Download images + captions (ZIP)"><Download size={14} /></a>
           )}

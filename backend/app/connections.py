@@ -2,13 +2,15 @@
 connection, the Nemotron (Nebius) key and the Tavily search key.
 
 They're kept in a file on this computer, outside the project folder (next to MonoPlus's browser
-profile), so they're never committed or copied with the project. A setting in the environment
+profile), so they're never committed or copied with the project, and encrypted with Windows' own
+protection (DPAPI) so only your Windows account can read them. A setting in the environment
 (.env) wins over the file. Values are checked with the service before they're saved, never sent
 back to the page (only "connected" and names), and hidden from logs and errors by redact.py,
 which reads them from config.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -29,9 +31,32 @@ def path() -> Path:
     return Path(os.environ.get("MONOPLUS_CONNECTIONS_FILE") or config.BROWSER_PROFILE_DIR.parent / "connections.json")
 
 
+def _dpapi(data: bytes, protect: bool) -> bytes:
+    """Windows' own encryption for a user's secrets (DPAPI): only this Windows account on this
+    computer can read them back, so a copied file is useless."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Blob(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    buf = ctypes.create_string_buffer(data, len(data))
+    src, out = Blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), Blob()
+    crypt32 = ctypes.windll.crypt32
+    fn = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    if not fn(ctypes.byref(src), None, None, None, None, 0x01, ctypes.byref(out)):  # 0x01: no UI prompts
+        raise OSError("Windows couldn't " + ("encrypt" if protect else "decrypt") + " the saved connections.")
+    try:
+        return ctypes.string_at(out.pbData, out.cbData)
+    finally:
+        ctypes.windll.kernel32.LocalFree(out.pbData)
+
+
 def _read() -> dict:
     try:
         data = json.loads(path().read_text(encoding="utf-8"))
+        if "dpapi" in data:  # saved encrypted
+            data = json.loads(_dpapi(base64.b64decode(data["dpapi"]), protect=False))
         return {k: str(v) for k, v in data.items() if k in KEYS and v}
     except (OSError, ValueError):
         return {}
@@ -48,7 +73,12 @@ def _write(data: dict) -> None:
     p = path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps({k: v for k, v in data.items() if v}, indent=2), encoding="utf-8")
+    text = json.dumps({k: v for k, v in data.items() if v}, indent=2)
+    if os.name == "nt":
+        text = json.dumps({"dpapi": base64.b64encode(_dpapi(text.encode(), protect=True)).decode()})
+    tmp.write_text(text, encoding="utf-8")
+    if os.name != "nt":
+        tmp.chmod(0o600)  # readable by your user only
     tmp.replace(p)
 
 

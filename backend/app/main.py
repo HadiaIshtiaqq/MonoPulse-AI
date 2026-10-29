@@ -36,6 +36,7 @@ from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
 from .publishing import share_links
 from .redact import install_log_redaction, redact
+from .scraper import ingestor
 from .schemas import (
     AutoPublishRequest,
     BrandUpdateRequest,
@@ -66,8 +67,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 async def lifespan(app: FastAPI):
     if not config.ACCESS_KEY:
         logging.getLogger("monoplus").warning(
-            "MONOPLUS_ACCESS_KEY is not set: anyone who can reach this server can use it. Fine on your own machine; "
-            "set a key before putting it online.")
+            "MONOPLUS_ACCESS_KEY is not set, so MonoPlus only answers this computer. Set a key to use it from "
+            "anywhere else or to put it online.")
     for t in store.research.values():
         if t.status == "running":
             t.status = "retry"  # the server restarted mid-run
@@ -133,6 +134,11 @@ async def require_access_key(request: Request, call_next):
     if config.ACCESS_KEY and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
         if not _authorised(request):
             return JSONResponse({"detail": "Access key required."}, status_code=401)
+    if not config.ACCESS_KEY and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS" \
+            and _client_host(request) not in LOCAL_CLIENTS:
+        # No key set: someone else on the network (or the internet) can't read your campaigns or use your keys.
+        return JSONResponse({"detail": "MonoPlus only answers the computer it runs on until an access key is set "
+                                       "(MONOPLUS_ACCESS_KEY in backend/.env)."}, status_code=403)
     if ACCOUNT_PATHS.match(path) and request.method != "OPTIONS" and not _authorised(request) \
             and _client_host(request) not in LOCAL_CLIENTS:
         # Without a key, nobody else on the network can post to your accounts or drive your browser.
@@ -171,6 +177,7 @@ _tasks: set[asyncio.Task] = set()
 for _c in store.campaigns.values():
     if _c.status is CampaignStatus.GENERATING:
         _c.status = CampaignStatus.FAILED  # the server restarted mid-run
+        _c.error = "It stopped because MonoPlus restarted while it was being made. Try again."
 
 
 def _spawn(coro) -> None:
@@ -263,6 +270,36 @@ async def create_campaign(req: CreateCampaignRequest) -> dict:
     return {"campaign_id": campaign.id, "job_id": job.id}
 
 
+@app.get("/api/campaigns/existing")
+async def existing_campaigns(input: str) -> list[dict]:  # noqa: A002 - the field's name on the create form
+    """Campaigns already made from this website or handle (tracking tags and www ignored), newest
+    first, so the page can offer to open one instead of making the same brand again."""
+    key = ingestor.source_key(input)
+    same = [c for c in store.campaigns.values() if c.brand and c.posts and c.source_input and ingestor.source_key(c.source_input) == key]
+    return [{"id": c.id, "name": c.brand.name, "posts": len(c.posts), "created_at": c.created_at.isoformat()}
+            for c in sorted(same, key=lambda c: c.created_at, reverse=True)[:5]]
+
+
+@app.post("/api/campaigns/{campaign_id}/retry", status_code=202)
+async def retry_campaign(campaign_id: str) -> dict:
+    """Make a failed campaign again with the same settings. The failed one goes if nothing was made in it."""
+    c = _campaign(campaign_id)
+    if c.status is not CampaignStatus.FAILED:
+        raise HTTPException(409, "Only a campaign that failed can be tried again.")
+    if not c.source_input:
+        raise HTTPException(422, "This campaign doesn't say which website or handle it was for. Start a new one instead.")
+    req = CreateCampaignRequest(input=c.source_input, platforms=c.platforms or [Platform.INSTAGRAM], days=c.days,
+                                posts_per_day=c.posts_per_day, research_ids=[r for r in c.research_ids if r in store.research])
+    try:
+        campaign, job = pipeline.start(req)
+    except pipeline.Busy as exc:
+        raise HTTPException(429, str(exc), headers={"Retry-After": "120"}) from exc
+    if not c.posts and not c.ugc_ads:
+        store.campaigns.pop(c.id, None)
+        store.save()
+    return {"campaign_id": campaign.id, "job_id": job.id}
+
+
 @app.get("/api/jobs/{job_id}")
 async def get_job(job_id: str) -> dict:
     job = store.jobs.get(job_id)
@@ -284,7 +321,9 @@ async def list_campaigns() -> list[dict]:
     return [
         {
             "id": c.id,
-            "name": c.brand.name if c.brand else "…",
+            "name": c.brand.name if c.brand else (ingestor.source_key(c.source_input) if c.source_input else "Unfinished campaign"),
+            "source": ingestor.source_key(c.source_input) if c.source_input else "",
+            "error": c.error,
             "website": c.brand.website_url if c.brand else None,
             "status": c.status,
             "posts": len(c.posts),
@@ -855,8 +894,11 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
             raise HTTPException(422, "Pick a presenter.")
     if sum(j["status"] == "running" for j in UGC_JOBS.values()) >= config.REEL_RENDERS + reels.MAX_WAITING:
         raise HTTPException(429, "Lots of videos are being made right now. Please try again in a minute.", headers={"Retry-After": "60"})
+    now = datetime.now(timezone.utc)
+    for k in [k for k, j in UGC_JOBS.items() if j["status"] != "running" and now - j["at"] > timedelta(hours=1)]:
+        UGC_JOBS.pop(k, None)  # finished jobs are kept an hour for the page to collect, then let go
     job_id = new_id()
-    UGC_JOBS[job_id] = {"status": "running", "step": "Getting the product photo", "at": datetime.now(timezone.utc)}
+    UGC_JOBS[job_id] = {"status": "running", "step": "Getting the product photo", "at": now}
 
     async def run() -> None:
         job = UGC_JOBS[job_id]

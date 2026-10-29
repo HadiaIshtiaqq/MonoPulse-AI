@@ -274,6 +274,8 @@ export interface CampaignSummary {
   id: string;
   name: string;
   website: string | null;
+  source: string; // the site or handle it was made from, without tracking tags ("" for old campaigns)
+  error: string; // why it failed
   status: string;
   posts: number;
   approved: number;
@@ -402,6 +404,8 @@ export const api = {
   job: (id: string) => req<Job>(`/api/jobs/${id}`),
   campaigns: () => req<CampaignSummary[]>("/api/campaigns"),
   campaign: (id: string) => req<Campaign>(`/api/campaigns/${id}`),
+  existingCampaigns: (input: string) => req<{ id: string; name: string; posts: number; created_at: string }[]>(`/api/campaigns/existing?input=${encodeURIComponent(input)}`),
+  retryCampaign: (id: string) => req<{ campaign_id: string; job_id: string }>(`/api/campaigns/${id}/retry`, { method: "POST" }),
   deleteCampaign: (id: string) => req<void>(`/api/campaigns/${id}`, { method: "DELETE" }),
   approveAll: (id: string) => req<Campaign & { approved_ids: string[] }>(`/api/campaigns/${id}/approve-all`, { method: "POST" }),
   undoApprove: (id: string, postIds: string[]) => req<Campaign>(`/api/campaigns/${id}/undo-approve`, json("POST", { post_ids: postIds })),

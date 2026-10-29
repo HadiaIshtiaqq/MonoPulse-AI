@@ -13,8 +13,11 @@ def test_posting_endpoints_refuse_other_computers(monkeypatch):
                              ("post", "/api/posts/x1/browser-post"), ("put", "/api/publishing/auto"), ("post", "/api/maintenance/cleanup")]:
             resp = getattr(remote, method)(path)
             assert resp.status_code == 403, path
-            assert "computer MonoPlus runs on" in resp.json()["detail"]
-        assert remote.get("/api/campaigns").status_code == 200  # the rest of the app is unaffected
+            assert "computer" in resp.json()["detail"]
+        # Without a key, nothing else is open to other computers either: campaigns, keys, research.
+        resp = remote.get("/api/campaigns")
+        assert resp.status_code == 403 and "access key" in resp.json()["detail"]
+        assert remote.get("/api/health").status_code == 200
     with TestClient(app, client=("127.0.0.1", 5000)) as local:
         assert local.post("/api/maintenance/cleanup").status_code == 200
 

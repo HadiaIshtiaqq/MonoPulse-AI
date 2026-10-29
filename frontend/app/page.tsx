@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   ArrowRight, BadgeCheck, CalendarClock, ChevronDown, FlaskConical, Globe, Images, Loader2, Newspaper, PenLine, Sparkles, Wand2,
 } from "lucide-react";
-import { api, fmtDay, media, type CampaignSummary, type Platform, type ResearchTask, type SocialPost } from "@/lib/api";
+import { api, fmtDay, media, timeAgo, type CampaignSummary, type Platform, type ResearchTask, type SocialPost } from "@/lib/api";
 import { PLATFORM_META, PlatformIcon } from "@/components/PlatformIcon";
 import { CampaignCard } from "@/components/CampaignCard";
 import { Reveal, useCycle } from "@/components/Motion";
@@ -35,6 +35,8 @@ export default function CreatePage() {
   const [days, setDays] = useState(30);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Campaigns already made for this site: offered before making the same brand again.
+  const [dupes, setDupes] = useState<{ id: string; name: string; posts: number; created_at: string }[] | null>(null);
   const [recent, setRecent] = useState<CampaignSummary[]>([]);
   const [research, setResearch] = useState<ResearchTask[]>([]);
   const [researchIds, setResearchIds] = useState<string[]>([]);
@@ -54,12 +56,17 @@ export default function CreatePage() {
   const toggle = (p: Platform) =>
     setPlatforms((cur) => (cur.includes(p) ? (cur.length > 1 ? cur.filter((x) => x !== p) : cur) : [...cur, p]));
 
-  async function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent, anyway = false) {
     e.preventDefault();
     if (!input.trim()) return;
     setBusy(true);
     setError("");
     try {
+      if (!anyway) {
+        const same = await api.existingCampaigns(input.trim()).catch(() => []);
+        if (same.length) { setDupes(same); setBusy(false); return; }
+      }
+      setDupes(null);
       const { campaign_id, job_id } = await api.createCampaign({ input: input.trim(), platforms, days, research_ids: researchIds });
       router.push(`/campaign/${campaign_id}?job=${job_id}`);
     } catch (err) {
@@ -88,7 +95,7 @@ export default function CreatePage() {
             and designs a ready-to-post calendar of captions, graphics and carousels.
           </p>
 
-          <form onSubmit={submit}
+          <form onChange={() => setDupes(null)} onSubmit={submit}
             className="delay-3 group/form mx-auto mt-9 max-w-2xl animate-scale-in rounded-2xl border border-slate-200 bg-white/90 p-2 text-left shadow-lift backdrop-blur transition-all duration-300 focus-within:border-brand-200 focus-within:shadow-glow-lg">
             <div className="flex items-center gap-2">
               <Globe className="ml-3 shrink-0 text-slate-400 transition-colors duration-300 group-focus-within/form:text-brand" size={20} />
@@ -154,6 +161,15 @@ export default function CreatePage() {
             )}
           </form>
           {error && <p className="mt-3 animate-slide-down text-sm text-red-600">{error}</p>}
+          {dupes && (
+            <div className="mt-3 animate-slide-down rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">You already have {dupes.length === 1 ? "a campaign" : `${dupes.length} campaigns`} for {dupes[0].name}.</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Link href={`/campaign/${dupes[0].id}`} className="btn-primary btn-sm">Open the latest ({dupes[0].posts} posts, {timeAgo(dupes[0].created_at)})</Link>
+                <button type="button" onClick={(e) => submit(e, true)} className="btn-ghost btn-sm">Make a new one anyway</button>
+              </div>
+            </div>
+          )}
           <p className="delay-4 mt-4 animate-fade-in text-xs text-slate-500">
             Try:{" "}
             {EXAMPLES.map((x, i) => (

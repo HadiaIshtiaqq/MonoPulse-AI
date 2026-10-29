@@ -1,5 +1,6 @@
 """Connecting services in the app: checked before saving, kept outside the project, never sent back."""
 import json
+import os
 
 import httpx
 from fastapi.testclient import TestClient
@@ -46,8 +47,11 @@ def test_instagram_connects_through_the_official_api_and_the_token_never_comes_b
         assert PAGE_TOKEN not in r.text and "app-secret-xyz" not in r.text
         assert PAGE_TOKEN not in client.get("/api/connections").text
     assert config.META_ACCESS_TOKEN == PAGE_TOKEN and config.INSTAGRAM_ACCOUNT_ID == "1789" and config.META_PAGE_ID == "42"
-    saved = json.loads(connections.path().read_text(encoding="utf-8"))
+    saved = connections._read()
     assert saved["META_ACCESS_TOKEN"] == PAGE_TOKEN and "app_secret" not in json.dumps(saved)
+    on_disk = connections.path().read_text(encoding="utf-8")
+    if os.name == "nt":  # encrypted for this Windows account: the token isn't in the file as text
+        assert PAGE_TOKEN not in on_disk and "dpapi" in json.loads(on_disk)
     assert all("app-secret-xyz" not in str(req.url) for req in seen)  # the secret went in a body, never a URL
     assert not str(connections.path()).startswith(str(config.DATA_DIR.parent.parent / "MonoPlus" / "backend"))
 

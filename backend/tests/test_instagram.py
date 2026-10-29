@@ -15,7 +15,7 @@ def test_instagram_handles_are_recognised():
     assert instagram.instagram_handle("instagram.com/the_bake_shop?igsh=abc") == "the_bake_shop"
     assert instagram.instagram_handle("@khaadi") == "khaadi"
     assert instagram.instagram_handle("https://www.instagram.com/p/C123/") is None  # a post, not a profile
-    assert ingestor.handle_name("fitt.ote0") == "Fitt Ote0" and ingestor.handle_name("the_bake_shop") == "The Bake Shop"
+    assert ingestor.handle_name("fitt.ote0") == "@fitt.ote0" and ingestor.handle_name("the_bake_shop") == "The Bake Shop"
 
 
 def test_someone_elses_site_is_not_taken_for_the_brand():

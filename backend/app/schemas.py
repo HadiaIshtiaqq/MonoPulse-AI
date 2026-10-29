@@ -222,6 +222,8 @@ class Campaign(BaseModel):
     research_ids: list[str] = []
     content_mix: dict = {}  # post types, layouts and repeated headlines (see variety.variety_report)
     competitor_task_id: str | None = None  # the competitor analysis started with this campaign
+    error: str = ""  # why it couldn't be made (a failed campaign)
+    posts_per_day: int = 1  # as asked for, so a failed campaign can be tried again
     ugc_ads: list["UgcAd"] = []  # UGC-style video ads made for this brand
     created_at: datetime = Field(default_factory=now_utc)
 

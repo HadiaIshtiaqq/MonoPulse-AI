@@ -467,6 +467,14 @@ npm install
 npm run dev            # http://localhost:3000
 ```
 
+On Windows, after steps 1 to 4 once, start both with one command. It stops anything left on ports 8000 and 3000 and rebuilds the web app when its code changed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+Without `MONOPLUS_ACCESS_KEY`, MonoPlus answers only the computer it runs on. Set a long random key in `backend/.env` before using it from another device or putting it online.
+
 ### 5. Generate a campaign
 
 Paste a website (for example `https://www.sweetgreen.com`) on the Create page, pick platforms and days, and press Generate. Or use curl:
