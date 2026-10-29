@@ -90,6 +90,9 @@ CORS_ORIGINS = [o.strip() for o in _env("CORS_ORIGINS", "http://localhost:3000,h
 # How many posts the strategist writes per Ultra call. Batches run concurrently.
 COPY_BATCH_SIZE = int(_env("COPY_BATCH_SIZE", "6"))
 LLM_TIMEOUT_S = float(_env("LLM_TIMEOUT_S", "60"))
+# A hard cap on model use per day (prompt + reply tokens), so free credits are never overspent. When it's
+# reached, MonoPlus falls back to templates until the next day. 0 = no cap.
+LLM_DAILY_TOKENS = int(_env("LLM_DAILY_TOKENS", "200000") or 0)
 
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 

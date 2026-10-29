@@ -13,6 +13,7 @@ import logging
 import re
 import time
 from collections import deque
+from datetime import date
 from enum import Enum
 from typing import Any
 
@@ -57,8 +58,50 @@ class LLMError(RuntimeError):
     pass
 
 
+class Budget:
+    """Tokens used today, kept in the data folder so a restart doesn't reset the count."""
+
+    def __init__(self) -> None:
+        self._day, self._used, self._loaded = "", 0, False
+
+    def _path(self):
+        return config.DATA_DIR / "llm_usage.json"
+
+    def _today(self) -> None:
+        today = date.today().isoformat()
+        if not self._loaded:
+            self._loaded = True
+            try:
+                saved = json.loads(self._path().read_text(encoding="utf-8"))
+                self._day, self._used = str(saved.get("day", "")), int(saved.get("tokens", 0))
+            except (OSError, ValueError):
+                pass
+        if self._day != today:
+            self._day, self._used = today, 0
+
+    def check(self) -> None:
+        self._today()
+        if config.LLM_DAILY_TOKENS and self._used >= config.LLM_DAILY_TOKENS:
+            raise LLMError(f"Today's model limit ({config.LLM_DAILY_TOKENS:,} tokens, LLM_DAILY_TOKENS) is used up; "
+                           "templates are used until tomorrow.")
+
+    def add(self, tokens: int) -> None:
+        self._today()
+        self._used += max(0, tokens)
+        try:
+            self._path().write_text(json.dumps({"day": self._day, "tokens": self._used}), encoding="utf-8")
+        except OSError:
+            pass
+
+    @property
+    def used(self) -> int:
+        self._today()
+        return self._used
+
+
 class ModelRouter:
     def __init__(self) -> None:
+        self.budget = Budget()
         self._client: AsyncOpenAI | None = None
         self.records: deque[LLMCallRecord] = deque(maxlen=500)
         # Nebius rate limits are per-key; keep a lid on fan-out.
@@ -120,6 +163,7 @@ class ModelRouter:
     ) -> str:
         if not self.enabled:
             raise LLMError("No model provider configured (set NEBIUS_API_KEY or AWS_BEDROCK_ENABLED=1)")
+        self.budget.check()  # never past the daily cap, so free credits can't be overspent
         tier = self.tier_for(purpose)
         if self.provider == "bedrock":
             return await self._complete_bedrock(purpose, tier, system, user, temperature, max_tokens)
@@ -145,6 +189,9 @@ class ModelRouter:
             if resp.usage:
                 record.prompt_tokens = resp.usage.prompt_tokens
                 record.completion_tokens = resp.usage.completion_tokens
+            # Counted as reported, or estimated (about 4 characters a token) when the reply doesn't say.
+            self.budget.add((record.prompt_tokens or 0) + (record.completion_tokens or 0)
+                            or (len(system) + len(user) + len(text)) // 4)
             return _THINK_RE.sub("", text).strip()
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller as LLMError
             record.error = redact(f"{type(exc).__name__}: {exc}")[:300]
@@ -205,7 +252,8 @@ class ModelRouter:
     def telemetry(self) -> dict[str, Any]:
         models = ({ModelTier.ULTRA.value: config.AWS_BEDROCK_MODEL_ULTRA, ModelTier.NANO.value: config.AWS_BEDROCK_MODEL_NANO}
                   if self.provider == "bedrock" else {t.value: m for t, m in TIER_MODELS.items()})
-        out: dict[str, Any] = {"provider": self.provider, "models": models, "tiers": {}}
+        out: dict[str, Any] = {"provider": self.provider, "models": models, "tiers": {},
+                               "today": {"tokens": self.budget.used, "limit": config.LLM_DAILY_TOKENS}}
         for tier in ModelTier:
             recs = [r for r in self.records if r.tier == tier.value]
             ok = [r for r in recs if r.ok]
