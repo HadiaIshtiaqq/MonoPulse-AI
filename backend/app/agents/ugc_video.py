@@ -37,7 +37,7 @@ from .renderer import font, rgb
 W, H, FPS = 1080, 1920, 30
 LOOKS = ["full", "card", "split", "polaroid", "frame"]
 MOTIONS = ["handheld", "push_in", "pull_out", "pan", "beat", "dutch", "orbit"]
-CAPTIONS = ["outline", "box", "karaoke", "pop", "bar"]
+CAPTIONS = ["outline", "box", "karaoke", "pop", "bar"]  # "soft" is the aesthetic ads' own
 CUTS = ["punch", "whip", "flash", "zoom"]
 LOOK_LABELS = {"full": "Full screen", "card": "Floating card", "split": "Photo + colour", "polaroid": "Polaroid", "frame": "Framed"}
 CAPTION_LABELS = {"outline": "Outlined", "box": "Highlight box", "karaoke": "Karaoke", "pop": "One word at a time", "bar": "Subtitle bar"}
@@ -188,8 +188,35 @@ def _positions(line: list[str], widths: list[float], left: float, total: float, 
     return xs
 
 
+def soft_caption(img: Image.Image, words: list[str], rtl: bool, box: tuple[int, int, int, int], alpha: float) -> None:
+    x0, y0, x1, y1 = box
+    fnt = font(60, False)
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    lines = _wrap(d, words, fnt, x1 - x0 - 80)[:3]
+    lh = 80
+    y = (y0 + y1) // 2 - len(lines) * lh // 2
+    spots = []
+    for line in lines:
+        widths = [d.textlength(w + " ", font=fnt) for w in line]
+        total = sum(widths) - d.textlength(" ", font=fnt)
+        spots.append((line, _positions(line, widths, (x0 + x1 - total) / 2, total, rtl), y))
+        y += lh
+    for line, xs, ly in spots:
+        for w, x in zip(line, xs):
+            d.text((x + 2, ly + 3), w, font=fnt, fill=(0, 0, 0, 170))
+    layer = layer.filter(ImageFilter.GaussianBlur(7))
+    d = ImageDraw.Draw(layer)
+    for line, xs, ly in spots:
+        for w, x in zip(line, xs):
+            d.text((x, ly), w, font=fnt, fill=(255, 255, 255, 255))
+    if alpha < 1:
+        layer.putalpha(layer.getchannel("A").point(lambda v: int(v * alpha)))
+    img.paste(layer, (0, 0), layer)
+
+
 def draw_caption(img: Image.Image, style: str, words: list[str], shown: int, accent, box: tuple[int, int, int, int],
-                 ink=(255, 255, 255), panel=None) -> None:
+                 ink=(255, 255, 255), panel=None, alpha: float = 1.0) -> None:
     """Captions in one of several creator styles, inside box (x0, y0, x1, y1). Urdu is shaped (letters
     joined) and laid out right to left; English words inside an Urdu line keep their own direction."""
     if not words or shown <= 0:
@@ -198,6 +225,9 @@ def draw_caption(img: Image.Image, style: str, words: list[str], shown: int, acc
     words = [lang_mod.shape(w) for w in words]  # display forms; order and count unchanged
     draw = ImageDraw.Draw(img)
     x0, y0, x1, y1 = box
+    if style == "soft":  # aesthetic: the whole line, small and light, with a soft shadow, faded by `alpha`
+        soft_caption(img, words, rtl, box, alpha)
+        return
     if style == "pop":  # one or two words at a time, huge
         i = shown - 1
         picked = words[max(0, i - (1 if len(words[i]) < 4 else 0)): i + 1]
@@ -253,10 +283,16 @@ def draw_caption(img: Image.Image, style: str, words: list[str], shown: int, acc
 
 # --------------------------------------------------------------------------- the end card
 
-def end_card(kit: BrandKit, title: str, price: str, cta: str, logo: Image.Image | None, p: float, variant: int) -> Image.Image:
+def end_card(kit: BrandKit, title: str, price: str, cta: str, logo: Image.Image | None, p: float, variant: int,
+             backdrop: Image.Image | None = None, soft: bool = False) -> Image.Image:
+    """The closing card: logo, name, price and call to action, over the brand's colour, or over
+    the video's last moment, blurred and dimmed (`backdrop`). `soft` is the aesthetic ads' lighter type."""
     primary, accent = safe_rgb(kit.primary_color), bright(kit)
     bg = primary if variant % 2 == 0 else (17, 17, 17)
-    img = Image.new("RGB", (W, H), bg)
+    if backdrop is not None:
+        img, bg = backdrop.copy(), (40, 40, 40)
+    else:
+        img = Image.new("RGB", (W, H), bg)
     d = ImageDraw.Draw(img)
     ink = ink_for(bg)
     if sum(abs(x - y) for x, y in zip(accent, bg)) < 160:  # the accent would vanish on this background
@@ -270,10 +306,11 @@ def end_card(kit: BrandKit, title: str, price: str, cta: str, logo: Image.Image 
         plate.putalpha(rounded_mask(plate.size, 36).point(lambda v: int(v * 0.92)))
         img.paste(plate, ((W - plate.width) // 2, y - plate.height - 40), plate)
         img.paste(lg, ((W - lg.width) // 2, y - plate.height - 10), lg)
-    for text, size, color in ((title, 76, ink), (price, 96, accent), (cta, 58, ink)):
+    sizes = ((title, 64, ink), (price, 72, ink), (cta, 46, ink)) if soft else ((title, 76, ink), (price, 96, accent), (cta, 58, ink))
+    for text, size, color in sizes:
         if not text:
             continue
-        fnt = font(size, True)
+        fnt = font(size, not soft or text is price)
         for line in _wrap(d, text.split(), fnt, W - 160)[:2]:
             s = lang_mod.shape(" ".join(line))  # Urdu joined and right to left
             d.text(((W - d.textlength(s, font=fnt)) / 2, y), s, font=fnt, fill=color)
@@ -532,16 +569,21 @@ def probe_duration(path: str) -> float:
 
 
 def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, float, float]], product_photo: str, terms: list[str],
-                     out: Path, poster: Path, caption: str, seed: int, end: tuple[str, str, str] = ("", "", "")) -> float:
+                     out: Path, poster: Path, caption: str, seed: int, end: tuple[str, str, str] = ("", "", ""),
+                     lines: list[tuple[str, float, float]] | None = None) -> float:
     """Your video, trimmed to the speech, upright 9:16, with captions that follow what was said, the
-    product popping in when it's mentioned, your logo and an end card."""
+    product popping in when it's mentioned, your logo and an end card over the video's last moment.
+    With `lines` (text, start, end) and the "soft" caption style, each line fades in whole instead."""
     from .reels.render import ffmpeg_exe
 
     length = probe_duration(video_path)
-    start = max(0.0, (words[0][1] - 0.35) if words else 0.0)
-    stop = min(length, (words[-1][2] + 0.6) if words else length)
+    soft = caption == "soft" and lines is not None
+    start = 0.0 if soft else max(0.0, (words[0][1] - 0.35) if words else 0.0)
+    stop = min(length, lines[-1][2] + 0.2) if soft else min(length, (words[-1][2] + 0.6) if words else length)
     talk = max(1.0, stop - start)
     end_secs = 1.8 if any(end) else 0.0
+    # Speech stops where the talking does; music runs on under the end card.
+    audio_stop = min(length, stop + end_secs) if soft else stop
     total = talk + end_secs
     frames, talk_frames = int(total * FPS), int(talk * FPS)
     accent = bright(kit)
@@ -584,10 +626,20 @@ def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, floa
             last[0] = Image.frombytes("RGB", (W, H), data)
         return last[0].copy()
 
+    ending: list[Image.Image] = []  # the last frame, blurred and dimmed, behind the end card
+
     def draw(f: int, img: Image.Image | None) -> bytes:
         now = f / FPS
         if f >= talk_frames:
-            frame = end_card(kit, *end, logo, now - talk, seed)
+            frame = end_card(kit, *end, logo, now - talk, seed, backdrop=ending[0] if ending else None, soft=soft)
+        elif soft:
+            frame = img
+            line = next((x for x in lines if x[1] <= now < x[2]), None)
+            if line:
+                k = max(0.0, min(1.0, (now - line[1]) / 0.45, (line[2] - now) / 0.35))
+                draw_caption(frame, "soft", line[0].split(), 1, accent, (60, int(H * 0.64), W - 60, int(H * 0.8)), alpha=k)
+            if small_logo is not None:
+                frame.paste(small_logo, (70, 100), small_logo)
         else:
             frame = Image.composite(black, img, band)
             for s0, s1 in shown_spans:
@@ -610,6 +662,8 @@ def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, floa
     # Frames come off the decoder in order, so they're read here and drawn in parallel batches.
     def frames_in_order():
         for f in range(frames):
+            if f == talk_frames:
+                ending.append(Image.blend(last[0].filter(ImageFilter.GaussianBlur(28)), black, 0.45))
             yield f, (next_frame() if f < talk_frames else None)
 
     def draw_pair(pair) -> bytes:
@@ -617,7 +671,7 @@ def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, floa
 
     tmp = out.with_name(f"{out.stem}.{uuid.uuid4().hex[:8]}.part.mp4")
     cmd = [ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-           "-ss", f"{start:.3f}", "-to", f"{stop:.3f}", "-i", video_path, "-map", "0:v", "-map", "1:a?",
+           "-ss", f"{start:.3f}", "-to", f"{audio_stop:.3f}", "-i", video_path, "-map", "0:v", "-map", "1:a?",
            "-af", f"apad=whole_dur={total:.3f}", "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
            "-movflags", "+faststart", str(tmp)]
     enc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -647,17 +701,24 @@ def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, floa
 
 # --------------------------------------------------------------------------- AI scenes
 
-def scene_footage(clips: list[str], durations: list[float], voice_wav: str, out: Path) -> None:
-    """The generated shots cut to the voice: each shot plays while its line is spoken, slowed a
-    little (or played forward then back) when the line is longer than the shot."""
+GRADE = ("eq=saturation=0.88:contrast=0.94:brightness=0.025:gamma=1.04,colorbalance=rs=0.05:gs=0.01:bs=-0.04:rh=0.03:bh=-0.03,"
+         "noise=alls=7:allf=t,vignette=angle=PI/5")  # warm, a little faded, fine grain: the "aesthetic" film look
+
+
+def scene_footage(clips: list[str], durations: list[float], audio: str, out: Path, dissolve: float = 0.0, grade: bool = False) -> None:
+    """The generated shots cut to the sound: each shot plays for its line, slowed a little (or played
+    forward then back) when the line is longer than the shot. With `dissolve`, shots melt into each
+    other over that many seconds instead of cutting; `grade` gives the warm film look."""
     from .reels.render import ffmpeg_exe
 
     cmd = [ffmpeg_exe(), "-y", "-loglevel", "error"]
     for c in clips:
         cmd += ["-i", c]
-    cmd += ["-i", voice_wav]
+    cmd += ["-i", audio]
     parts = []
     for i, (c, d) in enumerate(zip(clips, durations)):
+        if dissolve and i < len(clips) - 1:
+            d += dissolve  # each shot runs on under the next one's dissolve
         length = max(0.5, probe_duration(c))
         fit = f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
         if d > length * 1.35:
@@ -665,8 +726,19 @@ def scene_footage(clips: list[str], durations: list[float], voice_wav: str, out:
             length *= 2
         k = max(0.6, d / length)
         parts.append(f"{fit},setpts={k:.4f}*(PTS-STARTPTS),fps={FPS},tpad=stop_mode=clone:stop_duration={d:.3f},"
-                     f"trim=duration={d:.3f},setpts=PTS-STARTPTS[v{i}]")
-    graph = ";".join(parts) + ";" + "".join(f"[v{i}]" for i in range(len(clips))) + f"concat=n={len(clips)}:v=1:a=0[v]"
+                     f"trim=duration={d:.3f},setpts=PTS-STARTPTS,fps={FPS},settb=AVTB[v{i}]")
+    if dissolve and len(clips) > 1:
+        chain, at = "[v0]", 0.0
+        for i in range(1, len(clips)):
+            at += durations[i - 1]
+            parts.append(f"{chain}[v{i}]xfade=transition=fade:duration={dissolve:.3f}:offset={at:.3f}[x{i}]")
+            chain = f"[x{i}]"
+        last = chain
+    else:
+        parts.append("".join(f"[v{i}]" for i in range(len(clips))) + f"concat=n={len(clips)}:v=1:a=0[cat]")
+        last = "[cat]"
+    parts.append(f"{last}{GRADE if grade else 'null'}[v]")
+    graph = ";".join(parts)
     total = sum(durations)
     cmd += ["-filter_complex", graph, "-map", "[v]", "-map", f"{len(clips)}:a", "-af", f"apad=whole_dur={total:.3f}",
             "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
@@ -691,16 +763,32 @@ def spoken_words(lines: list[str], durations: list[float]) -> list[tuple[str, fl
     return words
 
 
+def aesthetic_durations(lines: list[str]) -> list[float]:
+    """Unhurried shots for aesthetic ads: long enough to read each line twice."""
+    return [round(min(4.2, max(2.8, len(line.split()) / 2.2 + 1.2)), 2) for line in lines]
+
+
 def make_scene_ad(kit: BrandKit, clips: list[str], lines: list[str], voice: str, out: Path, poster: Path, caption: str,
-                  seed: int, end: tuple[str, str, str] = ("", "", "")) -> float:
-    """Voice, then the generated shots cut to it, then captions, logo and end card."""
-    from . import speech
+                  seed: int, end: tuple[str, str, str] = ("", "", ""), style: str = "") -> float:
+    """Voice, then the generated shots cut to it, then captions, logo and end card. Aesthetic ads
+    have no voice: composed music, slow dissolves, the film look and soft captions."""
+    from . import music, speech
 
     wav = out.with_suffix(".voice.wav")
     footage = out.with_suffix(".scenes.mp4")
     try:
-        durations = speech.speak(lines, wav, voice)
         shots = [clips[i % len(clips)] for i in range(len(lines))]
+        if style == "aesthetic":
+            durations = aesthetic_durations(lines)
+            music.compose(sum(durations) + 2.0, wav, seed)  # runs on under the end card
+            # The last shot runs on (frozen) under the end card, so the music has picture to play under.
+            scene_footage(shots, durations[:-1] + [durations[-1] + 2.0], str(wav), footage, dissolve=0.6, grade=True)
+            spans, t = [], 0.0
+            for line, d in zip(lines, durations):
+                spans.append((line, t + 0.25, t + d - 0.2))
+                t += d
+            return render_person_ad(kit, str(footage), [], "", [], out, poster, "soft", seed, end, lines=spans)
+        durations = speech.speak(lines, wav, voice)
         scene_footage(shots, durations, str(wav), footage)
         return render_person_ad(kit, str(footage), spoken_words(lines, durations), "", [], out, poster, caption, seed, end)
     finally:

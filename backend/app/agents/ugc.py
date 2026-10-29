@@ -46,6 +46,7 @@ FORMATS = {
     "sign": ("Your sign", "\"This is your sign to…\": light and shareable"),
     "taste": ("Taste test", "For food: crave-worthy close-ups and the price"),
     "outfit": ("Outfit check", "For fashion: the piece, how to wear it, the price"),
+    "aesthetic": ("Aesthetic", "Soft and slow: a few quiet words on screen over music, no voice"),
 }
 
 
@@ -86,6 +87,7 @@ WORDS = {
         "reasons": "{n} reasons to get the {name}", "before": "Before you buy {category}, see this", "the": "The {name}",
         "sign": "This is your sign to treat yourself", "crave": "Craving something good?", "from": "From {brand}",
         "outfit": "Outfit check: the {name}", "wear": "Dress it up or keep it easy",
+        "aes_open": "the {name}", "aes_detail": "every detail, up close",
     },
     "roman": {
         "price": "Sirf {price}", "sale": "Ab sirf {price}, pehle {was}", "pct": "Abhi {pct}% off",
@@ -94,6 +96,7 @@ WORDS = {
         "reasons": "{n} wajah {name} lene ki", "before": "{category} lene se pehle yeh dekhein", "the": "{name}",
         "sign": "Yeh sign hai khud ko treat karne ka", "crave": "Kuch mazedaar khane ka dil hai?", "from": "{brand} se",
         "outfit": "Aaj ka outfit: {name}", "wear": "Har mauqe ke liye",
+        "aes_open": "{name}", "aes_detail": "har detail, qareeb se",
     },
     "ur": {
         "price": "صرف {price}", "sale": "اب صرف {price}، پہلے {was}", "pct": "ابھی {pct}% رعایت",
@@ -102,6 +105,7 @@ WORDS = {
         "reasons": "{name} لینے کی {n} وجوہات", "before": "{category} لینے سے پہلے یہ دیکھیں", "the": "{name}",
         "sign": "یہ نشانی ہے کہ خود کو ٹریٹ کریں", "crave": "کچھ مزیدار کھانے کا دل ہے؟", "from": "{brand} سے",
         "outfit": "آج کا آؤٹ فٹ: {name}", "wear": "ہر موقع کے لیے",
+        "aes_open": "{name}", "aes_detail": "ہر تفصیل، قریب سے",
     },
 }
 
@@ -129,7 +133,11 @@ def template_script(kit: BrandKit, p: Product, fmt: str, language: str = "en") -
         "sign": [say("sign"), say("the"), price_line, cta],
         "taste": [say("crave"), say("the"), price_line, promise or (say("from") if f["brand"] else ""), cta],
         "outfit": [say("outfit"), detail or say("wear"), price_line, cta],
+        "aesthetic": [say("aes_open"), say("aes_detail"), detail, price_line, cta],
     }.get(fmt) or [say("the"), price_line, cta]
+    if fmt == "aesthetic" and language != "ur":  # quiet, lower-case captions; names and prices stay as written
+        names = [n for n in (f["name"], f["collection"], f["brand"], f["price"]) if n]
+        lines = [x[:1].lower() + x[1:] if x and not any(x.startswith(n) for n in names) else x for x in lines]
     return [x for x in dict.fromkeys(line.strip() for line in lines) if x][:7]
 
 
@@ -150,7 +158,11 @@ async def write_script(kit: BrandKit, p: Product, fmt: str, language: str = "en"
     try:
         lang_name = {"ur": "Urdu in Urdu script (keep product names in English letters)", "roman": "Roman Urdu (Urdu in Latin letters)"}.get(
             language, "English")
-        data = await router.complete_json("rewrite", SCRIPT_SYSTEM.format(fmt_label=label, fmt_blurb=blurb, language=lang_name),
+        system = SCRIPT_SYSTEM.format(fmt_label=label, fmt_blurb=blurb, language=lang_name)
+        if fmt == "aesthetic":
+            system += ("\nThis one isn't spoken: it's quiet on-screen text over slow, soft video and music. Lower-case, calm, "
+                       "2 to 6 words a line, no hooks or exclamation marks; keep the product name and price as written.")
+        data = await router.complete_json("rewrite", system,
                                           f"Brand: {kit.name}\nFacts: {f}\nA plain draft to improve on:\n" + "\n".join(base),
                                           temperature=0.8, max_tokens=500)
         lines = [str(x).strip() for x in (data.get("lines") if isinstance(data, dict) else None) or [] if str(x).strip()]

@@ -885,7 +885,8 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
             raise HTTPException(404, "Record or upload your video first.") from exc
     if req.voice_key and req.voice_key not in speech.VOICES:
         raise HTTPException(422, "Unknown voice.")
-    if ((req.voice and req.engine == "builtin") or req.engine in ("presenter", "scenes")) and not speech.tts_available():
+    aesthetic = req.engine == "scenes" and req.style == "aesthetic"  # music instead of a voice
+    if ((req.voice and req.engine == "builtin") or req.engine == "presenter" or (req.engine == "scenes" and not aesthetic))             and not speech.tts_available():
         raise HTTPException(409, "The AI voice isn't installed on this computer: pip install piper-tts")
     if req.engine == "avatar":
         if not ugc.heygen_ready():
@@ -930,7 +931,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                 own = [scenes.Scene(s.prompt.strip()[:300], s.crop if s.crop in ("full", "detail", "lower") else "full")
                        for s in req.scenes if s.prompt.strip()][:n]
                 plan = own + scenes.plan(c.brand, product, n, look, int(token, 16))[len(own):]
-                caption = req.caption if req.caption in ugc_video.CAPTIONS else random.choice(["outline", "box", "pop", "karaoke"])
+                caption = "soft" if aesthetic else req.caption if req.caption in ugc_video.CAPTIONS else                     random.choice(["outline", "box", "pop", "karaoke"])
                 clips: list[str] = []
                 try:
                     async with SCENE_SLOTS:
@@ -948,7 +949,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                     async with reels.render_slots():
                         seconds = await reels.render.run_in_worker(
                             ugc_video.make_scene_ad, c.brand, clips, lines, req.voice_key or _voice_for(lines, "female"), out, poster,
-                            caption, int(token, 16) % 997, end)
+                            caption, int(token, 16) % 997, end, look)
                 finally:
                     for clip in clips:
                         Path(clip).unlink(missing_ok=True)
@@ -974,7 +975,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                        video_url=f"/media/{out.name}", poster_url=f"/media/{poster.name}" if poster.exists() else "",
                        seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else
                        (avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]).name if req.engine == "presenter" else "",
-                       look=look, caption=caption, voice=(req.voice and req.engine == "builtin") or req.engine in ("presenter", "scenes"))
+                       look=look, caption=caption, voice=(req.voice and req.engine == "builtin") or req.engine == "presenter" or (req.engine == "scenes" and not aesthetic))
             c.ugc_ads.append(ad)
             store.save(c)
             job.update(status="done", result=ad.model_dump(mode="json"))

@@ -10,6 +10,9 @@ sent, nothing else about the brand.
 
 Faceless ads keep faces out of every shot: the photo is cropped below the shoulders and the shots
 are about hands, fabric and texture, like most creator ads for skincare and clothes.
+
+Aesthetic ads are the soft, slow kind ("aesthetic UGC"): close-ups in morning light, slow hands,
+water and fabric moving, no faces, no voice, music and a few quiet words.
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ import logging
 import random
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,7 +32,10 @@ from .playbooks import playbook_key
 
 log = logging.getLogger(__name__)
 
-STYLES = {"worn": "Worn / used", "faceless": "Faceless (hands only)"}
+STYLES = {"worn": "Worn / used", "faceless": "Faceless (hands only)", "aesthetic": "Aesthetic (soft, music)"}
+FACELESS = ("faceless", "aesthetic")
+AESTHETIC_LOOK = ("soft natural morning light, slow motion, shallow depth of field, dreamy aesthetic, calm and elegant, "
+                  "slow smooth camera movement, realistic, warm tones, sharp product details")
 LOOK = ("handheld smartphone video, natural light, realistic, authentic UGC style, smooth motion, "
         "sharp product details, true colours")
 NEGATIVE = ("text, subtitles, watermark, logo change, blurry, low quality, deformed hands, extra fingers, fused fingers, "
@@ -114,6 +121,37 @@ GENERIC = {
                  ("hands open the box and lift the product out, close-up", "detail")]}
 
 
+# Aesthetic shots: slow and soft, never a face.
+AESTHETIC: dict[str, list[tuple[str, str]]] = {
+    "fashion": [("the fabric sways gently in a soft breeze by a sunlit window, slow motion", "lower"),
+                ("a hand slowly traces the embroidery, soft light moving across the fabric, close-up", "detail"),
+                ("the outfit drapes and moves as the person slowly turns, framed below the shoulders, golden hour light", "lower"),
+                ("sunlight and leaf shadows drift slowly over the fabric, close-up", "detail")],
+    "footwear": [("the shoes rest on a sunlit floor as soft shadows drift across them, slow push in", "full"),
+                 ("slow steps on a quiet morning street, camera low, soft light", "lower"),
+                 ("a hand slowly sets the shoe down on a linen surface, close-up", "detail")],
+    "jewellery": [("the piece glints as soft light slowly moves across it on silk fabric, close-up", "detail"),
+                  ("a hand slowly lifts the piece and it sparkles in morning light", "detail"),
+                  ("slow orbit around the piece resting among flowers, shallow depth of field", "full")],
+    "beauty": [("the product rests on a marble vanity as morning sunlight and leaf shadows drift across it, slow push in", "full"),
+               ("a slow drop of the product falls onto fingertips, soft light, close-up", "detail"),
+               ("fingers slowly smooth the product onto the back of a hand, creamy texture, soft light, close-up", "detail"),
+               ("water ripples slowly around the product beside fresh flowers, soft light", "full")],
+    "food": [("steam rises slowly from the food in soft window light, slow push in", "full"),
+             ("a hand slowly lifts a piece, warm light, shallow depth of field, close-up", "detail"),
+             ("slow orbit around the food on a linen table, soft morning light", "full")],
+    "home": [("soft morning light slowly moves across the item in a calm room", "full"),
+             ("a hand slowly touches the surface, close-up, shallow depth of field", "detail"),
+             ("slow camera glide past the item, sheer curtains moving in the breeze", "full")],
+    "fitness": [("the product rests in soft morning light as the camera slowly pushes in", "full"),
+                ("hands slowly pick up the product, calm light, close-up", "detail"),
+                ("slow orbit around the product on a yoga mat in sunlight", "full")],
+}
+AESTHETIC_GENERIC = [("the product rests on a linen surface as morning sunlight and leaf shadows drift across it, slow push in", "full"),
+                     ("a hand slowly picks up the product and turns it in soft light, close-up", "detail"),
+                     ("slow orbit around the product beside fresh flowers, shallow depth of field", "full")]
+
+
 def kind_of(kit: BrandKit, p: Product) -> str:
     return playbook_key(f"{p.category} {kit.industry}") or playbook_key(p.name)
 
@@ -121,7 +159,8 @@ def kind_of(kit: BrandKit, p: Product) -> str:
 def plan(kit: BrandKit, p: Product, n: int, style: str, seed: int) -> list[Scene]:
     """A shot for each line, in an order that changes from ad to ad and never repeats back to back."""
     style = style if style in STYLES else "worn"
-    shots = (SHOTS.get(kind_of(kit, p)) or GENERIC)[style]
+    kind = kind_of(kit, p)
+    shots = AESTHETIC.get(kind, AESTHETIC_GENERIC) if style == "aesthetic" else (SHOTS.get(kind) or GENERIC)[style]
     rng = random.Random(seed)
     order = shots[:1] + rng.sample(shots[1:], len(shots) - 1)  # the opener shows the whole product
     if rng.random() < 0.5 and len(order) > 2:
@@ -136,8 +175,8 @@ def plan(kit: BrandKit, p: Product, n: int, style: str, seed: int) -> list[Scene
 
 
 def prompt_for(scene: Scene, style: str) -> str:
-    extra = ", no face visible, framed below the shoulders" if style == "faceless" else ""
-    return f"{scene.prompt}{extra}, {LOOK}"
+    extra = ", no face visible, framed below the shoulders" if style in FACELESS else ""
+    return f"{scene.prompt}{extra}, {AESTHETIC_LOOK if style == 'aesthetic' else LOOK}"
 
 
 def start_frame(photo: str, crop: str, out: Path) -> Path:
@@ -150,6 +189,24 @@ def start_frame(photo: str, crop: str, out: Path) -> Path:
         img = img.crop((int(w * 0.15), int(h * 0.2), int(w * 0.85), int(h * 0.85)))
     ImageOps.fit(img, (576, 1024), Image.LANCZOS, centering=(0.5, 0.45)).save(out, quality=93)
     return out
+
+
+def smooth(clip: Path) -> None:
+    """The model films at 16 frames a second, which looks jerky next to phone video: the frames in
+    between are made from the motion (ffmpeg's motion interpolation), giving 30 smooth frames a
+    second. If that fails, the clip stays as it was."""
+    from .reels.render import ffmpeg_exe
+
+    tmp = clip.with_suffix(".smooth.mp4")
+    try:
+        subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(clip),
+                        "-vf", "minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1",
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-an", str(tmp)],
+                       check=True, capture_output=True, timeout=180)
+        tmp.replace(clip)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.info("couldn't smooth %s: %s", clip.name, exc)
+        tmp.unlink(missing_ok=True)
 
 
 def _tidy_error(exc: Exception) -> str:
@@ -165,7 +222,7 @@ def generate(photo: str, scene: Scene, style: str, seed: int, out: Path) -> Path
         raise SceneError("AI scenes need one more package: pip install gradio_client") from exc
     frame = start_frame(photo, scene.crop, out.with_suffix(".start.jpg"))
     prompt = prompt_for(scene, style)
-    negative = NEGATIVE + (", " + NO_FACE if style == "faceless" else "")
+    negative = NEGATIVE + (", " + NO_FACE if style in FACELESS else "") + (", fast motion, shaky" if style == "aesthetic" else "")
     errors = []
     try:
         for space in SPACES:
@@ -180,6 +237,7 @@ def generate(photo: str, scene: Scene, style: str, seed: int, out: Path) -> Path
                 result = client.predict(**kw)
                 video = result[0]["video"] if isinstance(result[0], dict) else result[0]
                 shutil.copyfile(video, out)
+                smooth(out)
                 return out
             except Exception as exc:  # noqa: BLE001 - a busy or changed Space: try the next one
                 log.info("scene on %s failed: %s", space, _tidy_error(exc))

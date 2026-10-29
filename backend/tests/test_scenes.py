@@ -150,7 +150,7 @@ def test_an_ai_scenes_ad_end_to_end(client, monkeypatch, tmp_path):  # noqa: F81
     photo.write_bytes(_png_bytes(size=(900, 1200)))
     c.brand.products = [Product(name="Black Cambric Kurta", price="Rs.6,000", image_url="/media/up_scenephoto.png")]
     overview = client.get(f"/api/campaigns/{c.id}/ugc").json()
-    assert {s["key"] for s in overview["scenes"]["styles"]} == {"worn", "faceless"}
+    assert {s["key"] for s in overview["scenes"]["styles"]} == {"worn", "faceless", "aesthetic"}
     planned = client.post(f"/api/campaigns/{c.id}/ugc/scenes", json={"product": 0, "lines": 9, "style": "faceless"}).json()["scenes"]
     assert len(planned) == 4 and all(s["prompt"] for s in planned)
     lines = ["POV: you just found the Black Cambric Kurta", "Just Rs.6,000", "Link in bio"]
@@ -168,4 +168,62 @@ def test_an_ai_scenes_ad_end_to_end(client, monkeypatch, tmp_path):  # noqa: F81
     assert filmed[0] == ("hands smooth the kurta", "faceless") and len(filmed) == 2
     assert client.get(ad["video_url"]).content[4:8] == b"ftyp"
     assert not list(config.MEDIA_DIR.glob("*_scene*.mp4"))  # generated shots don't pile up
+    assert client.delete(f"/api/campaigns/{c.id}/ugc/{ad['id']}").status_code == 204
+
+
+def test_aesthetic_ads_are_slow_faceless_and_have_their_own_script():
+    from app.agents import ugc
+
+    kit = _fashion()
+    plan = scenes.plan(kit, KURTA, 4, "aesthetic", 5)
+    prompts = [scenes.prompt_for(s, "aesthetic") for s in plan]
+    assert all("no face visible" in p and "slow motion" in p for p in prompts)
+    assert all(s.crop in ("lower", "detail") for s in plan)
+    lines = ugc.template_script(kit, KURTA, "aesthetic")
+    assert lines[0] == "the Black Cambric Kurta" and "every detail, up close" in lines
+    assert not any(line.endswith("!") for line in lines)
+
+
+def test_composed_music_fits_the_ad(tmp_path):
+    from app.agents import music
+
+    out = music.compose(5.0, tmp_path / "m.wav", seed=4)
+    with wave.open(str(out)) as wf:
+        assert wf.getnchannels() == 2 and abs(wf.getnframes() / wf.getframerate() - 5.0) < 0.01
+
+
+def test_an_aesthetic_ad_has_music_not_a_voice(client, monkeypatch, tmp_path):  # noqa: F811
+    monkeypatch.setattr(ugc_video, "FPS", 6)
+    monkeypatch.setattr(speech, "tts_available", lambda: False)  # no voice installed: aesthetic ads don't need one
+
+    def no_voice(*a, **kw):
+        raise AssertionError("an aesthetic ad has no voice")
+
+    monkeypatch.setattr(speech, "speak", no_voice)
+    clip = _clip(tmp_path / "gen.mp4", 1.5)
+
+    def fake_generate(photo, scene, style, seed, out):
+        assert style == "aesthetic"
+        shutil.copyfile(clip, out)
+        return out
+
+    monkeypatch.setattr(scenes, "generate", fake_generate)
+    c = _campaign_with_posts(days=1)
+    photo = config.MEDIA_DIR / "up_aesphoto.png"
+    photo.write_bytes(_png_bytes(size=(900, 1200)))
+    c.brand.products = [Product(name="Black Cambric Kurta", price="Rs.6,000", image_url="/media/up_aesphoto.png")]
+    r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "format": "aesthetic", "lines": ["the kurta", "Rs.6,000"],
+                                                        "engine": "scenes", "style": "aesthetic"})
+    assert r.status_code == 202, r.text
+    for _ in range(120):
+        j = client.get(f"/api/ugc-jobs/{r.json()['job_id']}").json()
+        if j["status"] != "running":
+            break
+        time.sleep(0.25)
+    assert j["status"] == "done", j
+    ad = j["result"]
+    assert ad["look"] == "aesthetic" and ad["caption"] == "soft" and not ad["voice"]
+    path = config.MEDIA_DIR / ad["video_url"].removeprefix("/media/")
+    probe = subprocess.run([ffmpeg_exe(), "-i", str(path)], capture_output=True, text=True, errors="replace").stderr
+    assert "Audio:" in probe and ugc_video.probe_duration(str(path)) > 5.5  # two unhurried shots and the end card
     assert client.delete(f"/api/campaigns/{c.id}/ugc/{ad['id']}").status_code == 204

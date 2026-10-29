@@ -228,7 +228,8 @@ function Studio() {
                     <span className="text-xs font-medium text-slate-600">Style</span>
                     <div className="seg">
                       {info.scenes.styles.map((s) => (
-                        <button key={s.key} data-active={style === s.key} onClick={() => setStyle(s.key)}>
+                        <button key={s.key} data-active={style === s.key}
+                          onClick={() => { setStyle(s.key); if (s.key === "aesthetic" && info.formats.some((f) => f.key === "aesthetic")) setFormat("aesthetic"); }}>
                           <span className="inline-flex items-center gap-1">{s.key === "faceless" && <Hand size={13} />}{s.label}</span>
                         </button>
                       ))}
@@ -253,8 +254,17 @@ function Studio() {
                       ))}
                     </div>
                   </div>
-                  <VoicePicker voices={info.voices} value={voiceKey} onChange={(k) => { setVoiceKey(k); setVoicePicked(true); }} language={language} />
-                  <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions]} />
+                  {style === "aesthetic" ? (
+                    <p className="rounded-xl bg-brand-soft px-3 py-2 text-xs text-brand-700">
+                      No voice: soft music composed for this ad (yours to post anywhere), slow dissolves, a warm film look and quiet captions.
+                      Want a trending sound? Add it in Instagram or TikTok when you post.
+                    </p>
+                  ) : (
+                    <>
+                      <VoicePicker voices={info.voices} value={voiceKey} onChange={(k) => { setVoiceKey(k); setVoicePicked(true); }} language={language} />
+                      <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions]} />
+                    </>
+                  )}
                   <p className="text-xs text-slate-500">
                     Each shot starts from your product photo and is filmed by Wan 2.2, an open-source video model, on Hugging Face&apos;s free GPUs: about a
                     minute per shot. Only the photo and the shot description are sent.{" "}
@@ -459,7 +469,7 @@ function AdCard({ ad, campaign, onDelete }: { ad: UgcAd; campaign: Campaign; onD
         <p className="font-semibold">
           {ad.product} · {ad.format.replace("_", " ")}
           {ad.engine === "avatar" ? ` · HeyGen presenter${ad.avatar ? ` (${ad.avatar})` : ""}` : ad.engine === "presenter" ? ` · presenter ${ad.avatar}`
-            : ad.engine === "person" ? " · real person" : ad.engine === "scenes" ? ` · AI scenes${ad.look === "faceless" ? ", faceless" : ""}` : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
+            : ad.engine === "person" ? " · real person" : ad.engine === "scenes" ? ` · AI scenes${ad.look === "faceless" ? ", faceless" : ad.look === "aesthetic" ? ", aesthetic" : ""}` : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
         </p>
         <p className="line-clamp-2 text-slate-500">{ad.script.join(" / ")}</p>
         <div className="flex gap-1.5">
