@@ -1,132 +1,171 @@
+<div align="center">
+
+<img src="frontend/app/icon.svg" width="72" alt="MonoPlus logo" />
+
 # MonoPlus
 
-**MonoPlus** is an autonomous social media agent for small businesses. Give it a website or an Instagram handle and it reads the brand, checks this week's industry news, plans a content strategy, writes and humanizes a month of posts, designs branded images and carousels, and publishes approved posts on schedule to Instagram, Facebook, LinkedIn and X. The owner's only job is to approve.
+### An AI social media team for small brands: a month of posts, research and video ads from one link.
 
-Every AI step runs on **NVIDIA Nemotron** served by **Nebius Token Factory**, with Nemotron 3 Ultra for reasoning and writing and Nemotron Nano for fast structured calls. Live search comes from **Tavily**.
+**NVIDIA Nemotron** on **Nebius Token Factory** plans, writes and directs. Everything else runs free, on an ordinary laptop.
 
-Built for the **Nebius x NVIDIA Global AI Hackathon**, **Best Apps and Agents** track (also entering Best Use of Tavily). License: [MIT](LICENSE).
+[![CI](https://github.com/HadiaIshtiaqq/MonoPulse-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/HadiaIshtiaqq/MonoPulse-AI/actions/workflows/ci.yml)
+![NVIDIA Nemotron](https://img.shields.io/badge/NVIDIA-Nemotron%203-76B900?logo=nvidia&logoColor=white)
+![Nebius Token Factory](https://img.shields.io/badge/Nebius-Token%20Factory-1A1A1A)
+![Tavily](https://img.shields.io/badge/Search-Tavily-5B5BD6)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue)
 
-## Core Features
+**[Demo video](#demo)** · **[Try it](#try-it-in-5-minutes)** · **[How Nemotron is used](#built-on-nvidia-nemotron-and-nebius-token-factory)** · **[Architecture](#architecture)**
 
-- **One-input brand reading**: Scrapes the website for name, logo, colour palette and tone of voice, and builds an editable brand kit. Colours come from the logo first, so a store platform's stylesheet can't hijack the palette. Given only a social handle, it finds the official site first.
-- **Real products and photos**: Finds the site's actual products (name, price as displayed, collection, link and full-size photo) from schema.org data, store product tiles, Shopify's product feed or generic product cards, plus the site's own photos. Posts feature these real products, prices and photos instead of generic graphics.
-- **Live trend awareness**: Searches the last 14 days of industry news with Tavily so posts reference what is actually happening, and keeps each source link on the post.
-- **A strategy specific to each brand**: Nemotron 3 Ultra plans the positioning, audience, four content pillars and weekly themes from the brand's own facts, read from its site:
-  - what it sells and its product lines;
-  - its price range and current sales;
-  - who it's for (men, women, kids);
-  - its country (from Shopify store data, the domain, the currency or addresses).
+*Nebius x NVIDIA Global AI Hackathon · Best Apps and Agents track (also entering Best Use of Tavily)*
 
-  Weekly themes are planned around that country's seasonal moments, such as 11.11, Black Friday / White Friday, wedding season, Ramadan and Eid, Diwali and Christmas. Only news that's actually about the brand or what it sells is used; corporate and generic market reports are dropped. Without a key, an industry playbook (footwear, fashion, food, beauty, fitness, software, real estate and more) is filled in with the same facts.
-- **Every post, made for every platform**: Each post idea gets its own version for Instagram (4:5 image, hook-first caption, "link in bio"), Facebook (square, conversational, asks a question), LinkedIn (square, more professional) and X (16:9, one short line with the link). All versions share the idea, product, photo and image headline, and each is posted at that platform's best hour. A carousel idea is a carousel on Instagram and LinkedIn and a single image elsewhere.
-- **No monotonous feed**: a variety engine ([variety.py](backend/app/agents/variety.py)) keeps a month of posts from feeling like one post 30 times.
-  - **Post types:** a campaign mixes product spotlights, "this or that" duos (two products, vote A or B), sale posts with a % badge, styling tips, brand-quote graphics, seasonal-moment posts, questions and carousels. The same type never runs twice in a row, and never features the same product twice in a row.
-  - **Captions with different shapes:** each caption is a plain statement, a hook line first, a short fact list, a tiny story, a closing question or one punchy line, rotated so neighbouring posts and a post's platform versions read differently (the model gets the same plan). Products that share a generic name ("3-Piece Co-ord Set") are named by their collection, and navigation menus scraped as sentences never become brand quotes.
-  - **Greeting posts:** on Eid, Ramadan, Mother's, Father's and Women's Day, Independence Day, Christmas, Diwali, New Year and Valentine's Day inside a campaign, that day's first post is a warm greeting from the brand (no selling) on a festive card with the occasion's colours and motif.
-  - **Wording:** every angle has several headline, idea, ending and call-to-action variants, rotated so phrasing doesn't come back until all are used.
-  - **Looks:** layouts rotate between photo with text at the bottom, photo with text at the top, framed photo, duo and graphic, so neighbouring posts never look alike.
-  - **Repetition check:** a final check replaces any repeated headline, including ones a model wrote. The Strategy tab shows the content mix.
-- **Parallel copywriting**: Captions and carousel slides are generated in concurrent batches. A post's platform versions always go in the same batch so they stay consistent, and a 30-day, four-platform campaign (120 versions) takes minutes.
-- **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
-- **Branded design**: Renders single images and 1080×1350 carousels (cover, one page per product, CTA) with the brand's logo at the top, its colours, and the product's price. Photo posts rotate through five looks (full photo, a tilted brand-colour poster ribbon, a framed photo, a minimal gallery card, a this-or-that duo) and text positions, and carousel covers vary too, so no two neighbouring posts look alike. It uses the brand's own photos first, then licensed stock or uploads. No watermarks.
+<img src="docs/screenshots/02-campaign.jpg" alt="A month of SAPPHIRE posts, planned and designed by MonoPlus" width="900" />
 
-- **Reels from any post**: One click turns a post into a 10–15 second 1080×1920 video for Instagram Reels, TikTok, YouTube Shorts and Facebook Reels. Nemotron writes the on-screen script (a hook, a few words per photo, a call to action); the video shows the brand's real product photos in one of five styles that differ in layout, motion, type, transitions and pace: Cinematic (slow zooms, crossfades), Fast cuts (zoom punches, white flashes, tilted caption blocks), Showcase (floating photo cards that push in), Magazine (an editorial page with words that write themselves on and a wipe) and Scrapbook (polaroids dropping onto a pile, sticker prices). A campaign's reels rotate through the styles so they never all look alike, and the owner can pick one.
-  - **One story per reel:** every reel has a topic (product showcase, top picks countdown, tips, this or that, brand story or an occasion). The opening makes a promise ("3 ways to wear the X", "Our top 3 right now"), each scene delivers the next part of it with an on-screen label (Tip 1, #3, A), and the end card pays it off ("Which tip will you try?"). The default topic follows the post's type and a fresh script moves on to another.
-  - **Occasions:** Eid al-Fitr and al-Adha, Ramadan, Mother's, Father's and Women's Day, Independence Day (in the country's colours), an anniversary, sales (11.11, Black Friday), New Year, Valentine's, Christmas and Diwali, each with its greeting, festive colours and an animated motif (a crescent and lanterns, floating hearts, bunting, confetti, sparkles). Occasions near the post come first.
-  - **Colours, pace and lettering:** palettes worked out from the brand (its own colours, Night, Soft, Pop), curated ones (Mono, Sunset, Ocean, Forest, Berry), festive colours or any custom colour; relaxed, normal or snappy pacing; capitals or not. Reels nobody customised rotate through on-brand palettes.
-  - **Trending formats and languages:** a trending-format topic uses formats people know from their feeds (POV, "this is your sign to try X", rate these 1 to 10, wait for the last one, "tell me you're from Karachi without telling me"), never claiming facts. Reel words can be English, Roman Urdu, Urdu or English mixed with Roman Urdu; Urdu is shaped (joined letters, right to left) before it's drawn. Captions switch language from the Caption tab: with Nemotron they're rewritten (facts guarded), without it a trending opener and closer in that language frame the caption.
-  - **Humanized words:** written scripts go through the humanizer (the model pass when a key is set, then the rule pass) before they're shown, and a "Humanize words" button does the same for the owner's own edits, with an AI-tell score before and after. Frames are drawn with Pillow on several threads and encoded with ffmpeg (H.264 plus a silent track, so each app's licensed music can be added when posting). Every scene stays editable: change its words or price, swap its photo for another from the campaign, the website or an upload, reorder, add or remove scenes, see a live still of the scene, then render again.
-- **UGC video ads** ([ugc.py](backend/app/agents/ugc.py), [scenes.py](backend/app/agents/scenes.py), [depth3d.py](backend/app/agents/depth3d.py)): short 9:16 ads made from the brand's real products. Nemotron 3 Ultra writes the script from the product's real facts, then **directs the shots**: a crop, a 3D camera move and a shot description for each line.
-  - **AI scenes, filmed on the computer:** Depth Anything V2 Small (Apache-2.0, ONNX Runtime on the CPU) reads the photo's depth, and a virtual camera films it with real parallax (dolly, orbit, rise, handheld sway). No GPU, no account, no limits.
-  - **AI video (optional):** Wan 2.2 image-to-video (Apache-2.0) on Hugging Face's free GPUs, for people and hands moving.
-  - **Styles:** worn, faceless, or aesthetic (composed music, slow dissolves, a warm film grade and soft captions). Free AI voices in several accents and Urdu, plus a real-person mode with a teleprompter and captions from speech recognition.
-- **Scheduling and direct posting**: Drag-and-drop calendar, one-click approval, and automatic publishing at each post's time through the official Instagram Graph, Facebook Pages, LinkedIn and X v2 APIs.
-- **Competitor research and strategy agent** ([competitors.py](backend/app/agents/competitors.py)): this runs automatically for every new campaign, from the Research tab, or from the command line (`python scripts/competitor_research.py bata.com.pk`). It works in four steps:
-  1. **Finds competitors:** a few web searches ("X competitors", "brands like X", "best footwear brands in Pakistan"), plus reading the round-up articles they return for brands linked to their own websites. It also uses any competitors you name. With a key, Nemotron picks the direct competitors.
-  2. **Reads each competitor's site:** prices, sales and discount depth, product lines, who they sell to, service promises (delivery, returns, cash on delivery, instalments) and the social platforms they use. For Shopify stores whose pages refuse automated visits, it reads their public store data instead.
-  3. **Compares** them with the brand in plain, sourced facts: price position, who's discounting, gaps and strengths.
-  4. **Writes the advice:** recommendations (what, why, how), a 4-week plan tied to the brand's seasonal calendar, and content ideas. Nemotron writes these when configured; otherwise rules derived from the comparison do.
+</div>
 
-  The results appear in the Research tab and on the campaign's Strategy tab, and can be attached to future campaigns.
-- **Market research agent**: Plans searches, reads sources and writes a cited report with content ideas that can be attached to a campaign.
-- **MCP server**: Seven tools at `POST /mcp` (MCP 2025-11-25, Streamable HTTP) let other agents and assistants run campaigns.
-- **Live pipeline view**: The web app shows each pipeline step as it runs, with timings and results.
+## The problem
+
+A small clothing shop, bakery or restaurant is expected to post every day on Instagram, Facebook, LinkedIn and X, in
+each platform's own style, with fresh designs, short video ads and an eye on competitors. Agencies and UGC creators
+cost more than most of these businesses earn from social media, so the feeds go quiet, or fill with the same generic
+post over and over. Many sell mostly through Instagram, in more than one language (in Pakistan: English, Urdu and
+Roman Urdu), which most AI tools don't handle.
+
+## What MonoPlus does
+
+Paste a website or an Instagram handle. MonoPlus:
+
+1. **Reads the brand**: its logo, colours, voice and **real products with real prices and photos**.
+2. **Researches**: this week's industry news, and its actual competitors' prices, sales and gaps, with sources.
+3. **Plans a strategy** with **Nemotron 3 Ultra**: positioning, audience, content pillars and weekly themes around the
+   brand's own country and calendar (11.11, Eid, wedding season, Black Friday).
+4. **Writes and designs a month of posts**, each one in a version for every platform, with branded images and carousels.
+   A humanizer strips AI-sounding phrasing, and a fact guard rejects any rewrite that changes a price, date or link.
+5. **Makes video**: reels from any post, and **UGC-style video ads that Nemotron directs**, filmed with a 3D camera
+   on the computer (free, no GPU), with a voice in several accents and Urdu, or with music.
+6. **Publishes**: after the owner approves, it posts on schedule through the official APIs.
+
+The owner's only job is to approve.
+
+## Demo
+
+<!-- Add the public YouTube link (3 minutes or less) here before submitting. -->
+**Demo video:** *(link)* · **Live demo:** *(link)*
+
+### A 60-second tour
+
+| | |
+|---|---|
+| **1. One input.** A website or an @handle is all it needs.<br/><br/><img src="docs/screenshots/01-create.jpg" width="430" alt="Create a campaign" /> | **2. A month, planned and designed.** Every post in a version for each platform, on a calendar to approve.<br/><br/><img src="docs/screenshots/02-campaign.jpg" width="430" alt="Campaign calendar" /> |
+| **3. UGC ads from real products.** Pick a product and a format; Nemotron writes the script from the product's real facts.<br/><br/><img src="docs/screenshots/03-ugc-studio.jpg" width="430" alt="UGC studio" /> | **4. AI scenes.** Filmed by a 3D camera on the computer, or by AI video, in a worn, faceless or aesthetic style.<br/><br/><img src="docs/screenshots/04-ai-scenes.jpg" width="430" alt="AI scenes options" /> |
+| **5. Real research.** Competitors' real prices and sales, and trends, with sources.<br/><br/><img src="docs/screenshots/05-research.jpg" width="430" alt="Research" /> | **6. Keys stay on the server.** The page shows what's connected and never handles a key.<br/><br/><img src="docs/screenshots/06-connections.jpg" width="430" alt="Connections" /> |
+
+**Frames from two ads MonoPlus made** for a SAPPHIRE suit, from its public product photo. Top: aesthetic (composed
+music, slow dissolves, film grade, soft captions). Bottom: voiced, with creator captions and a branded end card.
+
+<img src="docs/screenshots/07-ugc-frames.jpg" alt="Frames from two UGC ads made by MonoPlus" width="900" />
+
+## Built on NVIDIA Nemotron and Nebius Token Factory
+
+Every reasoning and writing step calls **NVIDIA Nemotron** through **Nebius Token Factory**'s OpenAI-compatible API.
+Agents never name a model. They state a *purpose*, and one router ([llm.py](backend/app/llm.py)) sends it to the right tier,
+following the track brief: **Nemotron 3 Ultra** for serious reasoning, **Nemotron Nano** for fast, everyday calls.
+
+| What Nemotron does | Tier | Why that tier |
+|---|---|---|
+| Brand strategy: positioning, audience, pillars, weekly themes | Ultra | Reasoning across many facts and a seasonal calendar |
+| A month of captions and carousel slides, in parallel batches | Ultra | Writing quality, brand voice, platform rules |
+| Humanizing and tone rewrites (fact-guarded) | Ultra | Subtle rewriting that must keep every fact |
+| Research plans and cited reports; competitor advice | Ultra | Multi-step reasoning over sources |
+| UGC ad scripts from a product's real facts | Ultra | Short, persuasive, no invented claims |
+| **Directing UGC ads**: a crop, a 3D camera move and a shot description for every line | Ultra | Creative planning within strict rules (e.g. never a face in faceless ads) |
+| Brand profile from page text, hashtags and SEO, classification | Nano | Fast structured JSON |
+| Roman Urdu written in Urdu letters for the voice | Nano | Quick, exact transliteration |
+
+What makes it work in practice:
+
+- **Model auto-selection**: the router lists the models the key can use and picks the newest text Nemotron for each tier
+  (skipping vision, omni and embedding models), so a renamed model never breaks the app.
+- **Guarded answers**: every JSON answer is validated. A shot plan with an unknown camera move, or a script with the
+  wrong number of lines, is corrected or replaced by the rule-based plan; the app never stops because of a model reply.
+- **Telemetry**: each call records tier, model, purpose, latency and tokens. `GET /api/telemetry` shows the Ultra/Nano
+  split and today's usage.
+- **Spend guard**: a daily token cap (`LLM_DAILY_TOKENS`), and an optional dollar cap, are checked before every call and
+  survive restarts. When a cap is reached, templates take over.
+- **Works without a key, better with one**: every Nemotron step has a rule-based fallback, so the app runs end to end in
+  demo mode, and the difference with Nemotron is easy to see.
 
 ## Architecture
 
-### Video Demo
-
-_TODO: public YouTube link (3 minutes or less)._
-
-MonoPlus is a FastAPI backend that runs each campaign as a background job made of seven named steps, plus a Next.js web app that polls the job and renders the results. All state lives in SQLite (one row per campaign, written only when it changes). Every model call goes through a single router that sends each *purpose* to Nemotron 3 Ultra or Nemotron Nano on Token Factory.
+MonoPlus is a **FastAPI** backend of agents and background jobs, and a **Next.js** web app. The web app forwards `/api`,
+`/media` and `/mcp` to the backend, so the whole product is one address.
 
 ```mermaid
 flowchart TB
-    subgraph Client["Owner"]
-        U1["Web app (Next.js)<br/>Create · Calendar · Post studio · Research · Humanizer"]
-        U2["MCP clients"]
+    UI["Web app · Next.js 14<br/>Create · Calendar · Post studio · UGC studio · Research"]
+    PX["Next.js server<br/>forwards /api · /media · /mcp"]
+    GATE["Access guard<br/>this computer only, unless an access key is set"]
+
+    subgraph Agents["MonoPlus backend · FastAPI agents"]
+        direction LR
+        CAMP["Campaign agent<br/>brand → trends → strategy → copy<br/>→ humanize + fact guard → format → design"]
+        UGC["UGC video studio<br/>script → Nemotron director<br/>→ 3D shots → voice, music, captions"]
+        RES["Research agents<br/>competitors · market"]
     end
 
-    subgraph Backend["MonoPlus backend · FastAPI"]
-        A0["POST /api/campaigns · POST /mcp"]
-        subgraph Pipeline["Campaign job (background, live progress)"]
-            P1["1 · Brand reader"]
-            P2["2 · Trend engine"]
-            P3["3 · Strategist"]
-            P4["4 · Copywriter (parallel batches)"]
-            P5["5 · Humanizer + fact guard"]
-            P6["6 · Formatter (code-enforced limits)"]
-            P7["7 · Designer (Pillow)"]
-        end
-        R1["ModelRouter (llm.py)<br/>purpose → Ultra / Nano"]
-        S1["Scheduler + publishers"]
-        D1[("SQLite store<br/>campaigns · posts · research")]
-    end
+    ROUTER["ModelRouter<br/>purpose → Ultra / Nano · daily cap · telemetry"]
 
     subgraph Nebius["Nebius Token Factory"]
         N1["NVIDIA Nemotron 3 Ultra"]
         N2["NVIDIA Nemotron Nano"]
     end
 
-    subgraph Search["Search"]
-        T1["Tavily search + extract"]
-        T2["Free fallback<br/>Google News RSS · DuckDuckGo"]
+    subgraph CPU["On the computer's CPU · no GPU needed"]
+        L1["Depth Anything V2 Small<br/>ONNX Runtime"]
+        L2["Piper voices · faster-whisper · ffmpeg"]
     end
 
-    subgraph Social["Social platforms"]
-        X1["Instagram Graph · Facebook Pages · LinkedIn · X v2"]
-    end
+    SEARCH["Tavily<br/>free search fallback"]
+    HF["Wan 2.2 on Hugging Face<br/>optional AI video"]
+    DB[("SQLite store<br/>+ job book")]
+    PUB["Scheduler + publishers"]
+    SOC["Instagram · Facebook · LinkedIn · X"]
 
-    U1 -->|REST| A0
-    U2 -->|JSON-RPC| A0
-    A0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7
-    P1 & P3 & P4 & P5 & P6 --> R1
-    R1 --> N1
-    R1 --> N2
-    P1 & P2 --> T1
-    T1 -.no key.-> T2
-    P7 --> D1
-    U1 -->|approve| D1
-    S1 -->|due + approved| X1
-    D1 --> S1
+    UI --> PX --> GATE --> Agents
+    CAMP --> ROUTER
+    UGC --> ROUTER
+    RES --> ROUTER
+    ROUTER --> N1
+    ROUTER --> N2
+    CAMP --> SEARCH
+    RES --> SEARCH
+    UGC --> CPU
+    UGC -.optional.-> HF
+    Agents --> DB --> PUB --> SOC
 ```
 
-Plain-text version (for contexts that don't render Mermaid):
+### How a UGC ad is made
 
-```text
- Web app ──REST──▶ POST /api/campaigns          MCP client ──JSON-RPC──▶ POST /mcp
-                         │                                                  │
-                         └───────────────┬──────────────────────────────────┘
-                                         ▼
-   Campaign job ─ 1 Brand reader ─ 2 Trends ─ 3 Strategy ─ 4 Copy ─ 5 Humanize ─ 6 Format ─ 7 Render
-                       │              │           │           │          │           │
-                       │           Tavily         └──── ModelRouter ─────┘───────────┘
-                       │       (or free search)    Ultra: strategy, copy, humanize
-                       └──── Nano: brand extract   Nano:  brand extract, SEO
-                                         ▼
-                              SQLite store (campaigns, posts, research)
-                                         ▼
-          owner approves ──▶ Scheduler (every minute) ──▶ Instagram / Facebook / LinkedIn / X
+```mermaid
+sequenceDiagram
+    autonumber
+    actor O as Owner
+    participant W as Web app
+    participant B as Backend
+    participant N as Nemotron on Token Factory
+    participant C as This computer's CPU
+    O->>W: Pick a product, format and style
+    W->>B: POST /api/campaigns/{id}/ugc/script
+    B->>N: Ultra: a script from the product's real facts
+    N-->>B: Lines (price and name kept exactly)
+    O->>W: Make the ad
+    W->>B: POST /api/campaigns/{id}/ugc (background job)
+    B->>N: Ultra: direct it (a crop, a camera move, a shot per line)
+    N-->>B: Shot plan, checked against the style's rules
+    B->>C: Depth map, then a 3D camera shot per line (parallax, focus pull or light sweep)
+    B->>C: Voice (Piper) with music underneath, or composed music only
+    B->>C: Captions, logo and end card, encoded with ffmpeg
+    W->>B: Poll /api/ugc-jobs/{job}
+    B-->>W: A 1080×1920 MP4, ready to post
 ```
 
 ### Data flow
@@ -161,7 +200,7 @@ Plain-text version (for contexts that don't render Mermaid):
 - **No secrets in the UI.** Tokens and model details never reach the browser.
 - **Credentials never leak.** Platform tokens travel in request headers, never in URLs. Every log line, error message, saved post or job error and MCP reply passes through a redactor that hides configured keys and anything shaped like a credential (`access_token=…`, `Bearer …`). The access key is never accepted in a URL, and the browser's cookie holds a value derived from it, not the key itself. All `.env.*` files except the examples are git-ignored.
 
-### How NVIDIA Nemotron on Nebius Token Factory is used
+### Every model call, by purpose
 
 All model calls go through `ModelRouter` ([backend/app/llm.py](backend/app/llm.py)), which uses the OpenAI-compatible Token Factory API. Agents never name a model; they pass a **purpose**, and `PURPOSE_TIER` maps it to a tier. This follows the track brief's guidance: Ultra for serious reasoning, Nano for fast everyday calls.
 
@@ -215,6 +254,92 @@ Key design points:
 - **Two of the seven steps use no model at all.** Trends come from search results and images from deterministic rendering, so they are reproducible.
 - **Every model step has a deterministic fallback.** With no key, the pipeline still completes using template copy and the rule-based humanizer, and the campaign is marked `mode: "demo"`.
 - **Missing evidence is reported, never invented.** If search returns nothing, research says so instead of citing made-up sources. A thin brand kit triggers a banner asking the owner for more detail.
+
+## Built during the hackathon
+
+MonoPlus was built from scratch during the submission period: **73 commits from 24 to 29 October 2026**
+([history](https://github.com/HadiaIshtiaqq/MonoPulse-AI/commits/main)).
+
+| Day | What was built |
+|---|---|
+| 24 Oct | The Nemotron router (Ultra/Nano), brand reader, Tavily trend agent, strategist, copywriter, humanizer, designer, research agent, the 7-step campaign pipeline, publishing, the web app and tests |
+| 25 Oct | Posts from real products and photos, a version per platform, country-aware strategy, variety engine, competitor research agent |
+| 26 Oct | Motion and UI polish, faster review |
+| 27 Oct | Reels (topics, occasions, Urdu and Roman Urdu), editable scenes, browser posting, security hardening, background rendering |
+| 28 Oct | Captions that never repeat, credentials kept out of URLs, logs and errors |
+| 29 Oct | A Canva-style design editor, UGC video ads (free voices in many accents, real-person videos, AI scenes with a 3D camera and AI video), **Nemotron directing the ads**, keys only on the server, a spend cap |
+
+## Responsible AI
+
+- **No invented claims.** Scripts and captions use only facts read from the brand's own site: names, prices, sales and
+  promises. Prompts forbid fake reviews and results, and code checks that prices, dates and links survive every rewrite.
+- **No impersonation.** UGC ads never speak as a customer, never put words in a real person's mouth, and have no face swap.
+  Ads with AI-generated people remind the owner to switch on the platform's "AI-generated" label.
+- **Licensed media only.** The brand's own photos, Creative Commons or licensed stock, open-source models
+  (Apache-2.0 depth and video models; MIT-licensed or public-domain voices, with research-licensed ones marked), and music
+  composed by the app.
+- **Keys never leave the server.** Keys live only in `backend/.env`; the web app can't send, save or read one. Logs and
+  errors are redacted. Without an access key the app answers only the computer it runs on, and requests forwarded from
+  anywhere else count as remote.
+
+## Try it in 5 minutes
+
+```bash
+git clone https://github.com/HadiaIshtiaqq/MonoPulse-AI.git && cd MonoPulse-AI
+cp .env.example backend/.env                      # add NEBIUS_API_KEY (and TAVILY_API_KEY for live search)
+cd backend && python -m venv .venv && .venv/bin/pip install -r requirements.txt   # Windows: .venv\Scripts\pip
+.venv/bin/uvicorn app.main:app --port 8000 &       # Windows: .venv\Scripts\uvicorn
+cd ../frontend && npm install && npm run build && npm start      # http://localhost:3000
+```
+
+On Windows, after the installs, `powershell -ExecutionPolicy Bypass -File .\start.ps1` starts both. Paste a website such
+as `tartinebakery.com` and press **Create campaign**. The full guide is in [Run locally](#run-locally-step-by-step).
+
+## Feature reference
+
+- **One-input brand reading**: Scrapes the website for name, logo, colour palette and tone of voice, and builds an editable brand kit. Colours come from the logo first, so a store platform's stylesheet can't hijack the palette. Given only a social handle, it finds the official site first.
+- **Real products and photos**: Finds the site's actual products (name, price as displayed, collection, link and full-size photo) from schema.org data, store product tiles, Shopify's product feed or generic product cards, plus the site's own photos. Posts feature these real products, prices and photos instead of generic graphics.
+- **Live trend awareness**: Searches the last 14 days of industry news with Tavily so posts reference what is actually happening, and keeps each source link on the post.
+- **A strategy specific to each brand**: Nemotron 3 Ultra plans the positioning, audience, four content pillars and weekly themes from the brand's own facts, read from its site:
+  - what it sells and its product lines;
+  - its price range and current sales;
+  - who it's for (men, women, kids);
+  - its country (from Shopify store data, the domain, the currency or addresses).
+
+  Weekly themes are planned around that country's seasonal moments, such as 11.11, Black Friday / White Friday, wedding season, Ramadan and Eid, Diwali and Christmas. Only news that's actually about the brand or what it sells is used; corporate and generic market reports are dropped. Without a key, an industry playbook (footwear, fashion, food, beauty, fitness, software, real estate and more) is filled in with the same facts.
+- **Every post, made for every platform**: Each post idea gets its own version for Instagram (4:5 image, hook-first caption, "link in bio"), Facebook (square, conversational, asks a question), LinkedIn (square, more professional) and X (16:9, one short line with the link). All versions share the idea, product, photo and image headline, and each is posted at that platform's best hour. A carousel idea is a carousel on Instagram and LinkedIn and a single image elsewhere.
+- **No monotonous feed**: a variety engine ([variety.py](backend/app/agents/variety.py)) keeps a month of posts from feeling like one post 30 times.
+  - **Post types:** a campaign mixes product spotlights, "this or that" duos (two products, vote A or B), sale posts with a % badge, styling tips, brand-quote graphics, seasonal-moment posts, questions and carousels. The same type never runs twice in a row, and never features the same product twice in a row.
+  - **Captions with different shapes:** each caption is a plain statement, a hook line first, a short fact list, a tiny story, a closing question or one punchy line, rotated so neighbouring posts and a post's platform versions read differently (the model gets the same plan). Products that share a generic name ("3-Piece Co-ord Set") are named by their collection, and navigation menus scraped as sentences never become brand quotes.
+  - **Greeting posts:** on Eid, Ramadan, Mother's, Father's and Women's Day, Independence Day, Christmas, Diwali, New Year and Valentine's Day inside a campaign, that day's first post is a warm greeting from the brand (no selling) on a festive card with the occasion's colours and motif.
+  - **Wording:** every angle has several headline, idea, ending and call-to-action variants, rotated so phrasing doesn't come back until all are used.
+  - **Looks:** layouts rotate between photo with text at the bottom, photo with text at the top, framed photo, duo and graphic, so neighbouring posts never look alike.
+  - **Repetition check:** a final check replaces any repeated headline, including ones a model wrote. The Strategy tab shows the content mix.
+- **Parallel copywriting**: Captions and carousel slides are generated in concurrent batches. A post's platform versions always go in the same batch so they stay consistent, and a 30-day, four-platform campaign (120 versions) takes minutes.
+- **Fact-guarded humanizer**: Detects AI-writing patterns and rewrites them, and rejects any rewrite that changes a price, date, link, @handle or #hashtag.
+- **Branded design**: Renders single images and 1080×1350 carousels (cover, one page per product, CTA) with the brand's logo at the top, its colours, and the product's price. Photo posts rotate through five looks (full photo, a tilted brand-colour poster ribbon, a framed photo, a minimal gallery card, a this-or-that duo) and text positions, and carousel covers vary too, so no two neighbouring posts look alike. It uses the brand's own photos first, then licensed stock or uploads. No watermarks.
+
+- **Reels from any post**: One click turns a post into a 10–15 second 1080×1920 video for Instagram Reels, TikTok, YouTube Shorts and Facebook Reels. Nemotron writes the on-screen script (a hook, a few words per photo, a call to action); the video shows the brand's real product photos in one of five styles that differ in layout, motion, type, transitions and pace: Cinematic (slow zooms, crossfades), Fast cuts (zoom punches, white flashes, tilted caption blocks), Showcase (floating photo cards that push in), Magazine (an editorial page with words that write themselves on and a wipe) and Scrapbook (polaroids dropping onto a pile, sticker prices). A campaign's reels rotate through the styles so they never all look alike, and the owner can pick one.
+  - **One story per reel:** every reel has a topic (product showcase, top picks countdown, tips, this or that, brand story or an occasion). The opening makes a promise ("3 ways to wear the X", "Our top 3 right now"), each scene delivers the next part of it with an on-screen label (Tip 1, #3, A), and the end card pays it off ("Which tip will you try?"). The default topic follows the post's type and a fresh script moves on to another.
+  - **Occasions:** Eid al-Fitr and al-Adha, Ramadan, Mother's, Father's and Women's Day, Independence Day (in the country's colours), an anniversary, sales (11.11, Black Friday), New Year, Valentine's, Christmas and Diwali, each with its greeting, festive colours and an animated motif (a crescent and lanterns, floating hearts, bunting, confetti, sparkles). Occasions near the post come first.
+  - **Colours, pace and lettering:** palettes worked out from the brand (its own colours, Night, Soft, Pop), curated ones (Mono, Sunset, Ocean, Forest, Berry), festive colours or any custom colour; relaxed, normal or snappy pacing; capitals or not. Reels nobody customised rotate through on-brand palettes.
+  - **Trending formats and languages:** a trending-format topic uses formats people know from their feeds (POV, "this is your sign to try X", rate these 1 to 10, wait for the last one, "tell me you're from Karachi without telling me"), never claiming facts. Reel words can be English, Roman Urdu, Urdu or English mixed with Roman Urdu; Urdu is shaped (joined letters, right to left) before it's drawn. Captions switch language from the Caption tab: with Nemotron they're rewritten (facts guarded), without it a trending opener and closer in that language frame the caption.
+  - **Humanized words:** written scripts go through the humanizer (the model pass when a key is set, then the rule pass) before they're shown, and a "Humanize words" button does the same for the owner's own edits, with an AI-tell score before and after. Frames are drawn with Pillow on several threads and encoded with ffmpeg (H.264 plus a silent track, so each app's licensed music can be added when posting). Every scene stays editable: change its words or price, swap its photo for another from the campaign, the website or an upload, reorder, add or remove scenes, see a live still of the scene, then render again.
+- **UGC video ads** ([ugc.py](backend/app/agents/ugc.py), [scenes.py](backend/app/agents/scenes.py), [depth3d.py](backend/app/agents/depth3d.py)): short 9:16 ads made from the brand's real products. Nemotron 3 Ultra writes the script from the product's real facts, then **directs the shots**: a crop, a 3D camera move and a shot description for each line.
+  - **AI scenes, filmed on the computer:** Depth Anything V2 Small (Apache-2.0, ONNX Runtime on the CPU) reads the photo's depth, and a virtual camera films it with real parallax (dolly, orbit, rise, handheld sway). No GPU, no account, no limits.
+  - **AI video (optional):** Wan 2.2 image-to-video (Apache-2.0) on Hugging Face's free GPUs, for people and hands moving.
+  - **Styles:** worn, faceless, or aesthetic (composed music, slow dissolves, a warm film grade and soft captions). Free AI voices in several accents and Urdu, plus a real-person mode with a teleprompter and captions from speech recognition.
+- **Scheduling and direct posting**: Drag-and-drop calendar, one-click approval, and automatic publishing at each post's time through the official Instagram Graph, Facebook Pages, LinkedIn and X v2 APIs.
+- **Competitor research and strategy agent** ([competitors.py](backend/app/agents/competitors.py)): this runs automatically for every new campaign, from the Research tab, or from the command line (`python scripts/competitor_research.py bata.com.pk`). It works in four steps:
+  1. **Finds competitors:** a few web searches ("X competitors", "brands like X", "best footwear brands in Pakistan"), plus reading the round-up articles they return for brands linked to their own websites. It also uses any competitors you name. With a key, Nemotron picks the direct competitors.
+  2. **Reads each competitor's site:** prices, sales and discount depth, product lines, who they sell to, service promises (delivery, returns, cash on delivery, instalments) and the social platforms they use. For Shopify stores whose pages refuse automated visits, it reads their public store data instead.
+  3. **Compares** them with the brand in plain, sourced facts: price position, who's discounting, gaps and strengths.
+  4. **Writes the advice:** recommendations (what, why, how), a 4-week plan tied to the brand's seasonal calendar, and content ideas. Nemotron writes these when configured; otherwise rules derived from the comparison do.
+
+  The results appear in the Research tab and on the campaign's Strategy tab, and can be attached to future campaigns.
+- **Market research agent**: Plans searches, reads sources and writes a cited report with content ideas that can be attached to a campaign.
+- **MCP server**: Seven tools at `POST /mcp` (MCP 2025-11-25, Streamable HTTP) let other agents and assistants run campaigns.
+- **Live pipeline view**: The web app shows each pipeline step as it runs, with timings and results.
 
 ## Stack
 
@@ -596,19 +721,31 @@ The web app is a standard Next.js build. It passes `/api`, `/media` and `/mcp` o
   test that opens every page (`backend/scripts/ui_smoke.py`). Tests use their own temporary data folder, and the
   Nemotron code paths are exercised with a stand-in model (`tests/test_model_paths.py`).
 
-## Limitations
+## Limitations and what's next
 
-- **Direct posting is untested on live accounts.** It is unit-tested against mocked Instagram, Facebook, LinkedIn and X APIs, and real use needs your own app credentials. Instagram requires a Business or Creator account linked to a Facebook Page.
-- **Single-tenant by design.** One store for one business, protected by an optional access key; there are no user accounts.
-- **Reels are motion graphics from photos.** Zooms, transitions and animated text over the brand's stills, with no footage,
-  voiceover or music (music is added from each app's licensed library when posting).
-- **Urdu is drawn in Segoe UI / DejaVu, not Nastaliq.** Proper Nastaliq needs a text-shaping engine Pillow doesn't ship with on
-  Windows; the letters are joined and right to left, but the style is Naskh-like.
-- **No feedback from results yet.** Learning from likes and reach needs each platform's insights API and approved apps.
-- **Sites that draw everything with JavaScript and embed no data** still give no products; most embed their data
-  (Next.js, Nuxt, Redux, JSON-LD, Shopify, Indolj), which MonoPlus reads.
-- **No image-generation model.** Images are designed from templates, brand colours and licensed photos. This keeps them on-brand, but they are less varied than generated images.
-- **Thin sites give thin brand kits.** A single landing page doesn't give much to work with; the app flags this and lets the owner edit the kit.
+- **The 3D camera moves the camera, not the people in the photo.** Hands and bodies moving need a generative video model
+  on a GPU. MonoPlus uses Wan 2.2 on Hugging Face's free GPUs for that (a small daily share). Next: the same open model on
+  a Nebius AI Cloud GPU, as a Serverless Endpoint.
+- **One business per installation.** One store and an optional access key; no user accounts yet. Next: accounts, Postgres
+  and object storage, so it can serve many brands at once.
+- **Direct posting needs each platform's app credentials** and is tested against mocked APIs. Posting from the built-in
+  browser works, but platforms sometimes ask for a human check, which MonoPlus hands back to the owner.
+- **No learning from results yet.** Next: read likes and reach from each platform's insights API, and let Nemotron adjust
+  the plan.
+- **Urdu is drawn in a Naskh-like font**, not Nastaliq, and the free voices vary in quality; the clearest are listed first.
+
+## Feedback on Nebius Token Factory and NVIDIA Nemotron
+
+From building MonoPlus:
+
+- **What worked well:** the OpenAI-compatible API meant one client for everything, and listing models from the API let the
+  app adapt to renamed models automatically. The Ultra/Nano split mapped cleanly onto "plan and write" versus "fast JSON".
+- **Onboarding:** the billing-address form didn't list Pakistan, which blocked the signup step for a participant from a
+  country the hackathon is open to. An API key is shown only once, and the 401 reply ("Unable authenticate") doesn't say
+  whether the key is wrong, incomplete or not yet active; a clearer message, or a key prefix to check against, would help.
+- **Model names:** Nemotron ids vary in format across listings (`NVIDIA-Nemotron-3-Nano-30B-A3B`, `nemotron-3-super-120b-a12b`).
+  A stable alias per tier (for example `nemotron-3-ultra-latest`) would make apps sturdier.
+- **Spend control:** a hard monthly cap in the console would make free-tier experimentation safer; MonoPlus adds its own.
 
 ## Credits
 
@@ -617,10 +754,6 @@ The humanizer builds on two MIT-licensed projects (notices in [third_party/](thi
 - [blader/humanizer](https://github.com/blader/humanizer): pattern catalogue from Wikipedia's "Signs of AI writing".
 - [lynote-ai/humanize-text](https://github.com/lynote-ai/humanize-text): translation-chain "Deep" mode.
 
-## Hackathon submission notes (for the author; fill in before submitting)
+## License
 
-- **Demo video:** _TODO_. Show the problem in the first 20 seconds, then a real website going in, the live pipeline, posts and carousels, the telemetry Ultra/Nano split, and Tavily sources on a post.
-- **Live demo URL:** _TODO_.
-- **Feedback on Nebius Token Factory and NVIDIA Nemotron:** _TODO, in your own words: what worked, what didn't, onboarding, latency, cost. There's a prize for the most valuable feedback._
-- **Existed before the submission period?** _TODO if applicable: explain what was significantly updated during it._
-- **Builders & Brews city:** _TODO, if you attended._
+[MIT](LICENSE). The humanizer's third-party notices are in [third_party/](third_party/).
