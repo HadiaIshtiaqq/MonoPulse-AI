@@ -271,7 +271,15 @@ class ModelRouter:
     def telemetry(self) -> dict[str, Any]:
         models = ({ModelTier.ULTRA.value: config.AWS_BEDROCK_MODEL_ULTRA, ModelTier.NANO.value: config.AWS_BEDROCK_MODEL_NANO}
                   if self.provider == "bedrock" else {t.value: m for t, m in TIER_MODELS.items()})
-        out: dict[str, Any] = {"provider": self.provider, "models": models, "tiers": {},
+        last = self.records[-1] if self.records else None
+        if not self.enabled:
+            state = "off"
+        elif last and not last.ok and re.search(r"401|403|authenticat|api key", last.error or "", re.IGNORECASE):
+            state = "key_rejected"
+        else:
+            state = "ok" if last and last.ok else ("error" if last else "ready")
+        out: dict[str, Any] = {"provider": self.provider, "models": models, "tiers": {}, "state": state,
+                               "routing": {p: t.value for p, t in PURPOSE_TIER.items()},
                                "today": {"tokens": self.budget.used, "limit": config.LLM_DAILY_TOKENS,
                                          "dollars": round(self.budget.dollars, 4), "dollar_limit": config.LLM_DAILY_DOLLARS}}
         for tier in ModelTier:

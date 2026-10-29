@@ -33,6 +33,19 @@ export type UgcOverview = { formats: { key: string; label: string; blurb: string
   scenes: { styles: { key: string; label: string }[]; huggingface: boolean; local: boolean };
   products: { index: number; name: string; price: string; image: string }[]; ads: UgcAd[] };
 export type ConnectionItem = { connected: boolean; env: string[] }; // env: the backend/.env settings it needs
+export type LLMCall = {
+  tier: string; model: string; purpose: string; ok: boolean; latency_ms: number;
+  prompt_tokens: number | null; completion_tokens: number | null; error: string | null; at: string;
+};
+export type Telemetry = {
+  provider: string;
+  state: "off" | "ready" | "ok" | "error" | "key_rejected";
+  models: Record<string, string>;
+  routing: Record<string, string>;
+  today: { tokens: number; limit: number; dollars: number; dollar_limit: number };
+  tiers: Record<string, { calls: number; failures: number; avg_latency_ms: number | null; tokens: number; purposes: string[] }>;
+  recent: LLMCall[];
+};
 export type Connections = {
   meta: ConnectionItem & { page: string; instagram: string; instagram_ready: boolean };
   nebius: ConnectionItem;
@@ -490,6 +503,8 @@ export const api = {
   deleteUgc: (cid: string, id: string) => req<void>(`/api/campaigns/${cid}/ugc/${id}`, { method: "DELETE" }),
   attachUgc: (cid: string, id: string, postId: string) => req<SocialPost>(`/api/campaigns/${cid}/ugc/${id}/attach`, json("POST", { post_id: postId })),
   connections: () => req<Connections>("/api/connections"),
+  telemetry: () => req<Telemetry>("/api/telemetry"),
+  pingNemotron: () => req<{ reply: string; record: LLMCall }>("/api/telemetry/ping", { method: "POST" }),
   browserSignOut: () => req<{ signed_out: boolean }>("/api/browser/sign-out", { method: "POST" }),
   browserScheduled: (enabled: boolean) => req<{ scheduled: boolean }>("/api/browser/scheduled", json("PUT", { enabled })),
 

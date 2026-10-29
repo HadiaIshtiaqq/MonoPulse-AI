@@ -14,6 +14,7 @@ import math
 import random
 import subprocess
 import threading
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -197,8 +198,15 @@ def make_clip(photo: str, crop: str, move: str, seconds: float, out: Path, seed:
                             str(tmp)], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         with ThreadPoolExecutor(max_workers=WORKERS) as pool:  # Pillow warps outside the GIL
-            for data in pool.map(frame, range(frames)):
-                enc.stdin.write(data)
+            # Only a few frames ahead of the encoder (each is 6 MB): pool.map would render them all at once
+            # and run a small computer out of memory.
+            ahead: deque = deque()
+            for f in range(frames):
+                ahead.append(pool.submit(frame, f))
+                if len(ahead) >= WORKERS * 2:
+                    enc.stdin.write(ahead.popleft().result())
+            while ahead:
+                enc.stdin.write(ahead.popleft().result())
         enc.stdin.close()
     except BrokenPipeError:
         pass

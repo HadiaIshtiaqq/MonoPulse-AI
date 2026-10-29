@@ -275,6 +275,18 @@ def telemetry() -> dict:
     return router.telemetry()
 
 
+@app.post("/api/telemetry/ping")
+async def telemetry_ping() -> dict:
+    """One tiny Nano call (a few tokens) so the owner can see Nemotron answer, and how fast."""
+    if not router.enabled:
+        raise HTTPException(400, "Nemotron isn't connected: set NEBIUS_API_KEY in backend/.env and restart.")
+    try:
+        reply = await router.complete("classify", "Reply with the single word: ready", "Are you there?", temperature=0, max_tokens=8)
+    except LLMError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"reply": reply[:40], "record": router.records[-1].model_dump(mode="json")}
+
+
 # --------------------------------------------------------------------------- campaigns
 
 

@@ -87,8 +87,10 @@ What makes it work in practice:
   (skipping vision, omni and embedding models), so a renamed model never breaks the app.
 - **Guarded answers**: every JSON answer is validated. A shot plan with an unknown camera move, or a script with the
   wrong number of lines, is corrected or replaced by the rule-based plan; the app never stops because of a model reply.
-- **Telemetry**: each call records tier, model, purpose, latency and tokens. `GET /api/telemetry` shows the Ultra/Nano
-  split and today's usage.
+- **Telemetry you can watch**: each call records tier, model, purpose, latency and tokens. The **Nemotron** page in the
+  app shows them live: the purpose-to-tier routing, calls and average latency per tier, today's tokens against the cap,
+  and every recent call. A "Test a live call" button sends one tiny Nano request and shows the reply and round-trip
+  time. The same data is at `GET /api/telemetry`.
 - **Spend guard**: a daily token cap (`LLM_DAILY_TOKENS`), and an optional dollar cap, are checked before every call and
   survive restarts. When a cap is reached, templates take over.
 - **Works without a key, better with one**: every Nemotron step has a rule-based fallback, so the app runs end to end in
@@ -524,7 +526,8 @@ Creates a research task; poll `GET /api/research/tasks/{id}` for the cited `repo
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/health` | Which services are connected (Nemotron, Tavily, Pexels, MCP endpoint) |
-| `GET /api/telemetry` | Model calls: tier, model, purpose, latency, tokens |
+| `GET /api/telemetry` | Model calls: tier, model, purpose, latency, tokens, routing table, connection state |
+| `POST /api/telemetry/ping` | One tiny Nano call to confirm Nemotron answers, with its latency |
 | `GET /api/models` | Models available to the Token Factory key |
 | `POST /api/campaigns/{id}/approve-all` | Approve every draft |
 | `PATCH /api/campaigns/{id}/brand` | Edit colours, logo, name, voice; every post re-renders |

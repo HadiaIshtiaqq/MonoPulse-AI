@@ -137,6 +137,38 @@ def test_older_campaigns_are_matched_as_duplicates_by_their_website(client):  # 
     assert rows[a.id]["source"] == rows[b.id]["source"] == "tartinebakery.com"
 
 
+def test_3d_frames_stay_in_order_with_only_a_few_in_memory(monkeypatch, tmp_path):
+    monkeypatch.setattr(depth3d, "FPS", 12)
+    monkeypatch.setattr(depth3d, "depth_map", _fake_depth)
+    photo = tmp_path / "p.png"
+    Image.new("RGB", (600, 900), (90, 90, 90)).save(photo)
+    out = depth3d.make_clip(str(photo), "full", "drift", 2.0, tmp_path / "c.mp4", 1, "sweep")
+    raw = subprocess.run([ffmpeg_exe(), "-loglevel", "error", "-i", str(out), "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True).stdout
+    frames = np.frombuffer(raw, np.uint8).reshape(-1, depth3d.H, depth3d.W)
+    assert len(frames) == 24
+    # The light drifts left to right: its brightest column moves right, frame after frame.
+    peaks = [int(np.argmax(f[depth3d.H // 2].astype(np.int32))) for f in frames[2:-2:4]]
+    assert peaks == sorted(peaks)
+
+
+def test_the_nemotron_page_shows_routing_and_a_rejected_key(client, monkeypatch):  # noqa: F811
+    from app.llm import router
+    from app.schemas import LLMCallRecord
+
+    t = client.get("/api/telemetry").json()
+    assert t["routing"]["ugc_director"] == "ultra" and t["routing"]["transliterate"] == "nano"
+    assert t["state"] == "off"
+    assert client.post("/api/telemetry/ping").status_code == 400  # no key: nothing is called
+    monkeypatch.setattr(type(router), "enabled", property(lambda self: True))
+    router.records.append(LLMCallRecord(tier="nano", model="m", purpose="classify", ok=False, latency_ms=5,
+                                        error="AuthenticationError: Error code: 401 - Unable authenticate"))
+    try:
+        assert client.get("/api/telemetry").json()["state"] == "key_rejected"
+    finally:
+        router.records.pop()
+
+
 def _kit():
     from test_core import _kit as kit
 

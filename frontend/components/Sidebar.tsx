@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Clapperboard, FlaskConical, LayoutGrid, Menu, Plug, Plus, Search, Wand2, X } from "lucide-react";
+import { Clapperboard, Cpu, FlaskConical, LayoutGrid, Menu, Plug, Plus, Search, Wand2, X } from "lucide-react";
 import { useCommandPalette } from "./CommandPalette";
 import { BrandMark } from "./BrandMark";
 
@@ -12,6 +12,7 @@ const NAV = [
   { href: "/research", label: "Research", icon: FlaskConical, match: (p: string) => p.startsWith("/research") },
   { href: "/ugc", label: "UGC ads", icon: Clapperboard, match: (p: string) => p.startsWith("/ugc") },
   { href: "/humanizer", label: "Humanizer", icon: Wand2, match: (p: string) => p.startsWith("/humanizer") },
+  { href: "/nemotron", label: "Nemotron", icon: Cpu, match: (p: string) => p.startsWith("/nemotron") },
   { href: "/connections", label: "Connections", icon: Plug, match: (p: string) => p.startsWith("/connections") },
 ];
 
