@@ -243,6 +243,7 @@ class CompetitorProfile(BaseModel):
     socials: list[str] = []  # platforms the site links to
     sample_products: list[Product] = []
     found_via: str = ""  # how the agent found it
+    industry: str = ""  # what its own site reads as (e.g. "Fashion & Apparel")
     reachable: bool = True
     note: str = ""
 

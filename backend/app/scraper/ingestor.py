@@ -332,9 +332,20 @@ def ink_color_from_image(data: bytes) -> str | None:
 GENERIC_INDUSTRIES = {"E-commerce & Retail"}  # every online shop says "shop", "cart" and "sale"
 
 
+_KEYWORD_RX: dict[str, re.Pattern] = {}
+
+
+def _keyword(k: str) -> re.Pattern:
+    """A keyword as a whole word, plurals and simple endings allowed: "law" matches "laws" but not
+    "lawn" (a lawn suit isn't a law firm), "dress" matches "dresses"."""
+    if k not in _KEYWORD_RX:
+        _KEYWORD_RX[k] = re.compile(r"\b" + re.escape(k) + r"(?:s|es|ed|ing)?\b")
+    return _KEYWORD_RX[k]
+
+
 def guess_industry(text: str) -> str:
     text = text.lower()
-    scores = {ind: sum(text.count(k) for k in kws) for ind, kws in INDUSTRY_KEYWORDS.items()}
+    scores = {ind: sum(len(_keyword(k).findall(text)) for k in kws) for ind, kws in INDUSTRY_KEYWORDS.items()}
     specific = {ind: s for ind, s in scores.items() if ind not in GENERIC_INDUSTRIES and s > 0}
     if specific:
         return max(specific, key=specific.get)

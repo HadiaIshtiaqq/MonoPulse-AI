@@ -137,3 +137,51 @@ def test_shopify_store_data_fallback():
     site = asyncio.run(run())
     p = competitors.profile_from_site(site, "Generation", "you added it")
     assert p.products_seen == 1 and p.best_discount == 23 and p.price_range == "PKR 9,990" and p.currency == "PKR"
+
+
+def test_wikipedia_brands_join_and_non_competitors_are_left_out(monkeypatch):
+    async def fake_search(q, **kw):
+        return []
+
+    async def listed(category, country, exclude, limit=8):
+        assert country == "Pakistan" and category
+        return [("Gul Ahmed Group", "http://www.gulahmed.com", "listed on Wikipedia"),
+                ("Glow Cosmetics", "https://glow.example/", "listed on Wikipedia"),
+                ("Boohoo", "https://www.boohoo.com/", "listed on Wikipedia")]
+
+    sites = {
+        "pk.khaadi.com": ingestor.ScrapedSite(url="https://pk.khaadi.com/", title="Khaadi", products=[
+            Product(name="Black Cambric Kurta", price="PKR 8,000", image_url="https://x/1.jpg")]),
+        "www.gulahmed.com": ingestor.ScrapedSite(url="https://www.gulahmed.com/", title="Gul Ahmed", text="Lawn suits, kurta and dupatta fashion",
+                                                 products=[Product(name="Lawn Suit", price="PKR 12,000", image_url="https://x/2.jpg")]),
+        "glow.example": ingestor.ScrapedSite(url="https://glow.example/", title="Glow", text="Lipstick, foundation, mascara and skincare serum makeup",
+                                             products=[Product(name="Matte Lipstick", price="PKR 1,500", image_url="https://x/3.jpg")]),
+        "www.boohoo.com": ingestor.ScrapedSite(url="https://www.boohoo.com/", title="boohoo", text="Dresses and fashion clothing",
+                                               products=[Product(name="Midi Dress", price="£25.00", image_url="https://x/4.jpg")]),
+    }
+
+    async def fake_fetch_site(url, client):
+        return sites[httpx.URL(url).host]
+
+    monkeypatch.setattr(competitors.trends, "search", fake_search)
+    monkeypatch.setattr(competitors.wiki, "brands_in", listed)
+    monkeypatch.setattr(competitors.ingestor, "fetch_site", fake_fetch_site)
+
+    async def run():
+        events = [e async for e in competitors.run(kit(), date(2026, 10, 25))]
+        return events
+
+    events = asyncio.run(run())
+    report = events[-1]["report"]
+    assert [c.name for c in report.competitors] == ["Gul Ahmed Group"]
+    progress = " ".join(e["message"] for e in events if e["type"] == "progress")
+    assert "Left out Glow Cosmetics: its site is about beauty" in progress
+    assert "Left out Boohoo: it sells in £" in progress
+
+
+def test_no_made_up_advice_when_nothing_could_be_compared():
+    from app.schemas import CompetitorProfile
+
+    recs, _, _ = competitors.rule_advice(kit(), CompetitorProfile(name="Khaadi"), [], [], date(2026, 6, 1))
+    text = " ".join(f"{r.title} {r.why}" for r in recs)
+    assert "your competitors" not in text.lower() and "Most brand feeds" not in text

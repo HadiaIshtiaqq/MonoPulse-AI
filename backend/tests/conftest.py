@@ -21,4 +21,11 @@ def _offline(monkeypatch):
     from app.scraper import ingestor
 
     monkeypatch.setattr(config, "FREE_SEARCH", False)
+    from app.agents import wiki
+
+    async def no_wikipedia(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(wiki, "brands_in", no_wikipedia)
+    monkeypatch.setattr(wiki, "search", no_wikipedia)
     monkeypatch.setattr(ingestor, "_page_cache", {})

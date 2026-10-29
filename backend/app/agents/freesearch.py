@@ -20,8 +20,11 @@ from ..netguard import UnsafeURL, safe_client
 
 log = logging.getLogger(__name__)
 
-UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+# MonoPlus says what it is. It used to pose as a Chrome browser; search engines that rate-limit
+# programs are then simply asked less often (one request at a time, spaced out, results cached).
+UA = {"User-Agent": "MonoPlus/0.4 (https://github.com/HadiaIshtiaqq/MonoPulse-AI; social media research assistant)",
       "Accept-Language": "en-US,en;q=0.9"}
+DDG_GAP_S = 2.0  # seconds between DuckDuckGo requests
 _cache: dict[str, tuple[float, list[dict]]] = {}
 _TTL = 15 * 60
 _ddg_lock = asyncio.Lock()  # one DuckDuckGo request at a time keeps us under its rate limit
@@ -91,7 +94,7 @@ async def duckduckgo(query: str, max_results: int = 6, include_domains: list[str
         async with _ddg_lock:
             async with httpx.AsyncClient(timeout=15, headers=UA, follow_redirects=True) as client:
                 resp = await client.post("https://html.duckduckgo.com/html/", data={"q": query[:300]})
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(DDG_GAP_S)
         if resp.status_code == 202 or "anomaly" in resp.text[:20000].lower():
             global last_block
             last_block = time.time()

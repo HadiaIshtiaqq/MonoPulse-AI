@@ -36,7 +36,7 @@ from ..netguard import UnsafeURL, safe_client
 from ..schemas import BrandKit, CompetitorProfile, CompetitorReport, PlanWeek, Recommendation
 from ..scraper import ingestor
 from ..scraper import products as product_finder
-from . import calendar, freesearch, trends
+from . import calendar, freesearch, trends, wiki
 from .calendar import COUNTRY_NAMES
 from .playbooks import amount, join_words, playbook_for, product_line, tidy_price
 
@@ -87,7 +87,8 @@ def is_brand_domain(domain: str, own: set[str]) -> bool:
 def search_queries(kit: BrandKit) -> list[str]:
     category = playbook_for(kit.industry).category
     country = COUNTRY_NAMES.get(kit.country.upper(), "").removeprefix("the ")
-    queries = [f"{kit.name} competitors", f"brands like {kit.name}" + (f" {country}" if country else "")]
+    what = category if category != "products and services" else (kit.industry or "").lower()
+    queries = [f"{kit.name} {what} competitors {country}".strip(), f"brands like {kit.name} {what} {country}".strip()]
     if category != "products and services":
         queries.append(f"best {category} brands in {country} {date.today().year}" if country else f"best {category} brands like {kit.name}")
     return queries
@@ -157,6 +158,13 @@ async def discover(kit: BrandKit, given: list[str] | None = None) -> tuple[list[
     picked_named = [c for c in named if is_brand_domain(urlparse(c[1]).netloc, own)]
     found, search_notes = await search_for_competitors(kit, own)
     notes += search_notes
+    country = COUNTRY_NAMES.get(kit.country.upper(), "").removeprefix("the ")
+    category = playbook_for(kit.industry).category
+    listed = await wiki.brands_in(category if category != "products and services" else kit.industry or "business", country, own)
+    notes.append(f"Wikipedia lists {len(listed)} {country or ''} businesses like it".replace("  ", " ")
+                 + (f": {join_words([n for n, _, _ in listed[:5]])}" if listed else ""))
+    have = {registrable(urlparse(u).netloc) for _, u, _ in found}
+    found += [(n, homepage(u), how) for n, u, how in listed if registrable(urlparse(homepage(u)).netloc) not in have]
     if not found and router.enabled:
         try:
             data = await router.complete_json("classify", KNOWN_SYSTEM,
@@ -171,7 +179,7 @@ async def discover(kit: BrandKit, given: list[str] | None = None) -> tuple[list[
             notes.append(f"Model couldn't suggest competitors ({exc})")
     seen = {registrable(urlparse(u).netloc) for _, u, _ in picked_named}
     merged = picked_named + [c for c in found if registrable(urlparse(c[1]).netloc) not in seen]
-    return merged[: MAX_COMPETITORS + 2], notes
+    return merged[: MAX_COMPETITORS + 6], notes  # spares: some won't be readable or won't really compete
 
 
 async def search_for_competitors(kit: BrandKit, own: set[str]) -> tuple[list[tuple[str, str, str]], list[str]]:
@@ -302,7 +310,31 @@ async def analyse(name: str, url: str, found_via: str, client: httpx.AsyncClient
     from_domain = "search results" in found_via or found_via == "you added it"
     if from_domain and real and len(real) <= 40 and real.lower() not in ("home", "index", "shop"):
         name = real
-    return profile_from_site(site, name, found_via)
+    profile = profile_from_site(site, name, found_via)
+    profile.industry = ingestor.guess_industry(f"{site.text_blob()} {site.text[:4000]}")
+    return profile
+
+
+GENERIC = {"", "Small Business", "E-commerce & Retail"}
+
+
+def not_a_competitor(kit: BrandKit, brand: CompetitorProfile, rival: CompetitorProfile) -> str:
+    """Why a candidate isn't a real competitor ("" if it is): it sells something else, or sells
+    in another currency, i.e. another market. Brands you named yourself are always kept."""
+    if rival.found_via.startswith("you added"):
+        return ""
+    mine = kit.industry if kit.industry not in GENERIC else brand.industry
+    if mine not in GENERIC and rival.industry not in GENERIC and rival.industry != mine:
+        return f"its site is about {rival.industry.lower()}, not {mine.lower()}"
+    if brand.currency and rival.currency and norm_currency(brand.currency) != norm_currency(rival.currency):
+        return f"it sells in {rival.currency}, so it's a different market"
+    return ""
+
+
+def norm_currency(c: str) -> str:
+    c = c.lower().strip(". ")
+    return {"rs": "pkr", "₨": "pkr", "pkr": "pkr", "$": "usd", "us$": "usd", "usd": "usd", "£": "gbp", "€": "eur", "aed": "aed",
+            "₹": "inr", "inr": "inr"}.get(c, c)
 
 
 # --------------------------------------------------------------------------- 3. compare
@@ -371,7 +403,6 @@ def rule_advice(kit: BrandKit, brand: CompetitorProfile, rivals: list[Competitor
                 start: date) -> tuple[list[Recommendation], list[PlanWeek], list[str]]:
     """Advice derived from the comparison and the brand's calendar, without a model."""
     recs: list[Recommendation] = []
-    rival_names = join_words([r.name for r in rivals[:3]]) or "your competitors"
     priced = priced_rivals(brand, rivals)
     priced_names = join_words([r.name for r in priced[:3]])
     market = statistics.median([r.median_price for r in priced]) if priced and brand.median_price else 0
@@ -385,11 +416,11 @@ def rule_advice(kit: BrandKit, brand: CompetitorProfile, rivals: list[Competitor
                                    why=f"You're priced above {priced_names}, so shoppers need a reason.",
                                    how="Lead with craft, materials and detail close-ups; avoid matching their discounts and offer "
                                        "early access or exclusives instead."))
-    else:
-        why = (f"Your prices sit with {priced_names}, so price alone won't win." if market else
-               f"{rival_names} sell similar {playbook_for(kit.industry).category} to the same shoppers, so you need a reason to be remembered.")
-        recs.append(Recommendation(title="Differentiate on more than price", why=why,
+    elif market:
+        recs.append(Recommendation(title="Differentiate on more than price", why=f"Your prices sit with {priced_names}, so price alone won't win.",
                                    how="Pick one thing to be known for (fit, comfort, design, service) and repeat it in every post's first line."))
+    # With no competitor actually read, advice about "your competitors" would be made up: say only
+    # what the brand's own site and calendar support.
     discounting = [r for r in rivals if r.best_discount]
     moments = calendar.upcoming(kit.country, start, 28)
     sale_moments = [m for m in moments if m.kind == "sale"]
@@ -422,9 +453,15 @@ def rule_advice(kit: BrandKit, brand: CompetitorProfile, rivals: list[Competitor
         recs.append(Recommendation(title=f"Make the {product_line(hero[0].name)} line your hero",
                                    why="One recognisable product makes a feed memorable; competitors spread attention thin.",
                                    how="Feature it in every third post: styling tips, close-ups, customer photos and the price."))
-    recs.append(Recommendation(title="Post what competitors don't",
-                               why="Most brand feeds are product photos only.",
-                               how="Mix in this-or-that polls, styling tips, behind-the-scenes and seasonal posts (MonoPlus campaigns already do)."))
+    photo_only = [r for r in rivals if r.products_seen and not set(r.socials) & {"tiktok", "youtube"}]
+    if rivals and len(photo_only) == len(rivals):
+        recs.append(Recommendation(title="Post what competitors don't",
+                                   why=f"{join_words([r.name for r in photo_only[:3]])} show products but no video channel.",
+                                   how="Mix in this-or-that polls, styling tips, behind-the-scenes and seasonal posts."))
+    if not recs:
+        recs.append(Recommendation(title="Name your competitors, then compare again",
+                                   why="No competitor could be found and read this time, so there's nothing real to compare against.",
+                                   how="Add two or three competitor websites you know in the box above and run the analysis again."))
 
     m_names = [m.label() for m in moments]
     plan = [
@@ -526,7 +563,16 @@ async def run(kit: BrandKit, start: date | None = None, competitor_urls: list[st
     readable = [r for r in rivals if r.reachable and (r.products_seen or r.tagline)]
     yield {"type": "progress", "message": f"Read {len(readable)} competitor sites"
            + (f" ({len(rivals) - len(readable)} couldn't be read)" if len(rivals) > len(readable) else "")}
+    kept, dropped = [], []
+    for r in readable:
+        why = not_a_competitor(kit, brand, r)
+        (dropped if why else kept).append((r, why))
+    for r, why in dropped:
+        yield {"type": "progress", "message": f"Left out {r.name}: {why}"}
+    readable = [r for r, _ in kept][:MAX_COMPETITORS]
+    rivals = readable + [r for r in rivals if not r.reachable]
     rivals = (readable + [r for r in rivals if r not in readable])[:MAX_COMPETITORS]
+    brand.industry = brand.industry or kit.industry
 
     report = CompetitorReport(brand=brand, competitors=rivals)
     report.position, report.strengths, report.gaps = compare(brand, readable)

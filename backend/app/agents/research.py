@@ -18,7 +18,7 @@ from ..llm import LLMError, router
 from ..schemas import BrandKit, CompetitorReport, ResearchInsights, ResearchSource, ResearchTask, now_utc
 from ..scraper.ingestor import ingest
 from ..store import store
-from . import competitors, memory, trends
+from . import competitors, memory, trends, wiki
 from .strategist import brand_brief
 
 log = logging.getLogger(__name__)
@@ -61,11 +61,37 @@ def _fallback_plan(topic: str, region: str) -> list[dict]:
         {"kind": "web", "q": f"{topic}{where} analysis"},
         {"kind": "web", "q": f"{topic} competitors pricing"},
         {"kind": "social", "q": f"{topic} customers opinions"},
+        {"kind": "reference", "q": topic, "region": region},
     ]
 
 
 async def _run_query(q: dict) -> list[dict]:
     kind, text = q.get("kind", "web"), str(q.get("q", ""))[:300]
+    if kind == "reference":  # background from Wikipedia: open, keyless, and allowed for programs
+        # Wikipedia's search wants the subject, not a whole question ("How are ... promoting ...?").
+        # The country is context, not the subject: "Pakistani clothing brands 11.11 sale" searched as a
+        # whole finds articles merely about Pakistan. Search the subject; keep articles named after it.
+        places = [w.lower()[:5] for w in re.findall(r"[A-Za-z]{4,}", f"{q.get('region', '')} {text}")
+                  if w.lower()[:5] in {r.lower()[:5] for r in re.findall(r"[A-Za-z]{4,}", q.get("region", "") or "")}]
+        terms = [w for w in re.findall(r"[A-Za-z0-9.]{3,}", text)
+                 if w.lower() not in _STOP and w.lower() not in _QUESTION_WORDS and w.lower()[:5] not in places]
+        if not terms:
+            return []
+        hits = await wiki.search(" ".join(terms[:5]), 8)
+        subject = {t[:5] for t in _terms(" ".join(terms))}
+
+        words = [w.lower() for w in terms]
+        phrases = set(words) | {f"{a} {b}" for a, b in zip(words, words[1:])}
+
+        def about_it(title: str) -> bool:  # named after the subject ("Coffee"), or sharing two of its words
+            name = title.split(" (")[0].lower()
+            core = {w[:5] for w in _terms(name)}
+            return name in phrases or len(core & subject) >= 2
+
+        on_topic = [h["title"] for h in hits if about_it(h["title"])]
+        pages = await wiki.intros(on_topic[:3])
+        return [{"kind": "reference", "title": f"{p['title']} (Wikipedia)", "url": p["url"], "snippet": p["extract"][:1500],
+                 "published_at": None} for p in pages if p["extract"] and p["url"]]
     if kind == "news":
         items = await trends.search(text, topic="news", days=30, max_results=6)
     elif kind == "social":
@@ -83,6 +109,8 @@ def _sources_md(sources: list[ResearchSource]) -> str:
 
 _STOP = {"the", "and", "for", "with", "what", "are", "how", "our", "this", "that", "from", "about", "which", "who", "their",
          "your", "into", "have", "has", "was", "were", "will", "they", "them", "its", "but", "not", "you", "all", "can"}
+_QUESTION_WORDS = {"how", "what", "why", "when", "which", "who", "does", "doing", "right", "now", "are", "is", "do", "best",
+                   "working", "promoting", "about", "region"}
 _SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
 
 
@@ -95,6 +123,8 @@ def _key_findings(question: str, sources: list[dict], limit: int = 6) -> list[tu
     q = _terms(question)
     scored: list[tuple[float, str, int]] = []
     for s in sources:
+        if s["kind"] == "reference":
+            continue  # background, not a finding: it gets its own section
         title_terms = _terms(s["title"])
         for sent in _SENT.split(s["text"]):
             sent = re.sub(r"^[^:]{2,40}:\s+", "", sent.strip())  # drop "Publisher: " prefixes from news snippets
@@ -138,8 +168,15 @@ def _evidence_report(question: str, sources: list[dict]) -> str:
     social = [s for s in sources if s["kind"] == "social"]
     if social:
         lines += ["", "## What People Are Saying"] + [f"- {s['title']} [{s['id']}]" for s in social[:4]]
+    background = [s for s in sources if s["kind"] == "reference"]
+    if background:
+        lines += ["", "## Background"]
+        for s in background[:3]:
+            first = _SENT.split(s["text"].strip())
+            lines.append(f"- {' '.join(first[:2])} [{s['id']}]")
     lines += ["", "## Content Ideas"]
-    lines += [f"- React to the news: “{s['title']}” and what it means for your customers [{s['id']}]" for s in (dated or sources)[:3]]
+    lines += [f"- React to the news: “{s['title']}” and what it means for your customers [{s['id']}]"
+              for s in (dated or [s for s in sources if s["kind"] != "reference"])[:3]]
     if social:
         lines.append(f"- Answer the question people keep asking in “{social[0]['title']}” [{social[0]['id']}]")
     return "\n".join(lines)
@@ -174,7 +211,7 @@ async def run(topic: str, region: str = "", kit: BrandKit | None = None) -> Asyn
     if prior:
         yield {"type": "memory", "content": prior}
 
-    plan, rationale = _fallback_plan(topic, region), "Default research plan."
+    plan, rationale = _fallback_plan(topic, region), "News, the web, what people say, and background from Wikipedia."
     if router.enabled:
         try:
             data = await router.complete_json(
@@ -183,7 +220,7 @@ async def run(topic: str, region: str = "", kit: BrandKit | None = None) -> Asyn
             )
             qs = [q for q in data.get("queries", []) if isinstance(q, dict) and q.get("q")][:6]
             if qs:
-                plan, rationale = qs, str(data.get("rationale", ""))
+                plan, rationale = qs + [{"kind": "reference", "q": topic, "region": region}], str(data.get("rationale", ""))
         except (LLMError, AttributeError) as exc:
             yield {"type": "thinking", "content": f"Planner unavailable ({exc}); using the default plan."}
     yield {"type": "plan", "rationale": rationale, "queries": plan}
@@ -215,7 +252,7 @@ async def run(topic: str, region: str = "", kit: BrandKit | None = None) -> Asyn
     sources = []
     for i, r in enumerate(results[:24]):
         body = pages.get(r["url"]) or r["snippet"]
-        sources.append(r | {"id": i + 1, "text": body[: 2500 if r["url"] in pages else 500]})
+        sources.append(r | {"id": i + 1, "text": body[: 2500 if r["url"] in pages else 1500 if r["kind"] == "reference" else 500]})
 
     report = ""
     if router.enabled and sources:
