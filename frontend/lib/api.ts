@@ -118,6 +118,7 @@ export interface SocialPost {
   text_scale: number;
   image_url: string | null;
   image_urls: string[];
+  design?: unknown | null; // the owner's own design from the editor
   video_url?: string | null;
   video_poster?: string | null;
   reel_scenes?: ReelScene[];
@@ -440,6 +441,9 @@ export const api = {
   browserLogin: (platform: Platform) => req<{ opened: boolean; note: string }>(`/api/browser/login/${platform}`, { method: "POST" }),
   browserPost: (id: string, submit: boolean, media: "images" | "reel") =>
     req<{ post: SocialPost; message: string }>(`/api/posts/${id}/browser-post`, json("POST", { submit, media })),
+  saveDesign: (id: string, design: unknown, pages: string[]) => req<SocialPost>(`/api/posts/${id}/design`, json("PUT", { design, pages })),
+  resetDesign: (id: string) => req<SocialPost>(`/api/posts/${id}/design`, { method: "DELETE" }),
+  designPhoto: (id: string, body: { url?: string; stock_id?: string }) => req<{ url: string }>(`/api/posts/${id}/design/photo`, json("POST", body)),
   connections: () => req<Connections>("/api/connections"),
   connectMeta: (body: { token: string; app_id?: string; app_secret?: string }) =>
     req<Connections & { result: { page: string; instagram: string; lasting: boolean; note: string } }>("/api/connections/meta", json("PUT", body)),

@@ -17,6 +17,17 @@ KEEP_SECONDS = 2 * 24 * 3600
 KEEP_UPLOAD_SECONDS = 14 * 24 * 3600  # your own photos: kept a fortnight in case you come back for them
 
 
+def _media_refs(value) -> list[str]:
+    """Every "/media/…" string inside a design document."""
+    if isinstance(value, str):
+        return [value] if value.startswith("/media/") else []
+    if isinstance(value, dict):
+        return [r for v in value.values() for r in _media_refs(v)]
+    if isinstance(value, list):
+        return [r for v in value for r in _media_refs(v)]
+    return []
+
+
 def referenced() -> set[str]:
     names: set[str] = set()
 
@@ -39,6 +50,8 @@ def referenced() -> set[str]:
                     add(bg.thumb_url)
             for scene in p.reel_scenes:
                 add(scene.photo)
+            for ref in _media_refs(p.design):  # photos placed in the editor
+                add(ref)
     return names
 
 

@@ -166,6 +166,7 @@ class SocialPost(BaseModel):
     text_scale: float = 1.0
     image_url: str | None = None
     image_urls: list[str] = []  # every rendered page (1 for single posts)
+    design: dict | None = None  # the owner's own design from the editor (layers per page); its images replace the automatic ones
     video_url: str | None = None  # a 9:16 reel made from the post (Instagram Reels, Shorts, TikTok)
     video_poster: str | None = None
     reel_scenes: list[ReelScene] = []  # the reel's script and photos, so it can be edited and re-rendered

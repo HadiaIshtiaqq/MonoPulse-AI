@@ -507,6 +507,72 @@ async def update_post(post_id: str, req: UpdatePostRequest) -> SocialPost:
     return post
 
 
+MAX_DESIGN_JSON = 600_000
+MAX_DESIGN_PAGES = 10
+
+
+class DesignSaveRequest(BaseModel):
+    design: dict
+    pages: list[str]  # data:image/png;base64,… one per page, as the editor exported them
+
+
+@app.put("/api/posts/{post_id}/design")
+async def save_design(post_id: str, req: DesignSaveRequest) -> SocialPost:
+    """Keep a design made in the editor: its layers (to edit again later) and its exported pages,
+    which become the post's images."""
+    campaign, post = _post(post_id)
+    if not 1 <= len(req.pages) <= MAX_DESIGN_PAGES:
+        raise HTTPException(422, f"A design has 1 to {MAX_DESIGN_PAGES} pages.")
+    if len(json.dumps(req.design)) > MAX_DESIGN_JSON:
+        raise HTTPException(422, "That design is too large to save. Remove a few elements and try again.")
+    try:
+        urls = await asyncio.to_thread(photos.save_design_pages, post, req.pages)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    post.design = req.design
+    post.image_url, post.image_urls = urls[0], urls
+    store.save(campaign)
+    return post
+
+
+@app.delete("/api/posts/{post_id}/design")
+async def reset_design(post_id: str) -> SocialPost:
+    """Back to the automatic design (your editor layers are forgotten)."""
+    campaign, post = _post(post_id)
+    post.design = None
+    await _rerender(campaign, post)
+    store.save(campaign)
+    return post
+
+
+class DesignPhotoRequest(BaseModel):
+    url: str = ""
+    stock_id: str = ""
+
+
+@app.post("/api/posts/{post_id}/design/photo")
+async def design_photo(post_id: str, req: DesignPhotoRequest) -> dict:
+    """One of the brand's own web photos, saved here so the editor can draw it (and export it:
+    a canvas can't export pictures loaded straight from another site)."""
+    campaign, _ = _post(post_id)
+    kit = campaign.brand
+    if req.stock_id:  # a free stock photo from the editor's search
+        try:
+            return {"url": (await photos.to_background(req.stock_id)).thumb_url}
+        except KeyError as exc:
+            raise HTTPException(404, "That photo isn't available any more. Search again.") from exc
+    allowed = set(kit.images if kit else []) | {p.image_url for p in (kit.products if kit else []) if p.image_url}
+    if req.url.startswith("/media/"):
+        return {"url": req.url}
+    if req.url not in allowed:
+        raise HTTPException(422, "Pick one of the brand's photos.")
+    try:
+        bg = await photos.website_background(req.url, credit=f"Photo from {kit.name}")
+    except Exception as exc:  # noqa: BLE001 - download or decode failure
+        raise HTTPException(502, f"Couldn't get that photo: {exc}") from exc
+    return {"url": bg.thumb_url}
+
+
 @app.post("/api/posts/{post_id}/background")
 async def set_background(post_id: str, req: SetBackgroundRequest) -> SocialPost:
     campaign, post = _post(post_id)

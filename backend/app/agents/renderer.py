@@ -714,7 +714,10 @@ def render(kit: BrandKit, post: SocialPost) -> Image.Image:
 
 
 def render_post(kit: BrandKit, post: SocialPost) -> None:
-    """Render every page of the post to disk and set image_url / image_urls."""
+    """Render every page of the post to disk and set image_url / image_urls. A post designed in
+    the editor keeps its own images: redraws and brand changes never overwrite your work."""
+    if post.design:
+        return
     stamp = int(time.time() * 1000)
     urls = []
     for old in config.MEDIA_DIR.glob(f"{post.campaign_id}_{post.id}*.png"):

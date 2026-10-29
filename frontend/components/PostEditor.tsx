@@ -1,9 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
-  Check, ChevronLeft, ChevronRight, Clapperboard, Copy, Download, ExternalLink, History, ImageOff, Loader2, Palette, PenLine, Plus,
-  RefreshCw, Rocket, Send, Trash2, Wand2, X,
+  Check, ChevronLeft, ChevronRight, Clapperboard, Copy, Download, ExternalLink, History, ImageOff, Loader2, Paintbrush, Palette, PenLine, Plus, RefreshCw, Rocket, Send, Trash2, Wand2, X,
 } from "lucide-react";
 import {
   api, fmtDay, fmtTime, fromLocalInput, KIND_LABELS, media, toLocalInput, type BrandKit, type HumanizeMode, type Layout, type Pattern, type PostUpdate, type ReelScene, type Slide, type SocialPost, type TextPosition,
@@ -304,6 +304,15 @@ export function PostEditor({
             <div key={tab} className="flex-1 animate-fade-up space-y-5 overflow-y-auto p-5">
               {tab === "design" && (
                 <>
+                  <Link href={`/editor/${post.id}?c=${post.campaign_id}`}
+                    className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#5B47FB] via-[#7C3AED] to-[#C026D3] p-4 text-white shadow-glow transition hover:brightness-110">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/20"><Paintbrush size={18} /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-semibold">{post.design ? "Edit your design" : "Open in the design editor"}</span>
+                      <span className="block text-xs text-white/85">Move, resize and restyle every layer: text, photos, logo, shapes. Like Canva.</span>
+                    </span>
+                  </Link>
+                  {post.design ? <p className="-mt-2 text-xs text-slate-500">This post uses your own design, so automatic redraws leave it alone.</p> : null}
                   <section>
                     <p className="label mb-2">Template</p>
                     <div className="grid grid-cols-4 gap-2">

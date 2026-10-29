@@ -168,6 +168,33 @@ async def website_background(url: str, credit: str, credit_url: str = "") -> Bac
                       credit_url=credit_url or url, license="From the brand's own website")
 
 
+def save_design_pages(post, pages: list[str]) -> list[str]:
+    """Store the editor's exported pages (PNG data URLs) as the post's images. Each must decode as
+    an image of a sensible size; they get fresh names, so a page in use is never overwritten."""
+    import base64
+
+    token = uuid.uuid4().hex[:8]
+    urls = []
+    for i, page in enumerate(pages):
+        head, _, b64 = page.partition(",")
+        if not head.startswith("data:image/") or not b64:
+            raise ValueError("Each page must be an exported image.")
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except ValueError as exc:
+            raise ValueError("A page couldn't be read.") from exc
+        if len(data) > MAX_UPLOAD_BYTES:
+            raise ValueError("A page is larger than 15 MB.")
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        if not (200 <= img.width <= 4000 and 200 <= img.height <= 4000):
+            raise ValueError("A page has an unexpected size.")
+        name = f"design_{post.campaign_id}_{post.id}_{token}_{i}.png"
+        img.convert("RGB").save(config.MEDIA_DIR / name, optimize=True)
+        urls.append(f"/media/{name}")
+    return urls
+
+
 def save_upload(data: bytes) -> dict:
     """Validate and store an uploaded image. Returns {id, url}."""
     if len(data) > MAX_UPLOAD_BYTES:
