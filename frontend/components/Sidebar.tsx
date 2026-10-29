@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Clapperboard, Cpu, FlaskConical, LayoutGrid, Menu, Plug, Plus, Search, X } from "lucide-react";
+import { Clapperboard, FlaskConical, LayoutGrid, Menu, Plus, Search, X } from "lucide-react";
 import { useCommandPalette } from "./CommandPalette";
 import { BrandMark } from "./BrandMark";
 
@@ -11,8 +11,6 @@ const NAV = [
   { href: "/campaigns", label: "Campaigns", icon: LayoutGrid, match: (p: string) => p.startsWith("/campaign") },
   { href: "/research", label: "Research", icon: FlaskConical, match: (p: string) => p.startsWith("/research") },
   { href: "/ugc", label: "UGC ads", icon: Clapperboard, match: (p: string) => p.startsWith("/ugc") },
-  { href: "/nemotron", label: "Nemotron", icon: Cpu, match: (p: string) => p.startsWith("/nemotron") },
-  { href: "/connections", label: "Connections", icon: Plug, match: (p: string) => p.startsWith("/connections") },
 ];
 
 function Logo() {

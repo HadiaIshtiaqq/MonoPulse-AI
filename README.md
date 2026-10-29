@@ -57,7 +57,7 @@ The owner's only job is to approve.
 |---|---|
 | **1. One input.** A website or an @handle is all it needs.<br/><br/><img src="docs/screenshots/01-create.jpg" width="430" alt="Create a campaign" /> | **2. A month, planned and designed.** Every post in a version for each platform, on a calendar to approve.<br/><br/><img src="docs/screenshots/02-campaign.jpg" width="430" alt="Campaign calendar" /> |
 | **3. UGC ads from real products.** Pick a product and a format; Nemotron writes the script from the product's real facts.<br/><br/><img src="docs/screenshots/03-ugc-studio.jpg" width="430" alt="UGC studio" /> | **4. AI scenes.** Filmed by a 3D camera on the computer, or by AI video, in a worn, faceless or aesthetic style.<br/><br/><img src="docs/screenshots/04-ai-scenes.jpg" width="430" alt="AI scenes options" /> |
-| **5. Real research.** Competitors' real prices and sales, and trends, with sources.<br/><br/><img src="docs/screenshots/05-research.jpg" width="430" alt="Research" /> | **6. Keys stay on the server.** The page shows what's connected and never handles a key.<br/><br/><img src="docs/screenshots/06-connections.jpg" width="430" alt="Connections" /> |
+| **5. Real research.** Competitors' real prices and sales, and trends, with sources.<br/><br/><img src="docs/screenshots/05-research.jpg" width="430" alt="Research" /> | **6. Keys stay on the server.** Every key is set only in `backend/.env`; the web app never asks for, sends or shows one. |
 
 **Frames from two ads MonoPlus made** for a SAPPHIRE suit, from its public product photo. Top: aesthetic (composed
 music, slow dissolves, film grade, soft captions). Bottom: voiced, with creator captions and a branded end card.
@@ -87,10 +87,9 @@ What makes it work in practice:
   (skipping vision, omni and embedding models), so a renamed model never breaks the app.
 - **Guarded answers**: every JSON answer is validated. A shot plan with an unknown camera move, or a script with the
   wrong number of lines, is corrected or replaced by the rule-based plan; the app never stops because of a model reply.
-- **Telemetry you can watch**: each call records tier, model, purpose, latency and tokens. The **Nemotron** page in the
-  app shows them live: the purpose-to-tier routing, calls and average latency per tier, today's tokens against the cap,
-  and every recent call. A "Test a live call" button sends one tiny Nano request and shows the reply and round-trip
-  time. The same data is at `GET /api/telemetry`.
+- **Telemetry**: each call records tier, model, purpose, latency and tokens. `GET /api/telemetry` shows the
+  purpose-to-tier routing, calls and latency per tier, today's tokens against the cap, and every recent call;
+  `POST /api/telemetry/ping` sends one tiny Nano request to confirm Nemotron answers.
 - **Spend guard**: a daily token cap (`LLM_DAILY_TOKENS`), and an optional dollar cap, are checked before every call and
   survive restarts. When a cap is reached, templates take over.
 - **Works without a key, better with one**: every Nemotron step has a rule-based fallback, so the app runs end to end in
@@ -572,7 +571,7 @@ cp .env.example backend/.env
 
 Set at least `NEBIUS_API_KEY`. Add `TAVILY_API_KEY` for live search and `PEXELS_API_KEY` for instant stock photos. The default model ids are corrected automatically if your key offers different Nemotron versions.
 
-Every key and token lives only in `backend/.env`: the web app never asks for, sends or stores one, and its Connections page only shows what's connected and which lines to add. To check the keys you've set with their services (it prints "ok" or why not, never a key):
+Every key and token lives only in `backend/.env`: the web app never asks for, sends or stores one. To check the keys you've set with their services (it prints "ok" or why not, never a key):
 
 ```bash
 cd backend
