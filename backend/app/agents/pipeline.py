@@ -33,21 +33,40 @@ STEPS = [
 _running: set[asyncio.Task] = set()
 
 
+class Busy(RuntimeError):
+    """Too many campaigns are being made right now."""
+
+
+_generating: asyncio.Semaphore | None = None
+
+
 def start(req) -> tuple[Campaign, Job]:
     """Create a campaign from a CreateCampaignRequest and generate it in the background.
 
     Shared by the web API and the MCP server so both behave identically.
     """
+    if len(_running) >= config.CAMPAIGNS_AT_ONCE + config.CAMPAIGN_QUEUE:
+        raise Busy("Lots of campaigns are being made right now. Please try again in a few minutes.")
     platforms = list(dict.fromkeys(req.platforms)) or list(renderer.SIZES)
     campaign = Campaign(source_input=req.input.strip(), start_date=req.start_date or date.today(), days=req.days,
                         platforms=platforms, research_ids=list(dict.fromkeys(req.research_ids)))
     job = new_job(campaign.id)
     store.campaigns[campaign.id] = campaign
     store.jobs[job.id] = job
-    task = asyncio.get_running_loop().create_task(run_campaign(job, campaign, req.input, req.posts_per_day))
+    task = asyncio.get_running_loop().create_task(_in_turn(job, campaign, req.input, req.posts_per_day))
     _running.add(task)
     task.add_done_callback(_running.discard)
     return campaign, job
+
+async def _in_turn(job: Job, campaign: Campaign, raw_input: str, posts_per_day: int) -> None:
+    """A few campaigns generate at once (each fetches sites and draws dozens of images); the rest
+    wait their turn instead of slowing everyone's down."""
+    global _generating
+    if _generating is None:
+        _generating = asyncio.Semaphore(max(1, config.CAMPAIGNS_AT_ONCE))
+    async with _generating:
+        await run_campaign(job, campaign, raw_input, posts_per_day)
+
 
 # Best-practice posting hour (local) per platform.
 POST_HOUR = {"instagram": 11, "linkedin": 9, "x": 13, "facebook": 15}

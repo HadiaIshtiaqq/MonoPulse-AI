@@ -11,6 +11,7 @@ os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="monoplus-tests-")
 os.environ["MONOPLUS_BROWSER_PROFILE"] = os.path.join(os.environ["DATA_DIR"], "signed-in-profile")  # never your real sign-ins
 os.environ["MONOPLUS_CONNECTIONS_FILE"] = os.path.join(os.environ["DATA_DIR"], "connections.json")  # never your real keys
 os.environ["MONOPLUS_RATE_LIMITS"] = "0"  # tests call the API far faster than a person; one test turns limits on
+os.environ["MONOPLUS_REEL_PROCESSES"] = "0"  # in-process, so tests can shrink the frame rate; one test uses a worker process
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

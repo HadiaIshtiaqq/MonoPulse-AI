@@ -26,6 +26,10 @@ class ReelError(RuntimeError):
     pass
 
 
+class ReelInProgress(ReelError):
+    """This post's reel is already being made."""
+
+
 class ReelBusy(ReelError):
     """Too many reels are already rendering or waiting."""
 

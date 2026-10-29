@@ -120,6 +120,9 @@ def candidates_from_article(html: str, page_url: str, own: set[str]) -> dict[str
         d = registrable(host)
         if not host or d == page_domain or not is_brand_domain(host, own) or not (2 <= len(name) <= 40):
             continue
+        if looks_like_address(name):  # the link text is the address itself: the site's own name is used later
+            out.setdefault(d, ("", host.lower()))
+            continue
         words = re.findall(r"[A-Za-z0-9]+", name)
         if not (1 <= len(words) <= 4):
             continue
@@ -138,6 +141,14 @@ Return JSON: {"competitors": [{"name": "...", "website": "https://..."}]}. Only 
 KNOWN_SYSTEM = """Name the direct competitors of the brand below that you are confident exist: brands selling similar
 products to the same customers in the same country, each with its official website. If unsure, return fewer.
 Return JSON: {"competitors": [{"name": "...", "website": "https://..."}]} (at most 6)."""
+
+
+ADDRESS_LIKE = re.compile(r"^(https?://|www\.)|/$|\.(com|pk|net|org|co|store|shop|in|uk|ae)(\.[a-z]{2})?/?$", re.I)
+
+
+def looks_like_address(name: str) -> bool:
+    """"www.borjan.com.pk/" is a web address, not a brand's name."""
+    return bool(ADDRESS_LIKE.search(name.strip()))
 
 
 def homepage(url: str) -> str:
@@ -307,7 +318,7 @@ async def analyse(name: str, url: str, found_via: str, client: httpx.AsyncClient
     # A name from an article or the model ("Gul Ahmed") reads better than a page title; a name
     # guessed from a domain ("Gulahmedshop") doesn't, so use the site's own name then.
     real = ingestor.clean_name(site)
-    from_domain = "search results" in found_via or found_via == "you added it"
+    from_domain = "search results" in found_via or found_via == "you added it" or not name or looks_like_address(name)
     if from_domain and real and len(real) <= 40 and real.lower() not in ("home", "index", "shop"):
         name = real
     profile = profile_from_site(site, name, found_via)

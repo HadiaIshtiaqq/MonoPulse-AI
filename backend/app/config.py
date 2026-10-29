@@ -48,6 +48,12 @@ DESIGN_VERSION = 7
 BROWSER_PROFILE_DIR = Path(_env("MONOPLUS_BROWSER_PROFILE", str(Path(os.getenv("LOCALAPPDATA") or Path.home() / ".local" / "share")
                                                              / "MonoPlus" / "browser-profile")))
 BROWSER_CHANNEL = _env("MONOPLUS_BROWSER", "auto")  # auto (installed Chrome, then Edge, then Playwright's), chrome, msedge, chromium
+# Reels render in separate worker processes, so drawing frames never slows the API for everyone
+# else (0 = threads, for tests and debugging). Campaigns: a few generate at once, a short queue
+# waits, and more are turned away with "busy" instead of piling up.
+REEL_PROCESSES = _env("MONOPLUS_REEL_PROCESSES", "1") not in ("0", "false", "no")
+CAMPAIGNS_AT_ONCE = int(_env("MONOPLUS_CAMPAIGNS_AT_ONCE", "2") or 2)
+CAMPAIGN_QUEUE = int(_env("MONOPLUS_CAMPAIGN_QUEUE", "8") or 8)
 TRUST_PROXY = _env("MONOPLUS_TRUST_PROXY", "0") in ("1", "true", "yes")  # behind a proxy: read the client from X-Forwarded-For
 RATE_LIMITS = _env("MONOPLUS_RATE_LIMITS", "1") not in ("0", "false", "no", "off")  # per-client limits on expensive calls
 REEL_RENDERS = max(1, int(_env("MONOPLUS_REEL_RENDERS", "2") or 2))  # reels rendered at the same time

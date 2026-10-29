@@ -178,7 +178,7 @@ def root() -> RedirectResponse:
 
 
 @app.get("/api/access")
-def access(request: Request) -> dict:
+async def access(request: Request) -> dict:
     """Tells the UI whether a key is needed and whether the one it holds is right."""
     return {"required": bool(config.ACCESS_KEY), "ok": not config.ACCESS_KEY or _authorised(request)}
 
@@ -208,7 +208,7 @@ def access_logout() -> JSONResponse:
 
 
 @app.get("/api/health")
-def health() -> dict:
+async def health() -> dict:
     return {
         "ok": True,
         "mode": "live" if config.llm_enabled() else "demo",
@@ -249,12 +249,15 @@ async def create_campaign(req: CreateCampaignRequest) -> dict:
     bad = [r for r in req.research_ids if r not in store.research or store.research[r].status != "completed"]
     if bad:
         raise HTTPException(422, "Only completed research can be attached to a campaign.")
-    campaign, job = pipeline.start(req)
+    try:
+        campaign, job = pipeline.start(req)
+    except pipeline.Busy as exc:
+        raise HTTPException(429, str(exc), headers={"Retry-After": "120"}) from exc
     return {"campaign_id": campaign.id, "job_id": job.id}
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str) -> dict:
+async def get_job(job_id: str) -> dict:
     job = store.jobs.get(job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -269,7 +272,7 @@ def get_job(job_id: str) -> dict:
 
 
 @app.get("/api/campaigns")
-def list_campaigns() -> list[dict]:
+async def list_campaigns() -> list[dict]:
     items = sorted(store.campaigns.values(), key=lambda c: c.created_at, reverse=True)
     return [
         {
@@ -300,7 +303,7 @@ def _campaign(campaign_id: str) -> Campaign:
 
 
 @app.get("/api/campaigns/{campaign_id}")
-def get_campaign(campaign_id: str) -> Campaign:
+async def get_campaign(campaign_id: str) -> Campaign:
     return _campaign(campaign_id)
 
 
@@ -423,7 +426,7 @@ def export_campaign(campaign_id: str):
 
 
 @app.get("/api/upcoming")
-def upcoming(days: int = Query(7, ge=1, le=60)) -> list[dict]:
+async def upcoming(days: int = Query(7, ge=1, le=60)) -> list[dict]:
     """Posts scheduled in the next N days across all campaigns, soonest first."""
     now = datetime.now(timezone.utc)
     end = now + timedelta(days=days)
@@ -603,6 +606,10 @@ async def make_reel(post_id: str, req: ReelRequest | None = None, background: bo
     campaign, post = _post(post_id)
     if not background:
         return await _render_reel(campaign, post, req)
+    if sum(j["status"] == "running" for j in REEL_JOBS.values()) >= config.REEL_RENDERS + reels.MAX_WAITING:
+        raise HTTPException(429, "Lots of reels are being made right now. Please try again in a minute.", headers={"Retry-After": "60"})
+    if any(j["status"] == "running" and j.get("post_id") == post.id for j in REEL_JOBS.values()):
+        raise HTTPException(409, "This post's reel is already being made. It'll be ready in a moment.")
     now = datetime.now(timezone.utc)
     for k in [k for k, j in REEL_JOBS.items() if now - j["at"] > timedelta(hours=1)]:
         REEL_JOBS.pop(k, None)
@@ -626,7 +633,7 @@ async def make_reel(post_id: str, req: ReelRequest | None = None, background: bo
 
 
 @app.get("/api/reel-jobs/{job_id}")
-def reel_job(job_id: str) -> dict:
+async def reel_job(job_id: str) -> dict:
     job = REEL_JOBS.get(job_id)
     if not job:
         raise HTTPException(404, "That reel job has finished and been cleared, or never existed. Make the reel again.")
@@ -642,6 +649,8 @@ async def _render_reel(campaign: Campaign, post: SocialPost, req: ReelRequest | 
         raise HTTPException(422, str(exc)) from exc
     except reels.ReelBusy as exc:
         raise HTTPException(429, str(exc), headers={"Retry-After": "60"}) from exc
+    except reels.ReelInProgress as exc:
+        raise HTTPException(409, str(exc)) from exc
     except reels.ReelError as exc:
         raise HTTPException(503, str(exc)) from exc
     store.save(campaign)
@@ -795,7 +804,7 @@ class KeysRequest(BaseModel):
 
 
 @app.get("/api/connections")
-def get_connections() -> dict:
+async def get_connections() -> dict:
     """What's connected (never the keys themselves)."""
     return connections.status()
 

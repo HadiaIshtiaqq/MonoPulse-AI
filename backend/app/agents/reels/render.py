@@ -6,7 +6,9 @@ import random
 import shutil
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
+import uuid
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -17,7 +19,7 @@ from .. import occasions
 from .. import lang as lang_mod
 from ..renderer import luminance, rgb, text_on
 
-from .core import FPS, H, M, MAX_WAITING, ReelBusy, ReelEditError, ReelError, Scene, W, WORKERS, _render_slots, _waiting
+from .core import FPS, H, M, MAX_WAITING, ReelBusy, ReelEditError, ReelError, ReelInProgress, Scene, W, WORKERS, _render_slots, _waiting, log
 from .story import TOPICS, available_topics, default_topic, humanize_lines, plan_scenes, plan_story, scenes_from_edit, to_edit, write_script
 from .draw import ease_out, paste_center, pill, scaled, spring
 from .colours import HEX, PACES, PALETTES, _hex, choose_palette, palette_kit
@@ -82,7 +84,7 @@ def render_reel(kit: BrandKit, scenes: list[Scene], out: Path, poster: Path | No
         if tags[i] is not None:  # the scene's place in the story, top right
             paste_center(img, scaled(tags[i], spring((t - 0.05) / 0.45)), W - M - tags[i].width / 2, 330)
         return img.convert("RGB")
-    tmp = out.with_suffix(".part.mp4")
+    tmp = out.with_name(f"{out.stem}.{uuid.uuid4().hex[:8]}.part.mp4")  # never shared with another render
     cmd = [exe, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100", "-shortest",
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
@@ -135,6 +137,30 @@ def render_reel(kit: BrandKit, scenes: list[Scene], out: Path, poster: Path | No
         raise ReelError(f"ffmpeg couldn't encode the video: {err.strip()[:300]}")
     tmp.replace(out)
     return round(total, 1)
+
+
+_pool: ProcessPoolExecutor | None = None
+_rendering: set[str] = set()  # posts whose reel is being made right now
+
+
+def _process_pool() -> ProcessPoolExecutor:
+    global _pool
+    if _pool is None:
+        _pool = ProcessPoolExecutor(max_workers=max(1, config.REEL_RENDERS))
+    return _pool
+
+
+async def render_elsewhere(*args) -> float:
+    """render_reel in a worker process (frame drawing holds Python's GIL, which in the API process
+    would slow every other request), falling back to a thread if the pool can't be used."""
+    global _pool
+    if config.REEL_PROCESSES:
+        try:
+            return await asyncio.get_running_loop().run_in_executor(_process_pool(), render_reel, *args)
+        except BrokenProcessPool:
+            log.warning("reel worker process died; rendering this one in a thread")
+            _pool = None
+    return await asyncio.to_thread(render_reel, *args)
 
 
 def resolve_options(campaign: Campaign, post: SocialPost, options: ReelOptions | None, fresh: bool) -> ReelOptions:
@@ -207,7 +233,10 @@ async def make_reel(campaign: Campaign, post: SocialPost, edited: list[ReelScene
     if festive and not (options and options.palette) and (edited is None or not post.reel_options.palette or post.reel_topic != "occasion"):
         opts.palette = "occasion"  # festive colours unless the owner picked a palette
     key = f"{campaign.id}_{post.group_id or post.id}_reel"
-    out, poster = config.MEDIA_DIR / f"{key}.mp4", config.MEDIA_DIR / f"{key}.jpg"
+    # A new file per render: a reel someone is watching is never overwritten mid-play, and two
+    # renders can't collide (the old file is tidied away by media cleanup).
+    token = uuid.uuid4().hex[:8]
+    out, poster = config.MEDIA_DIR / f"{key}_{token}.mp4", config.MEDIA_DIR / f"{key}_{token}.jpg"
     started = time.perf_counter()
     if opts.palette == "occasion" and festive:
         p, a, i = occasions.colors(festive, kit.country)
@@ -218,15 +247,18 @@ async def make_reel(campaign: Campaign, post: SocialPost, edited: list[ReelScene
     # A few reels render at once; more wait their turn, and a long queue is turned away
     # rather than slowing every reel down.
     global _waiting
+    if key in _rendering:
+        raise ReelInProgress("This post's reel is already being made. It'll be ready in a moment.")
     if _waiting >= MAX_WAITING:
         raise ReelBusy("Lots of reels are being made right now. Please try again in a minute.")
     _waiting += 1
+    _rendering.add(key)
     try:
         async with _render_slots():
-            seconds = await asyncio.to_thread(render_reel, look, scenes, out, poster, style, PACES[opts.pace], upper,
-                                              festive.motif if festive else "")
+            seconds = await render_elsewhere(look, scenes, out, poster, style, PACES[opts.pace], upper, festive.motif if festive else "")
     finally:
         _waiting -= 1
+        _rendering.discard(key)
     stamp = int(time.time() * 1000)
     for p in campaign.posts:
         if p.id == post.id or (post.group_id and p.group_id == post.group_id):
