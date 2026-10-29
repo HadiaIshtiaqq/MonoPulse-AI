@@ -82,6 +82,9 @@ async def lifespan(app: FastAPI):
         if browser.available():
             workers.append(asyncio.create_task(browser.poster.status()))
     yield
+    from . import tracing
+
+    tracing.flush()  # the last LangSmith traces
     for w in workers:
         w.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -250,6 +253,7 @@ async def health() -> dict:
         "nebius": bool(config.NEBIUS_API_KEY),
         "bedrock": config.AWS_BEDROCK_ENABLED,
         "tavily": config.tavily_enabled(),
+        "langsmith": bool(config.LANGSMITH_API_KEY),
         "free_search": config.FREE_SEARCH,
         "pexels": bool(config.PEXELS_API_KEY),
         "mcp_endpoint": f"{config.PUBLIC_API_URL}/mcp",
@@ -272,7 +276,11 @@ async def list_models() -> dict:
 
 @app.get("/api/telemetry")
 def telemetry() -> dict:
-    return router.telemetry()
+    from . import usage
+
+    return {**router.telemetry(), "allowances": {"tavily_credits": usage.tavily_credits.snapshot(),
+                                                "langsmith_traces": usage.langsmith_traces.snapshot()},
+            "langsmith": {"on": bool(config.LANGSMITH_API_KEY), "project": config.LANGSMITH_PROJECT}}
 
 
 @app.post("/api/telemetry/ping")

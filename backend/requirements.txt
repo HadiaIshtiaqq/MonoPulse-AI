@@ -8,6 +8,7 @@ beautifulsoup4~=4.15.0
 pillow~=13.0.0
 openai~=3.37.0
 tavily-python~=0.8.5
+langsmith~=0.14.16  # optional: traces of every Nemotron call, when LANGSMITH_API_KEY is set
 python-dotenv~=1.2.4
 python-multipart~=0.0.32
 boto3~=1.43.118

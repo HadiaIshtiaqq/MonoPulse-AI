@@ -19,7 +19,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from . import config
+from . import config, tracing
 from .redact import redact
 from .schemas import LLMCallRecord
 
@@ -193,6 +193,7 @@ class ModelRouter:
             system = "/no_think\n" + system
         started = time.perf_counter()
         record = LLMCallRecord(tier=tier.value, model=model, purpose=purpose, ok=False, latency_ms=0)
+        text = ""
         try:
             async with self._sem:
                 resp = await self._get_client().chat.completions.create(
@@ -216,6 +217,7 @@ class ModelRouter:
         finally:
             record.latency_ms = int((time.perf_counter() - started) * 1000)
             self.records.append(record)
+            tracing.record_llm_call(record, system, user, text, self.provider)
 
     # ------------------------------------------------------------------ Amazon Bedrock
 
@@ -239,6 +241,7 @@ class ModelRouter:
         model = config.AWS_BEDROCK_MODEL_ULTRA if tier is ModelTier.ULTRA else config.AWS_BEDROCK_MODEL_NANO
         started = time.perf_counter()
         record = LLMCallRecord(tier=tier.value, model=model, purpose=purpose, ok=False, latency_ms=0)
+        text = ""
         try:
             async with self._sem:
                 resp = await asyncio.to_thread(
@@ -262,6 +265,7 @@ class ModelRouter:
         finally:
             record.latency_ms = int((time.perf_counter() - started) * 1000)
             self.records.append(record)
+            tracing.record_llm_call(record, system, user, text, self.provider)
 
     async def complete_json(self, purpose: str, system: str, user: str, **kw: Any) -> Any:
         system = system + "\n\nRespond with valid JSON only. No markdown fences, no commentary."

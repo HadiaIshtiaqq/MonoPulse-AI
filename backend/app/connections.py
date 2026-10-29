@@ -27,6 +27,7 @@ NEEDS = {
     "tavily": ("TAVILY_API_KEY",),
     "heygen": ("HEYGEN_API_KEY",),
     "huggingface": ("HF_TOKEN",),
+    "langsmith": ("LANGSMITH_API_KEY",),
 }
 
 
@@ -40,6 +41,7 @@ def status() -> dict:
         "tavily": {"connected": bool(config.TAVILY_API_KEY), "env": list(NEEDS["tavily"])},
         "heygen": {"connected": bool(config.HEYGEN_API_KEY), "env": list(NEEDS["heygen"])},
         "huggingface": {"connected": bool(config.HF_TOKEN), "env": list(NEEDS["huggingface"])},
+        "langsmith": {"connected": bool(config.LANGSMITH_API_KEY), "env": list(NEEDS["langsmith"])},
     }
 
 
@@ -57,12 +59,35 @@ async def check_nebius(key: str) -> None:
                                                                    f" (HTTP {r.status_code})"))
 
 
-async def check_tavily(key: str) -> None:
+async def check_tavily(key: str) -> str:
+    """Asks Tavily how much of the plan is used (this spends no credit)."""
     async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post("https://api.tavily.com/search", json={"query": "test", "max_results": 1},
-                              headers={"Authorization": f"Bearer {key.strip()}"})
+        r = await client.get("https://api.tavily.com/usage", headers={"Authorization": f"Bearer {key.strip()}"})
     if r.status_code != 200:
         raise ConnectionError_("Tavily didn't accept that key." + ("" if r.status_code in (401, 403) else f" (HTTP {r.status_code})"))
+    return tavily_left(r.json())
+
+
+def tavily_left(data: dict) -> str:
+    """"ok, 812 of 1,000 credits left this month" from Tavily's usage reply, or "ok" if it's shaped differently."""
+    for part in (data.get("account") or {}, data.get("key") or {}):
+        used = part.get("plan_usage", part.get("usage"))
+        limit = part.get("plan_limit", part.get("limit"))
+        if isinstance(used, (int, float)) and isinstance(limit, (int, float)) and limit:
+            return f"ok, {max(0, int(limit - used)):,} of {int(limit):,} credits left"
+    return "ok"
+
+
+async def check_langsmith(key: str) -> str | None:
+    """Lists one tracing project (this sends no trace). A tracing-only key (lsv2_tr_) is accepted but may
+    not list projects: LangSmith says so by name, which shows the key itself is good."""
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get(f"{config.LANGSMITH_ENDPOINT.rstrip('/')}/api/v1/sessions", params={"limit": 1},
+                             headers={"x-api-key": key.strip()})
+    if r.status_code == 403 and "tracing key" in r.text:
+        return "ok (a tracing-only key: it can send traces, nothing else)"
+    if r.status_code != 200:
+        raise ConnectionError_("LangSmith didn't accept that key." + ("" if r.status_code in (401, 403) else f" (HTTP {r.status_code})"))
 
 
 async def check_huggingface(token: str) -> None:
@@ -79,15 +104,15 @@ async def check_all() -> list[tuple[str, str]]:
     checks = [("Nemotron on Nebius (NEBIUS_API_KEY)", config.NEBIUS_API_KEY, check_nebius),
               ("Tavily (TAVILY_API_KEY)", config.TAVILY_API_KEY, check_tavily),
               ("HeyGen (HEYGEN_API_KEY)", config.HEYGEN_API_KEY, ugc.heygen_check),
-              ("Hugging Face (HF_TOKEN)", config.HF_TOKEN, check_huggingface)]
+              ("Hugging Face (HF_TOKEN)", config.HF_TOKEN, check_huggingface),
+              ("LangSmith (LANGSMITH_API_KEY or LANG_CHAIN)", config.LANGSMITH_API_KEY, check_langsmith)]
     out = []
     for name, key, check in checks:
         if not key:
             out.append((name, "not set"))
             continue
         try:
-            await check(key)
-            out.append((name, "ok"))
+            out.append((name, await check(key) or "ok"))
         except (ConnectionError_, ugc.UgcError) as exc:
             out.append((name, str(exc)))
         except httpx.HTTPError as exc:

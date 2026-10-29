@@ -5,12 +5,15 @@ Tavily when TAVILY_API_KEY is set; free Google News / DuckDuckGo otherwise.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
+import time
 from datetime import date
 
 from tavily import AsyncTavilyClient
 
-from .. import config
+from .. import config, usage
 from ..schemas import BrandKit, TrendItem
 from . import freesearch
 from .calendar import COUNTRY_NAMES
@@ -19,6 +22,9 @@ from .playbooks import DEFAULT, brand_facts, playbook_for
 log = logging.getLogger(__name__)
 
 _client: AsyncTavilyClient | None = None
+# Tavily results for 12 hours: a demo run again on the same brand spends nothing.
+CACHE_S = 12 * 3600
+_cache: dict[str, tuple[float, list[dict]]] = {}
 
 
 def _get_client() -> AsyncTavilyClient:
@@ -44,12 +50,21 @@ async def search(
             kwargs["days"] = days
         if include_domains:
             kwargs["include_domains"] = include_domains
-        try:
-            resp = await _get_client().search(**kwargs)
-            rows = [{"title": r.get("title") or "", "url": r.get("url") or "", "snippet": r.get("content") or "",
-                     "published_date": r.get("published_date")} for r in resp.get("results", [])]
-        except Exception as exc:  # noqa: BLE001 - fall through to the free providers
-            log.warning("tavily search failed for %r: %s", query, exc)
+        key = json.dumps(kwargs, sort_keys=True)
+        hit = _cache.get(key)
+        if hit and time.time() - hit[0] < CACHE_S:
+            rows = hit[1]  # the same search again (a repeated demo): no credit spent
+        elif usage.tavily_credits.allows(1):
+            try:
+                resp = await _get_client().search(**kwargs)
+                usage.tavily_credits.add(1)
+                rows = [{"title": r.get("title") or "", "url": r.get("url") or "", "snippet": r.get("content") or "",
+                         "published_date": r.get("published_date")} for r in resp.get("results", [])]
+                _cache[key] = (time.time(), rows)
+            except Exception as exc:  # noqa: BLE001 - fall through to the free providers
+                log.warning("tavily search failed for %r: %s", query, exc)
+        else:
+            log.info("today's Tavily allowance (TAVILY_DAILY_CREDITS) is used up; using the free search")
     if not rows and config.FREE_SEARCH:
         if topic == "news" and not include_domains:
             rows = await freesearch.google_news(query, days, max_results)
@@ -66,10 +81,12 @@ async def extract(urls: list[str]) -> dict[str, str]:
     """Full page text for each URL: Tavily Extract when configured, else our own reader."""
     if not urls:
         return {}
-    if config.tavily_enabled():
+    urls = urls[:20]
+    if config.tavily_enabled() and usage.tavily_credits.allows(math.ceil(len(urls) / 5)):
         try:
-            resp = await _get_client().extract(urls=urls[:20])
+            resp = await _get_client().extract(urls=urls)
             out = {r.get("url"): (r.get("raw_content") or "")[:20000] for r in resp.get("results", []) if r.get("url")}
+            usage.tavily_credits.add(math.ceil(len(out) / 5))  # charged for the pages actually read
             if out:
                 return out
         except Exception as exc:  # noqa: BLE001

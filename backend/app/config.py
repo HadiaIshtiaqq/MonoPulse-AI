@@ -98,6 +98,16 @@ LLM_DAILY_TOKENS = int(_env("LLM_DAILY_TOKENS", "200000") or 0)
 LLM_DAILY_DOLLARS = float(_env("LLM_DAILY_DOLLARS", "0") or 0)
 PRICE_PER_M_ULTRA = float(_env("PRICE_PER_M_ULTRA", "0") or 0)
 PRICE_PER_M_NANO = float(_env("PRICE_PER_M_NANO", "0") or 0)
+# Tavily credits a day (a basic search is 1; reading pages is 1 for every 5). The free plan has 1,000 a
+# month, so 40 a day leaves room for the owner and for judges. Past it, the free search takes over. 0 = no cap.
+TAVILY_DAILY_CREDITS = int(_env("TAVILY_DAILY_CREDITS", "40") or 0)
+
+# LangSmith (optional): every Nemotron call is traced to this project, so each agent step can be inspected.
+# LANG_CHAIN is accepted as another name for the key. 150 traces a day stays within the free 5,000 a month.
+LANGSMITH_API_KEY = _env("LANGSMITH_API_KEY") or _env("LANG_CHAIN")
+LANGSMITH_PROJECT = _env("LANGSMITH_PROJECT", "MonoPlus")
+LANGSMITH_ENDPOINT = _env("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+LANGSMITH_DAILY_TRACES = int(_env("LANGSMITH_DAILY_TRACES", "150") or 0)
 
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 

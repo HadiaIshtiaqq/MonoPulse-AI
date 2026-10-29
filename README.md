@@ -92,6 +92,11 @@ What makes it work in practice:
   `POST /api/telemetry/ping` sends one tiny Nano request to confirm Nemotron answers.
 - **Spend guard**: a daily token cap (`LLM_DAILY_TOKENS`), and an optional dollar cap, are checked before every call and
   survive restarts. When a cap is reached, templates take over.
+- **Traced in LangSmith** (optional): with `LANGSMITH_API_KEY` set, every Nemotron call becomes a LangSmith LLM run
+  named after its purpose (`nemotron.strategy`, `nemotron.ugc_director`, ...), tagged with its tier, with the prompt,
+  the reply, tokens and latency, so a whole campaign can be inspected step by step. Keys are redacted from traces,
+  sending happens in the background, and `LANGSMITH_DAILY_TRACES` (150) keeps it within the free plan
+  ([tracing.py](backend/app/tracing.py)).
 - **Works without a key, better with one**: every Nemotron step has a rule-based fallback, so the app runs end to end in
   demo mode, and the difference with Nemotron is easy to see.
 
@@ -235,6 +240,15 @@ Shared mechanics:
 
 Without `TAVILY_API_KEY`, free Google News RSS and DuckDuckGo are used ([freesearch.py](backend/app/agents/freesearch.py)), and the research agent writes an extractive summary.
 
+Credits are spent carefully, so the free plan lasts for the owner and for anyone trying the demo:
+
+- **A daily allowance**: `TAVILY_DAILY_CREDITS` (40 a day; the free plan has 1,000 a month) is counted per call (a basic
+  search is 1 credit, reading pages 1 per 5 pages read) and survives restarts ([usage.py](backend/app/usage.py)). Past it,
+  the free sources take over for the rest of the day.
+- **A 12-hour cache**: the same search again (a demo repeated on the same brand) is answered from memory and spends nothing.
+- **A free check**: `python -m app.connections check` asks Tavily's usage endpoint how many credits are left, without
+  spending one.
+
 ### Agents
 
 | Agent | File | Pipeline step | Input → Output | Model / tools |
@@ -348,6 +362,7 @@ as `tartinebakery.com` and press **Create campaign**. The full guide is in [Run 
 - Python 3.12, FastAPI, Pydantic v2
 - NVIDIA Nemotron 3 Ultra and Nemotron Nano via Nebius Token Factory (`openai` SDK)
 - Tavily (`tavily-python`); free search fallback over httpx
+- LangSmith (`langsmith`, optional): a trace of every Nemotron call
 - Pillow (rendering), BeautifulSoup (scraping)
 - Instagram Graph, Facebook Pages, LinkedIn Posts/Images and X v2 APIs
 - pytest with `httpx.MockTransport`

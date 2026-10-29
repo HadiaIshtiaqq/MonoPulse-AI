@@ -19,7 +19,7 @@ HIDDEN = "[hidden]"
 SECRET_SETTINGS = (
     "NEBIUS_API_KEY", "TAVILY_API_KEY", "PEXELS_API_KEY", "MONOPLUS_ACCESS_KEY", "ACCESS_KEY", "META_ACCESS_TOKEN",
     "LINKEDIN_ACCESS_TOKEN", "X_USER_ACCESS_TOKEN", "PUBLISH_WEBHOOK_URL", "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID",
-    "AWS_SESSION_TOKEN", "MCP_TOKEN", "HEYGEN_API_KEY", "HF_TOKEN",
+    "AWS_SESSION_TOKEN", "MCP_TOKEN", "HEYGEN_API_KEY", "HF_TOKEN", "LANGSMITH_API_KEY", "LANG_CHAIN",
 )
 SHAPES = [
     # key=value pairs in URLs, form bodies and messages
@@ -30,7 +30,7 @@ SHAPES = [
     (re.compile(r"(?i)(['\"]?(?:authorization|x-access-key|x-api-key)['\"]?\s*[:=]\s*['\"]?)[^'\",}\s]+"), r"\1" + HIDDEN),
     # well-known key formats
     (re.compile(r"\b(sk-[A-Za-z0-9_\-]{16,}|tvly-[A-Za-z0-9_\-]{10,}|EAA[A-Za-z0-9]{30,}|AKIA[A-Z0-9]{16}|ghp_[A-Za-z0-9]{30,}|"
-                r"xox[abpr]-[A-Za-z0-9\-]{10,}|AIza[A-Za-z0-9_\-]{30,}|hf_[A-Za-z0-9]{30,})\b"), HIDDEN),
+                r"xox[abpr]-[A-Za-z0-9\-]{10,}|AIza[A-Za-z0-9_\-]{30,}|hf_[A-Za-z0-9]{30,}|lsv2_[A-Za-z0-9_]{30,})\b"), HIDDEN),
 ]
 
 
