@@ -27,6 +27,8 @@ function Studio() {
   const [engine, setEngine] = useState<"builtin" | "scenes" | "presenter" | "person" | "avatar">("scenes");
   const [style, setStyle] = useState("worn");
   const [source, setSource] = useState<"local" | "ai">("local");
+  const [music, setMusic] = useState(true);
+  const howRef = useRef<HTMLElement>(null);
   const [shots, setShots] = useState<UgcScene[]>([]);
   const [planning, setPlanning] = useState(false);
   const [language, setLanguage] = useState("en");
@@ -87,7 +89,7 @@ function Studio() {
   useEffect(() => {
     if (voicePicked || !info) return;
     const gender = engine === "presenter" ? info.presenters.find((p) => p.key === character)?.gender ?? "female" : "female";
-    const lang = language === "ur" ? "ur" : "en";
+    const lang = language === "en" ? "en" : "ur"; // Roman Urdu is spoken by an Urdu voice (from Urdu letters, with Nemotron)
     const match = info.voices.find((v) => v.language === lang && v.gender === gender && v.clear) ?? info.voices[0];
     if (match) setVoiceKey(match.key);
   }, [info, language, character, engine, voicePicked]);
@@ -102,10 +104,11 @@ function Studio() {
         avatar_name: avatar?.name, look, caption: captionStyle, voice: (engine === "builtin" && voice) || noPresenter, footage: footage?.id,
         voice_key: voiceKey || undefined, character: engine === "presenter" && !noPresenter ? character : undefined, language,
         style: engine === "scenes" ? style : undefined, scenes: engine === "scenes" ? shots.slice(0, shotCount) : undefined,
-        source: engine === "scenes" ? source : undefined,
+        source: engine === "scenes" ? source : undefined, music: engine === "scenes" ? music : undefined,
       }, (step) => setJob({ step }));
       setInfo((i) => (i ? { ...i, ads: [ad, ...i.ads] } : i));
-      toast(engine === "scenes" ? "Your AI scenes ad is ready" : engine === "avatar" || engine === "presenter" ? "Your presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
+      if (ad.note) toast(ad.note, "info");
+      else toast(engine === "scenes" ? "Your AI scenes ad is ready" : engine === "avatar" || engine === "presenter" ? "Your presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
     } catch (e) { toast((e as Error).message, "error"); }
     finally { setJob(null); }
   }
@@ -195,7 +198,7 @@ function Studio() {
               </p>
             </section>
 
-            <section className="card p-5">
+            <section ref={howRef} className="card p-5">
               <p className="label mb-3">4. How it&apos;s made</p>
               <button onClick={() => setEngine("scenes")}
                 className={`mb-2 w-full rounded-xl border p-4 text-left ${engine === "scenes" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
@@ -205,7 +208,7 @@ function Studio() {
                   limits), or AI video of it being worn, applied or held. Worn, faceless or soft aesthetic, with a voice or music and captions.
                 </p>
               </button>
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2">
                 <button onClick={() => setEngine("builtin")} className={`rounded-xl border p-4 text-left ${engine === "builtin" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
                   <p className="flex items-center gap-2 font-semibold"><Film size={16} /> Product video</p>
                   <p className="mt-1 text-xs text-slate-600">Your product photo filmed phone-style, a new look every time, with an optional AI voice. Free, about 15 seconds.</p>
@@ -214,11 +217,12 @@ function Studio() {
                   <p className="flex items-center gap-2 font-semibold"><Camera size={16} /> Real person</p>
                   <p className="mt-1 text-xs text-slate-600">Record yourself (teleprompter included) or upload a clip. MonoPlus captions it, adds the product and an end card. Free.</p>
                 </button>
-                <button onClick={() => setEngine("presenter")} className={`rounded-xl border p-4 text-left ${engine === "presenter" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
-                  <p className="flex items-center gap-2 font-semibold"><Bot size={16} /> Cartoon presenter</p>
-                  <p className="mt-1 text-xs text-slate-600">An illustrated character speaks your script beside your product. Free, made on this computer, works offline.</p>
-                </button>
               </div>
+              <button onClick={() => setEngine("presenter")}
+                className={`mt-2 w-full rounded-xl border px-4 py-2.5 text-left text-xs ${engine === "presenter" ? "border-brand bg-brand-soft" : "border-slate-200 text-slate-600"}`}>
+                <span className="inline-flex items-center gap-1.5 font-semibold"><Bot size={13} /> Cartoon presenter</span> · an illustrated character
+                speaks your script beside the product. Works offline.
+              </button>
               {info.heygen && (
                 <button onClick={() => setEngine("avatar")} className={`mt-2 w-full rounded-xl border px-4 py-2.5 text-left text-xs ${engine === "avatar" ? "border-brand bg-brand-soft" : "border-slate-200 text-slate-600"}`}>
                   <span className="font-semibold">Realistic presenter (HeyGen, paid)</span> · you connected HeyGen, so its realistic presenters are available too.
@@ -271,6 +275,10 @@ function Studio() {
                   ) : (
                     <>
                       <VoicePicker voices={info.voices} value={voiceKey} onChange={(k) => { setVoiceKey(k); setVoicePicked(true); }} language={language} />
+                      <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+                        <input type="checkbox" checked={music} onChange={(e) => setMusic(e.target.checked)} className="accent-brand" />
+                        Upbeat music quietly under the voice (composed for this ad, yours to post anywhere)
+                      </label>
                       <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions]} />
                     </>
                   )}
@@ -397,6 +405,15 @@ function Studio() {
             {info.ads.length === 0 && <p className="text-sm text-slate-500">Ads you make appear here.</p>}
             {info.ads.map((ad) => (
               <AdCard key={ad.id} ad={ad} campaign={campaign}
+                onRemake={() => {
+                  // The same product and script, made again with AI scenes (older ads were made with simpler styles).
+                  const match = info.products.find((p) => p.name === ad.product);
+                  if (match) setProduct(match.index);
+                  setTimeout(() => setLines(ad.script), match && match.index !== product ? 1200 : 0); // after the new product's script loads
+                  setEngine("scenes");
+                  howRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  toast("Loaded into the editor: pick a style and make it again", "info");
+                }}
                 onDelete={async () => {
                   if (!(await confirm({ title: "Delete this ad?", confirm: "Delete", danger: true }))) return;
                   await api.deleteUgc(cid, ad.id);
@@ -410,10 +427,14 @@ function Studio() {
   );
 }
 
-function VoicePicker({ voices, value, onChange, language }: { voices: UgcVoice[]; value: string; onChange: (k: string) => void; language: string }) {
+function VoicePicker({ voices: all, value, onChange, language }: { voices: UgcVoice[]; value: string; onChange: (k: string) => void; language: string }) {
+  // The clear-sounding voices first; the rest (rougher, research-licensed) only when asked for.
+  const [more, setMore] = useState(false);
+  const chosen = all.find((v) => v.key === value);
+  const voices = more || (chosen && !chosen.clear) ? all : all.filter((v) => v.clear);
   const groups = Array.from(new Set(voices.map((v) => v.accent)));
-  const chosen = voices.find((v) => v.key === value);
-  const mismatch = chosen && ((language === "ur") !== (chosen.language === "ur"));
+  const urduVoice = chosen?.language === "ur";
+  const mismatch = chosen && (language === "ur" ? !urduVoice : language === "en" && urduVoice);
   return (
     <div className="rounded-xl border border-slate-200 p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -428,19 +449,24 @@ function VoicePicker({ voices, value, onChange, language }: { voices: UgcVoice[]
           ))}
         </select>
         {value && <audio key={value} src={media(`/api/ugc/voices/${value}/sample.wav`)} controls preload="none" className="h-8 w-44" />}
+        {!more && all.some((v) => !v.clear) && (
+          <button type="button" onClick={() => setMore(true)} className="text-[11px] text-slate-500 underline">More voices</button>
+        )}
       </div>
       {chosen && !chosen.clear && (
         <p className="mt-2 text-xs text-amber-700">&ldquo;{chosen.name}&rdquo; is built on a voice trained on research-licensed recordings: fine for trying out, check before using it in paid ads.</p>
       )}
       {mismatch && (
         <p className="mt-2 text-xs text-amber-700">
-          {language === "ur" ? "This script is in Urdu: choose an Urdu voice (Ayesha or Fasih)." : language === "roman"
-            ? "Voices can't read Roman Urdu well. Switch the script to اردو (Urdu) for an Urdu voice, or keep English."
-            : "This voice reads Urdu script; the script is in English."}
+          {language === "ur" ? "This script is in Urdu: choose an Urdu voice (Ayesha or Fasih)." : "This voice reads Urdu script; the script is in English."}
         </p>
       )}
-      {!mismatch && language === "roman" && (
-        <p className="mt-2 text-xs text-amber-700">Voices can&apos;t read Roman Urdu well. Switch the script to اردو (Urdu) for an Urdu voice, or keep English.</p>
+      {language === "roman" && (
+        <p className={`mt-2 text-xs ${urduVoice ? "text-slate-500" : "text-amber-700"}`}>
+          {urduVoice
+            ? "With Nemotron connected, this voice reads the script in Urdu letters while the captions stay in Roman Urdu."
+            : "An English voice reads Roman Urdu badly: choose an Urdu voice (Ayesha or Fasih)."}
+        </p>
       )}
     </div>
   );
@@ -474,7 +500,7 @@ function Header({ brand, onSwitch }: { brand?: string; onSwitch?: () => void }) 
   );
 }
 
-function AdCard({ ad, campaign, onDelete }: { ad: UgcAd; campaign: Campaign; onDelete: () => void }) {
+function AdCard({ ad, campaign, onDelete, onRemake }: { ad: UgcAd; campaign: Campaign; onDelete: () => void; onRemake: () => void }) {
   const { toast } = useFeedback();
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
@@ -507,6 +533,7 @@ function AdCard({ ad, campaign, onDelete }: { ad: UgcAd; campaign: Campaign; onD
         </div>
         <div className="flex gap-1.5">
           <a href={media(ad.video_url)} download className="btn-ghost btn-sm flex-1"><Download size={13} /> Download</a>
+          <button onClick={onRemake} className="btn-ghost btn-sm" title="Make this ad again with AI scenes"><RefreshCw size={13} /> Remake</button>
           <button onClick={onDelete} className="btn-ghost btn-sm text-slate-500 hover:text-red-600"><Trash2 size={13} /></button>
         </div>
       </div>

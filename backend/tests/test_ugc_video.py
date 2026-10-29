@@ -66,7 +66,7 @@ def test_every_layout_renders(tmp_path, monkeypatch, look):
 
 
 # Downloads the voice and Whisper's model (about 200 MB) on first run, so it's skipped on CI.
-needs_speech = pytest.mark.skipif(not (speech.tts_available() and speech.whisper_available()) or bool(os.environ.get("CI")),
+needs_speech = pytest.mark.skipif(not (speech.tts_available() and speech.whisper_available()) or (bool(os.environ.get("CI")) and not os.environ.get("MONOPLUS_SPEECH_TESTS")),
                                   reason="speech engines not installed, or running on CI")
 
 

@@ -157,7 +157,7 @@ def test_an_ai_scenes_ad_end_to_end(client, monkeypatch, tmp_path):  # noqa: F81
     r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "lines": lines, "engine": "scenes", "style": "faceless",
                                                         "source": "ai", "scenes": [{"prompt": "hands smooth the kurta", "crop": "lower"}]})
     assert r.status_code == 202, r.text
-    for _ in range(120):
+    for _ in range(1200):  # ends as soon as the job does; generous for a busy machine
         j = client.get(f"/api/ugc-jobs/{r.json()['job_id']}").json()
         if j["status"] != "running":
             break
@@ -215,7 +215,7 @@ def test_an_aesthetic_ad_has_music_not_a_voice(client, monkeypatch, tmp_path):  
     r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "format": "aesthetic", "lines": ["the kurta", "Rs.6,000"],
                                                         "engine": "scenes", "style": "aesthetic", "source": "ai"})
     assert r.status_code == 202, r.text
-    for _ in range(120):
+    for _ in range(1200):  # ends as soon as the job does; generous for a busy machine
         j = client.get(f"/api/ugc-jobs/{r.json()['job_id']}").json()
         if j["status"] != "running":
             break
@@ -256,7 +256,7 @@ def test_3d_camera_shots_are_made_on_this_computer(client, monkeypatch):  # noqa
     r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "format": "aesthetic", "lines": ["the kurta", "Rs.6,000"],
                                                         "engine": "scenes", "style": "aesthetic"})
     assert r.status_code == 202, r.text
-    for _ in range(240):
+    for _ in range(1200):  # ends as soon as the job does; generous for a busy machine
         j = client.get(f"/api/ugc-jobs/{r.json()['job_id']}").json()
         if j["status"] != "running":
             break

@@ -552,7 +552,9 @@ With no keys at all, everything still runs:
 - Behind a reverse proxy, set `MONOPLUS_TRUST_PROXY=1`; otherwise every request looks like it comes from the proxy.
 - Set `MONOPLUS_ACCESS_KEY` before putting the app online; the server warns at start when it isn't set.
 
-The web app is a standard Next.js build with `NEXT_PUBLIC_API_URL` pointing at the API.
+The web app is a standard Next.js build. It passes `/api`, `/media` and `/mcp` on to the backend (`MONOPLUS_API_URL`, default `http://127.0.0.1:8000`), so the whole app is one address. The backend still knows where each request came from: anything forwarded from another address counts as remote, so it needs the access key.
+
+**A public link from your own computer** (for a demo): set `MONOPLUS_ACCESS_KEY` in `backend/.env`, install Cloudflare's free tunnel tool (`winget install --id Cloudflare.cloudflared`), then run `powershell -ExecutionPolicy Bypass -File .\start-public.ps1`. It refuses to start without the key, prints a `https://….trycloudflare.com` link, and the link lasts while the window is open.
 
 ## Error handling
 

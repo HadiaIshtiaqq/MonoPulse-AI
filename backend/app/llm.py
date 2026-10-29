@@ -45,6 +45,7 @@ PURPOSE_TIER: dict[str, ModelTier] = {
     "research_plan": ModelTier.ULTRA,
     "research_report": ModelTier.ULTRA,
     "insight_extract": ModelTier.NANO,
+    "transliterate": ModelTier.NANO,
     "format_seo": ModelTier.NANO,
     "hashtags": ModelTier.NANO,
     "classify": ModelTier.NANO,
@@ -62,7 +63,7 @@ class Budget:
     """Tokens used today, kept in the data folder so a restart doesn't reset the count."""
 
     def __init__(self) -> None:
-        self._day, self._used, self._loaded = "", 0, False
+        self._day, self._used, self._dollars, self._loaded = "", 0, 0.0, False
 
     def _path(self):
         return config.DATA_DIR / "llm_usage.json"
@@ -74,22 +75,29 @@ class Budget:
             try:
                 saved = json.loads(self._path().read_text(encoding="utf-8"))
                 self._day, self._used = str(saved.get("day", "")), int(saved.get("tokens", 0))
+                self._dollars = float(saved.get("dollars", 0.0))
             except (OSError, ValueError):
                 pass
         if self._day != today:
-            self._day, self._used = today, 0
+            self._day, self._used, self._dollars = today, 0, 0.0
 
     def check(self) -> None:
         self._today()
         if config.LLM_DAILY_TOKENS and self._used >= config.LLM_DAILY_TOKENS:
             raise LLMError(f"Today's model limit ({config.LLM_DAILY_TOKENS:,} tokens, LLM_DAILY_TOKENS) is used up; "
                            "templates are used until tomorrow.")
+        if config.LLM_DAILY_DOLLARS and self._dollars >= config.LLM_DAILY_DOLLARS:
+            raise LLMError(f"Today's model spending limit (${config.LLM_DAILY_DOLLARS:g}, LLM_DAILY_DOLLARS) is reached; "
+                           "templates are used until tomorrow.")
 
-    def add(self, tokens: int) -> None:
+    def add(self, tokens: int, tier: str = "ultra") -> None:
         self._today()
         self._used += max(0, tokens)
+        price = config.PRICE_PER_M_ULTRA if tier == "ultra" else config.PRICE_PER_M_NANO
+        self._dollars += max(0, tokens) * price / 1_000_000
         try:
-            self._path().write_text(json.dumps({"day": self._day, "tokens": self._used}), encoding="utf-8")
+            self._path().write_text(json.dumps({"day": self._day, "tokens": self._used, "dollars": round(self._dollars, 6)}),
+                                    encoding="utf-8")
         except OSError:
             pass
 
@@ -97,6 +105,11 @@ class Budget:
     def used(self) -> int:
         self._today()
         return self._used
+
+    @property
+    def dollars(self) -> float:
+        self._today()
+        return self._dollars
 
 
 class ModelRouter:
@@ -142,10 +155,14 @@ class ModelRouter:
             log.warning("couldn't list Token Factory models: %s", exc)
             return
         lower = {m.lower(): m for m in available}
-        nemotron = [m for m in available if "nemotron" in m.lower()]
-        prefs = {ModelTier.ULTRA: ("ultra", "253b", "super", "70b", "49b"), ModelTier.NANO: ("nano", "9b", "8b", "super")}
+        # Text chat models only (not vision, omni, embedding, reward or safety models), newest generation first.
+        special = ("embed", "reward", "guard", "safety", "-vl", "omni", "parse", "rerank", "retriever")
+        nemotron = sorted((m for m in available if "nemotron" in m.lower() and not any(s in m.lower() for s in special)),
+                          key=lambda m: "nemotron-3" not in m.lower())
+        prefs = {ModelTier.ULTRA: ("ultra", "super", "253b", "70b", "49b"), ModelTier.NANO: ("nano", "9b", "8b", "super")}
         for tier, wanted in prefs.items():
             if TIER_MODELS[tier].lower() in lower:
+                TIER_MODELS[tier] = lower[TIER_MODELS[tier].lower()]  # the exact spelling the service uses
                 continue
             pick = next((m for w in wanted for m in nemotron if w in m.lower()), None) or (nemotron[0] if nemotron else None)
             if pick:
@@ -191,7 +208,7 @@ class ModelRouter:
                 record.completion_tokens = resp.usage.completion_tokens
             # Counted as reported, or estimated (about 4 characters a token) when the reply doesn't say.
             self.budget.add((record.prompt_tokens or 0) + (record.completion_tokens or 0)
-                            or (len(system) + len(user) + len(text)) // 4)
+                            or (len(system) + len(user) + len(text)) // 4, tier.value)
             return _THINK_RE.sub("", text).strip()
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller as LLMError
             record.error = redact(f"{type(exc).__name__}: {exc}")[:300]
@@ -236,6 +253,8 @@ class ModelRouter:
             usage = resp.get("usage") or {}
             record.ok = True
             record.prompt_tokens, record.completion_tokens = usage.get("inputTokens"), usage.get("outputTokens")
+            self.budget.add((record.prompt_tokens or 0) + (record.completion_tokens or 0)
+                            or (len(system) + len(user) + len(text)) // 4, tier.value)
             return _THINK_RE.sub("", text).strip()
         except Exception as exc:  # noqa: BLE001 - surfaced to the caller as LLMError
             record.error = redact(f"{type(exc).__name__}: {exc}")[:300]
@@ -253,7 +272,8 @@ class ModelRouter:
         models = ({ModelTier.ULTRA.value: config.AWS_BEDROCK_MODEL_ULTRA, ModelTier.NANO.value: config.AWS_BEDROCK_MODEL_NANO}
                   if self.provider == "bedrock" else {t.value: m for t, m in TIER_MODELS.items()})
         out: dict[str, Any] = {"provider": self.provider, "models": models, "tiers": {},
-                               "today": {"tokens": self.budget.used, "limit": config.LLM_DAILY_TOKENS}}
+                               "today": {"tokens": self.budget.used, "limit": config.LLM_DAILY_TOKENS,
+                                         "dollars": round(self.budget.dollars, 4), "dollar_limit": config.LLM_DAILY_DOLLARS}}
         for tier in ModelTier:
             recs = [r for r in self.records if r.tier == tier.value]
             ok = [r for r in recs if r.ok]

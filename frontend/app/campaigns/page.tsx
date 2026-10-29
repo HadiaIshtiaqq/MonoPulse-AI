@@ -33,6 +33,29 @@ export default function CampaignsPage() {
     }
   }
 
+  // The same site made more than once (tracking tags and www ignored), newest first in each group.
+  const dupes = Object.values((list ?? []).reduce<Record<string, CampaignSummary[]>>((acc, c) => {
+    if (c.source && c.status !== "GENERATING") (acc[c.source] ||= []).push(c);
+    return acc;
+  }, {})).filter((g) => g.length > 1).map((g) => [...g].sort((a, b) => b.created_at.localeCompare(a.created_at)));
+
+  async function keepNewest(group: CampaignSummary[]) {
+    const [newest, ...older] = group;
+    const ok = await confirm({
+      title: `Keep the newest ${newest.name} campaign and delete ${older.length} older?`,
+      body: `The newest (${newest.posts} posts) stays. The ${older.length} older campaigns, with their posts, images and ads, are deleted. This can't be undone.`,
+      confirm: `Delete ${older.length}`,
+      danger: true,
+    });
+    if (!ok) return;
+    const gone: string[] = [];
+    for (const c of older) {
+      try { await api.deleteCampaign(c.id); gone.push(c.id); } catch (e) { toast((e as Error).message, "error"); break; }
+    }
+    setList((l) => l?.filter((x) => !gone.includes(x.id)) ?? null);
+    if (gone.length) toast(`Deleted ${gone.length} older ${newest.name} campaigns`);
+  }
+
   const shown = (list ?? []).filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.website ?? "").includes(q.toLowerCase()));
 
   return (
@@ -51,6 +74,18 @@ export default function CampaignsPage() {
         </div>
       </div>
       {error && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {dupes.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-medium">Some brands have more than one campaign:</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {dupes.map((g) => (
+              <button key={g[0].id} onClick={() => keepNewest(g)} className="btn-ghost btn-sm bg-white">
+                {g[0].name} ×{g.length} · keep the newest, delete {g.length - 1} older
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {list === null ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true" aria-label="Loading campaigns">
           {Array.from({ length: 6 }).map((_, i) => (

@@ -45,15 +45,23 @@ def available() -> bool:
 
 def model_path() -> str:
     """The depth model on disk, downloaded the first time it's needed."""
-    try:
-        from huggingface_hub import hf_hub_download
+    import time
 
+    from huggingface_hub import hf_hub_download
+
+    try:
+        return hf_hub_download(*MODEL, local_files_only=True)
+    except Exception:  # noqa: BLE001 - not downloaded yet
+        pass
+    last: Exception | None = None
+    for wait in (0, 5, 15):  # a dropped connection or a busy server gets two more tries
+        time.sleep(wait)
         try:
-            return hf_hub_download(*MODEL, local_files_only=True)
-        except Exception:  # noqa: BLE001 - not downloaded yet
             return hf_hub_download(*MODEL)
-    except Exception as exc:  # noqa: BLE001
-        raise DepthError("The 3D model couldn't be downloaded (about 100 MB, once). Check the internet connection and try again.") from exc
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+    raise DepthError("The 3D model couldn't be downloaded (about 100 MB, once): the connection dropped or the download site "
+                     "is busy. Try again in a minute; once it's downloaded, 3D shots work offline.") from last
 
 
 def _model():
@@ -119,8 +127,9 @@ def shot_frame(crop: str, photo: str) -> Image.Image:
     return ImageOps.fit(img, (int(W * MARGIN), int(H * MARGIN)), Image.LANCZOS, centering=(0.5, 0.45))
 
 
-def make_clip(photo: str, crop: str, move: str, seconds: float, out: Path, seed: int = 0) -> Path:
-    """One 3D camera shot of the photo, `seconds` long, at `out`."""
+def make_clip(photo: str, crop: str, move: str, seconds: float, out: Path, seed: int = 0, effect: str = "") -> Path:
+    """One 3D camera shot of the photo, `seconds` long, at `out`. `effect`: rack_in | rack_out | sweep |
+    none ("" = picked from the seed)."""
     import numpy as np
 
     from .reels.render import ffmpeg_exe
@@ -135,6 +144,21 @@ def make_clip(photo: str, crop: str, move: str, seconds: float, out: Path, seed:
     rng = random.Random(seed)
     phase = rng.uniform(0, 6.28)
     frames = max(2, int(seconds * FPS))
+    # One cinematic touch per shot: a focus pull (the sharp plane slides between the background and the
+    # product, like a real lens) or a soft band of light drifting across. Never both, sometimes neither.
+    effect = effect or rng.choice(["rack_in", "rack_out", "sweep", "sweep", "none"])
+    depth_img = Image.fromarray((dep * 255).astype(np.uint8)) if effect.startswith("rack") else None
+    # The pull always lands on the product, in the middle of the frame: from the background (rack_in) or
+    # from the foreground (rack_out), arriving two thirds of the way through the shot and holding.
+    subject = float(np.median(dep[int(sh * 0.3):int(sh * 0.75), int(sw * 0.3):int(sw * 0.7)]))
+    start = float(np.percentile(dep, 10)) if effect == "rack_in" else float(np.percentile(dep, 95))
+    band = None
+    if effect == "sweep":
+        bw = W * 2
+        xs = np.arange(bw, dtype=np.float32)[None, :] + np.arange(H, dtype=np.float32)[:, None] * 0.35  # tilted
+        glow = np.exp(-(((xs % bw) - bw / 2) / (W * 0.16)) ** 2) * 46  # soft edges, at most ~18% brighter
+        band = Image.fromarray(glow.astype(np.uint8), "L")
+        warm = Image.new("RGB", (W, H), (255, 236, 205))
 
     def frame(f: int) -> bytes:
         t = f / (frames - 1)
@@ -155,7 +179,17 @@ def make_clip(photo: str, crop: str, move: str, seconds: float, out: Path, seed:
                 mesh.append(((int(gx[i]), int(gy[j]), int(gx[i + 1]), int(gy[j + 1])),
                              (float(sx[j, i]), float(sy[j, i]), float(sx[j + 1, i]), float(sy[j + 1, i]),
                               float(sx[j + 1, i + 1]), float(sy[j + 1, i + 1]), float(sx[j, i + 1]), float(sy[j, i + 1]))))
-        return pic.transform((W, H), Image.MESH, mesh, Image.BICUBIC).tobytes()
+        img = pic.transform((W, H), Image.MESH, mesh, Image.BICUBIC)
+        if depth_img is not None:
+            plane = start + (subject - start) * min(1.0, k * 1.5)
+            seen = depth_img.transform((W, H), Image.MESH, mesh, Image.BILINEAR)
+            # How far each pixel is from the sharp plane decides how soft it is.
+            mask = seen.point(lambda v, p=plane * 255: min(255, max(0, int((abs(v - p) - 12) * 2.4))))
+            img = Image.composite(img.filter(ImageFilter.GaussianBlur(4.5)), img, mask)
+        elif band is not None:
+            x = int((1 - t) * W)  # the light drifts from left to right
+            img.paste(warm, (0, 0), band.crop((x, 0, x + W, H)))
+        return img.tobytes()
 
     tmp = out.with_name(out.stem + ".part.mp4")
     enc = subprocess.Popen([ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
@@ -186,7 +220,8 @@ def moves_for(n: int, seed: int) -> list[str]:
 
 
 def make_ad(kit: BrandKit, photo: str, plan: list, lines: list[str], voice: str, out: Path, poster: Path, caption: str,
-            seed: int, end: tuple[str, str, str] = ("", "", ""), style: str = "", moves: list[str] | None = None) -> float:
+            seed: int, end: tuple[str, str, str] = ("", "", ""), style: str = "", moves: list[str] | None = None,
+            music_bed: bool = True, spoken: list[str] | None = None) -> float:
     """A whole AI scenes ad filmed on this computer: a 3D shot per line (up to four), then the same
     edit as AI video shots: voice or music, captions, logo, end card."""
     from . import ugc_video
@@ -201,7 +236,7 @@ def make_ad(kit: BrandKit, photo: str, plan: list, lines: list[str], voice: str,
             clip = out.with_name(f"{out.stem}_3d{i}.mp4")
             make_clip(photo, scene.crop, move, max(lengths[i::len(plan)]) + 0.7, clip, seed + i)
             clips.append(str(clip))
-        return ugc_video.make_scene_ad(kit, clips, lines, voice, out, poster, caption, seed, end, style)
+        return ugc_video.make_scene_ad(kit, clips, lines, voice, out, poster, caption, seed, end, style, music_bed, spoken)
     finally:
         for c in clips:
             Path(c).unlink(missing_ok=True)

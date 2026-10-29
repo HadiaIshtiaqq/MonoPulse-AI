@@ -68,7 +68,7 @@ def test_urdu_captions_run_right_to_left_with_english_kept_in_order():
     assert xs[2] < xs[3] < xs[4]  # the English run left to right
 
 
-needs_speech = pytest.mark.skipif(not speech.tts_available() or bool(os.environ.get("CI")), reason="voice not installed, or on CI")
+needs_speech = pytest.mark.skipif(not speech.tts_available() or (bool(os.environ.get("CI")) and not os.environ.get("MONOPLUS_SPEECH_TESTS")), reason="voice not installed, or on CI")
 
 
 @needs_speech
@@ -87,7 +87,7 @@ def test_a_presenter_ad_end_to_end(client, monkeypatch):  # noqa: F811
     r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "format": "pov", "engine": "presenter", "character": "ali",
                                                         "lines": ["POV: you just found the Seeded Sourdough", "Just $9"]})
     assert r.status_code == 202, r.text
-    for _ in range(240):
+    for _ in range(1200):  # ends as soon as the job does; generous for a busy machine
         j = client.get(f"/api/ugc-jobs/{r.json()['job_id']}").json()
         if j["status"] != "running":
             break

@@ -6,6 +6,7 @@ import { AccessGate } from "@/components/AccessGate";
 import { PageTransition } from "@/components/Motion";
 import { FeedbackProvider } from "@/components/Feedback";
 import { CommandPaletteProvider } from "@/components/CommandPalette";
+import { UpdateBanner } from "@/components/UpdateBanner";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const display = Plus_Jakarta_Sans({ subsets: ["latin"], variable: "--font-display", weight: ["600", "700", "800"] });
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${display.variable}`}>
       <body className="min-h-screen font-sans">
+        <UpdateBanner />
         <FeedbackProvider>
           <CommandPaletteProvider>
             <AccessGate>

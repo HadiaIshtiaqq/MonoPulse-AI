@@ -570,7 +570,8 @@ def probe_duration(path: str) -> float:
 
 def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, float, float]], product_photo: str, terms: list[str],
                      out: Path, poster: Path, caption: str, seed: int, end: tuple[str, str, str] = ("", "", ""),
-                     lines: list[tuple[str, float, float]] | None = None) -> float:
+                     lines: list[tuple[str, float, float]] | None = None, sound_tail: bool = False,
+                     breaks: set[int] | None = None) -> float:
     """Your video, trimmed to the speech, upright 9:16, with captions that follow what was said, the
     product popping in when it's mentioned, your logo and an end card over the video's last moment.
     With `lines` (text, start, end) and the "soft" caption style, each line fades in whole instead."""
@@ -583,7 +584,7 @@ def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, floa
     talk = max(1.0, stop - start)
     end_secs = 1.8 if any(end) else 0.0
     # Speech stops where the talking does; music runs on under the end card.
-    audio_stop = min(length, stop + end_secs) if soft else stop
+    audio_stop = min(length, stop + end_secs) if soft or sound_tail else stop
     total = talk + end_secs
     frames, talk_frames = int(total * FPS), int(talk * FPS)
     accent = bright(kit)
@@ -601,9 +602,10 @@ def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, floa
     local_words = [(t, s - start, e - start) for t, s, e in words]
     # Caption groups: a few words at a time, like creator captions.
     groups, cur = [], []
-    for w in local_words:
+    for i, w in enumerate(local_words):
         cur.append(w)
-        if len(cur) >= 4 or w[0].endswith((".", "!", "?", ",")):
+        # A group ends at four words, at punctuation, or where a line of the script ends.
+        if len(cur) >= 4 or w[0].endswith((".", "!", "?", ",")) or i in (breaks or ()):
             groups.append(cur)
             cur = []
     if cur:
@@ -768,8 +770,27 @@ def aesthetic_durations(lines: list[str]) -> list[float]:
     return [round(min(4.2, max(2.8, len(line.split()) / 2.2 + 1.2)), 2) for line in lines]
 
 
+def under_voice(voice_wav: Path, seconds: float, out: Path, seed: int) -> Path:
+    """The voice with upbeat music low underneath it (about -16 dB), running on under the end card."""
+    from . import music
+    from .reels.render import ffmpeg_exe
+
+    bed = out.with_suffix(".bed.wav")
+    try:
+        music.compose(seconds, bed, seed, mood="upbeat")
+        proc = subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(voice_wav), "-i", str(bed), "-filter_complex",
+                               "[0:a]aresample=44100,pan=stereo|c0=c0|c1=c0[v];[1:a]volume=0.16[m];[v][m]amix=inputs=2:duration=longest:normalize=0",
+                               "-ar", "44100", str(out)], capture_output=True, text=True, errors="replace", timeout=120)
+        if proc.returncode != 0:
+            raise VideoError(f"The music couldn't be mixed: {proc.stderr.strip()[:200]}")
+        return out
+    finally:
+        bed.unlink(missing_ok=True)
+
+
 def make_scene_ad(kit: BrandKit, clips: list[str], lines: list[str], voice: str, out: Path, poster: Path, caption: str,
-                  seed: int, end: tuple[str, str, str] = ("", "", ""), style: str = "") -> float:
+                  seed: int, end: tuple[str, str, str] = ("", "", ""), style: str = "", music_bed: bool = True,
+                  spoken: list[str] | None = None) -> float:
     """Voice, then the generated shots cut to it, then captions, logo and end card. Aesthetic ads
     have no voice: composed music, slow dissolves, the film look and soft captions."""
     from . import music, speech
@@ -788,9 +809,20 @@ def make_scene_ad(kit: BrandKit, clips: list[str], lines: list[str], voice: str,
                 spans.append((line, t + 0.25, t + d - 0.2))
                 t += d
             return render_person_ad(kit, str(footage), [], "", [], out, poster, "soft", seed, end, lines=spans)
-        durations = speech.speak(lines, wav, voice)
-        scene_footage(shots, durations, str(wav), footage)
-        return render_person_ad(kit, str(footage), spoken_words(lines, durations), "", [], out, poster, caption, seed, end)
+        # `spoken`: what the voice reads when it differs from the captions (Roman Urdu read from Urdu letters).
+        durations = speech.speak(spoken if spoken and len(spoken) == len(lines) else lines, wav, voice)
+        sound = wav
+        if music_bed:
+            sound = under_voice(wav, sum(durations) + 2.0, out.with_suffix(".mix.wav"), seed)
+        try:
+            # With music, the last shot runs on under the end card, so the music has picture to play under.
+            scene_footage(shots, durations[:-1] + [durations[-1] + (2.0 if music_bed else 0.0)], str(sound), footage)
+            ends = {sum(len(x.split()) for x in lines[:k + 1]) - 1 for k in range(len(lines))}  # each line's last word
+            return render_person_ad(kit, str(footage), spoken_words(lines, durations), "", [], out, poster, caption, seed, end,
+                                    sound_tail=music_bed, breaks=ends)
+        finally:
+            if sound != wav:
+                sound.unlink(missing_ok=True)
     finally:
         wav.unlink(missing_ok=True)
         footage.unlink(missing_ok=True)

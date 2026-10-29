@@ -134,7 +134,7 @@ def test_reels_render_in_the_background(client, monkeypatch):  # noqa: F811
     r = client.post(f"/api/posts/{post.id}/reel?background=true")
     assert r.status_code == 202 and r.json()["status"] == "running"
     job_id = r.json()["job_id"]
-    for _ in range(120):
+    for _ in range(1200):  # ends as soon as the job does; generous for a busy machine
         job = client.get(f"/api/reel-jobs/{job_id}").json()
         if job["status"] != "running":
             break

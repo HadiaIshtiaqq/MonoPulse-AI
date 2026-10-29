@@ -1,4 +1,6 @@
-export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+// The API is reached through the web app's own address (next.config.mjs passes /api and /media on), unless
+// NEXT_PUBLIC_API_URL points somewhere else.
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
 
 export type Platform = "instagram" | "linkedin" | "x" | "facebook";
 export type ReelSceneKind = "hook" | "product" | "fact" | "cta";
@@ -19,7 +21,8 @@ export type ReelOptionsInfo = {
   trends: { key: string; label: string }[];
 };
 export type UgcAd = { id: string; product: string; format: string; engine: "builtin" | "scenes" | "presenter" | "person" | "avatar"; script: string[]; video_url: string;
-  poster_url: string; seconds: number; avatar: string; look: string; caption: string; voice: boolean; source?: string; director?: string; created_at: string };
+  poster_url: string; seconds: number; avatar: string; look: string; caption: string; voice: boolean; source?: string; director?: string; created_at: string;
+  note?: string }; // note: only on a just-made ad, e.g. why the 3D camera filmed it instead
 export type UgcAvatar = { id: string; name: string; preview: string; gender: string };
 export type UgcVoice = { key: string; name: string; accent: string; gender: string; language: string; clear: boolean; license: string };
 export type UgcScene = { prompt: string; crop: string };
@@ -473,14 +476,14 @@ export const api = {
   },
   makeUgc: async (cid: string, body: { product: number; format: string; lines: string[]; engine: string; avatar_id?: string; avatar_name?: string;
     look?: string; caption?: string; voice?: boolean; voice_key?: string; character?: string; language?: string; footage?: string;
-    style?: string; scenes?: UgcScene[]; source?: string },
+    style?: string; scenes?: UgcScene[]; source?: string; music?: boolean },
     onStep?: (step: string) => void) => {
     const { job_id } = await req<{ job_id: string }>(`/api/campaigns/${cid}/ugc`, json("POST", body));
     for (;;) {
       await new Promise((r) => setTimeout(r, 2000));
-      const job = await req<{ status: string; step?: string; result?: UgcAd; error?: string }>(`/api/ugc-jobs/${job_id}`);
+      const job = await req<{ status: string; step?: string; result?: UgcAd; error?: string; note?: string }>(`/api/ugc-jobs/${job_id}`);
       if (job.step) onStep?.(job.step);
-      if (job.status === "done" && job.result) return job.result;
+      if (job.status === "done" && job.result) return { ...job.result, note: job.note || "" };
       if (job.status === "error") throw new Error(job.error || "The ad couldn't be made.");
     }
   },

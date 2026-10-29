@@ -27,14 +27,18 @@ def _freq(note: float) -> float:
     return 440.0 * 2 ** ((note - 69) / 12)
 
 
-def compose(seconds: float, out: Path, seed: int = 0) -> Path:
-    """A WAV of soft music, `seconds` long (fading in and out), at `out`."""
+MOODS = ("soft", "upbeat")  # soft: slow and warm (aesthetic ads); upbeat: brighter, with a steady beat (under a voice)
+
+
+def compose(seconds: float, out: Path, seed: int = 0, mood: str = "soft") -> Path:
+    """A WAV of music, `seconds` long (fading in and out), at `out`."""
     import numpy as np
 
     rng = random.Random(seed)
     root = KEYS[rng.choice(list(KEYS))]
     prog = rng.choice(PROGRESSIONS)
-    bpm = rng.choice([70, 74, 78, 82])
+    upbeat = mood == "upbeat"
+    bpm = rng.choice([100, 104, 108, 112] if upbeat else [70, 74, 78, 82])
     beat = 60.0 / bpm
     chord_len = beat * 4
     n = int(seconds * RATE)
@@ -70,7 +74,7 @@ def compose(seconds: float, out: Path, seed: int = 0) -> Path:
         notes = [root + 24 + deg + iv for iv in shape]
         pattern = notes + notes[-2:0:-1]
         for j in range(8):
-            if rng.random() < 0.25:
+            if rng.random() < (0.1 if upbeat else 0.25):
                 continue  # a few rests keep it from sounding mechanical
             s = start + int(j * beat / 2 * RATE)
             ln = min(n - s, int(0.9 * RATE))
@@ -88,12 +92,17 @@ def compose(seconds: float, out: Path, seed: int = 0) -> Path:
     hat = np.diff(noise, prepend=0) * np.exp(-np.arange(noise.size) / RATE * 40) * 0.012
     for b in range(int(seconds / beat) + 1):
         s = int(b * beat * RATE)
-        if b % 2 == 0 and s < n:
+        if (upbeat or b % 2 == 0) and s < n:  # upbeat: four on the floor
             ln = min(n - s, int(0.3 * RATE))
             st = np.arange(ln) / RATE
             kick = 0.16 * np.exp(-st * 14) * np.sin(2 * np.pi * (55 + 60 * np.exp(-st * 30)) * st)
             left[s:s + ln] += kick
             right[s:s + ln] += kick
+        if upbeat and b % 2 == 1 and s < n:  # a soft clap on two and four
+            ln = min(n - s, int(0.18 * RATE))
+            clap = np.random.default_rng(seed + b).standard_normal(ln) * np.exp(-np.arange(ln) / RATE * 22) * 0.05
+            left[s:s + ln] += clap
+            right[s:s + ln] += clap * 0.9
         h = int((b + 0.5) * beat * RATE)
         if h < n:
             ln = min(n - h, hat.size)
@@ -107,7 +116,7 @@ def compose(seconds: float, out: Path, seed: int = 0) -> Path:
         right[d:] += gain * left[:-d]
     # A gentle low-pass (above ~3.5 kHz rolls off), which softens the top end like lo-fi tape.
     freqs = np.fft.rfftfreq(n, 1 / RATE)
-    curve = 1 / np.sqrt(1 + (freqs / 3500.0) ** 4)
+    curve = 1 / np.sqrt(1 + (freqs / (6500.0 if upbeat else 3500.0)) ** 4)
     left, right = (np.fft.irfft(np.fft.rfft(ch) * curve, n) for ch in (left, right))
     fade = env(n, 0.6, 1.6)
     peak = max(np.abs(left).max(), np.abs(right).max(), 1e-6)

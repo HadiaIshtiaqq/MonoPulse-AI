@@ -29,13 +29,21 @@ def test_the_key_opens_posting_from_elsewhere(monkeypatch):
         assert remote.post("/api/maintenance/cleanup", headers={"X-Access-Key": "s3cret"}).status_code == 200
 
 
-def test_forwarded_for_only_counts_behind_a_trusted_proxy(monkeypatch):
+def test_a_request_passed_on_from_elsewhere_is_never_treated_as_local(monkeypatch):
+    """The web app forwards /api here, and a tunnel forwards to the web app, so the direct caller is this
+    computer even for someone across the internet. Their forwarding headers make it "elsewhere"."""
     monkeypatch.setattr(config, "ACCESS_KEY", "")
     with TestClient(app, client=("127.0.0.1", 5000)) as proxied:
-        monkeypatch.setattr(config, "TRUST_PROXY", False)
-        assert proxied.post("/api/maintenance/cleanup", headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 200
-        monkeypatch.setattr(config, "TRUST_PROXY", True)
-        assert proxied.post("/api/maintenance/cleanup", headers={"X-Forwarded-For": "203.0.113.9"}).status_code == 403
+        for trusted in (False, True):
+            monkeypatch.setattr(config, "TRUST_PROXY", trusted)
+            for headers in ({"X-Forwarded-For": "203.0.113.9"}, {"X-Forwarded-For": "127.0.0.1, 203.0.113.9"},
+                            {"CF-Connecting-IP": "198.51.100.4"}, {"Forwarded": "for=203.0.113.9;proto=https"},
+                            {"X-Real-IP": "203.0.113.9"}):
+                assert proxied.get("/api/campaigns", headers=headers).status_code == 403, headers
+                assert proxied.post("/api/maintenance/cleanup", headers=headers).status_code == 403, headers
+        # This computer's own browser, through the web app's forwarding, is still local.
+        for headers in ({}, {"X-Forwarded-For": "127.0.0.1"}, {"X-Forwarded-For": "::ffff:127.0.0.1"}, {"X-Forwarded-For": "::1"}):
+            assert proxied.get("/api/campaigns", headers=headers).status_code == 200, headers
 
 
 def test_access_key_lives_in_an_httponly_cookie(monkeypatch):

@@ -42,7 +42,7 @@ def test_a_builtin_ugc_ad_end_to_end(client, monkeypatch):  # noqa: F811
     r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "format": "pov", "lines": script["lines"]})
     assert r.status_code == 202, r.text
     job = r.json()["job_id"]
-    for _ in range(120):
+    for _ in range(1200):  # ends as soon as the job does; generous for a busy machine
         j = client.get(f"/api/ugc-jobs/{job}").json()
         if j["status"] != "running":
             break

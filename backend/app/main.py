@@ -35,6 +35,7 @@ from .agents import (
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
 from .publishing import share_links
+from .jobbook import JobBook
 from .redact import install_log_redaction, redact
 from .scraper import ingestor
 from .schemas import (
@@ -99,6 +100,26 @@ ACCOUNT_PATHS = re.compile(r"^/api/(connections(/.*)?|browser(/.*)?|posts/[^/]+/
 LOCAL_CLIENTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
+def _is_local(request: Request) -> bool:
+    """From this computer, and not passed on from somewhere else. The web app forwards /api to here, and a
+    tunnel or proxy forwards to the web app, so the direct caller is often this computer even when the person
+    isn't: any forwarding header naming another address makes it "elsewhere". (Used only to refuse access,
+    never to grant it, so a forged header can't let anyone in.)"""
+    def local(addr: str) -> bool:
+        addr = addr.strip().strip('"').removeprefix("::ffff:").split("%")[0]
+        if addr.startswith("[") and "]" in addr:
+            addr = addr[1:addr.index("]")]
+        elif addr.count(":") == 1:  # "1.2.3.4:5678"
+            addr = addr.split(":")[0]
+        return addr in LOCAL_CLIENTS or addr == ""
+    if not local(request.client.host if request.client else ""):
+        return False
+    h = request.headers
+    passed = [*h.get("x-forwarded-for", "").split(","), h.get("x-real-ip", ""), h.get("cf-connecting-ip", ""),
+              *re.findall(r"(?i)for=([^;,]+)", h.get("forwarded", ""))]
+    return all(local(a) for a in passed)
+
+
 def _client_host(request: Request) -> str:
     if config.TRUST_PROXY and request.headers.get("x-forwarded-for"):
         return request.headers["x-forwarded-for"].split(",")[0].strip()
@@ -134,12 +155,12 @@ async def require_access_key(request: Request, call_next):
         if not _authorised(request):
             return JSONResponse({"detail": "Access key required."}, status_code=401)
     if not config.ACCESS_KEY and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS" \
-            and _client_host(request) not in LOCAL_CLIENTS:
+            and not _is_local(request):
         # No key set: someone else on the network (or the internet) can't read your campaigns or use your keys.
         return JSONResponse({"detail": "MonoPlus only answers the computer it runs on until an access key is set "
                                        "(MONOPLUS_ACCESS_KEY in backend/.env)."}, status_code=403)
     if ACCOUNT_PATHS.match(path) and request.method != "OPTIONS" and not _authorised(request) \
-            and _client_host(request) not in LOCAL_CLIENTS:
+            and not _is_local(request):
         # Without a key, nobody else on the network can post to your accounts or drive your browser.
         return JSONResponse({"detail": "Posting to your accounts only works from the computer MonoPlus runs on, "
                                        "or with the access key (MONOPLUS_ACCESS_KEY)."}, status_code=403)
@@ -321,7 +342,8 @@ async def list_campaigns() -> list[dict]:
         {
             "id": c.id,
             "name": c.brand.name if c.brand else (ingestor.source_key(c.source_input) if c.source_input else "Unfinished campaign"),
-            "source": ingestor.source_key(c.source_input) if c.source_input else "",
+            # The site it was made from (older campaigns didn't keep it: their brand's website stands in).
+            "source": ingestor.source_key(c.source_input or (c.brand.website_url if c.brand else "") or ""),
             "error": c.error,
             "website": c.brand.website_url if c.brand else None,
             "status": c.status,
@@ -704,7 +726,7 @@ async def rewrite_post(post_id: str, req: RewriteRequest) -> SocialPost:
 
 # Reels rendering in the background: {job id: {"status", "result" | "error", "code", "at"}}. Kept in
 # memory for an hour, which is plenty for the page that asked to collect its reel.
-REEL_JOBS: dict[str, dict] = {}
+REEL_JOBS = JobBook("reels")  # kept on disk too, so a restart doesn't lose them
 _reel_tasks: set[asyncio.Task] = set()
 
 
@@ -726,6 +748,7 @@ async def make_reel(post_id: str, req: ReelRequest | None = None, background: bo
         REEL_JOBS.pop(k, None)
     job_id = new_id()
     REEL_JOBS[job_id] = {"status": "running", "post_id": post.id, "at": now}
+    REEL_JOBS.save()
 
     async def run() -> None:
         try:
@@ -736,6 +759,8 @@ async def make_reel(post_id: str, req: ReelRequest | None = None, background: bo
         except Exception as exc:  # noqa: BLE001 - reported to the page that's waiting
             logging.getLogger(__name__).exception("reel job %s failed", job_id)
             REEL_JOBS[job_id].update(status="error", error=f"The reel couldn't be made ({type(exc).__name__}).", code=500)
+        finally:
+            REEL_JOBS.save()
 
     task = asyncio.create_task(run())
     _reel_tasks.add(task)
@@ -770,7 +795,7 @@ async def _render_reel(campaign: Campaign, post: SocialPost, req: ReelRequest | 
 
 # --------------------------------------------------------------------------- UGC ads
 
-UGC_JOBS: dict[str, dict] = {}
+UGC_JOBS = JobBook("ugc")
 _ugc_tasks: set[asyncio.Task] = set()
 SCENE_SLOTS = asyncio.Semaphore(2)  # AI scenes filmed at once on Hugging Face's free GPUs
 MAX_SCENES = 4  # generated shots per ad; longer scripts reuse them
@@ -863,6 +888,7 @@ class UgcMakeRequest(BaseModel):
     footage: str = ""  # the uploaded video, for engine "person"
     style: str = ""  # AI scenes: worn | faceless
     scenes: list[ScenePlan] = []  # AI scenes: the shots, one per line ([] = planned for the product)
+    music: bool = True  # AI scenes with a voice: soft upbeat music underneath (aesthetic ads always have music)
     source: str = "local"  # AI scenes: local (3D camera on this computer) | ai (AI video on Hugging Face's free GPUs)
 
 
@@ -901,6 +927,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
         UGC_JOBS.pop(k, None)  # finished jobs are kept an hour for the page to collect, then let go
     job_id = new_id()
     UGC_JOBS[job_id] = {"status": "running", "step": "Getting the product photo", "at": now}
+    UGC_JOBS.save()
 
     async def run() -> None:
         job = UGC_JOBS[job_id]
@@ -912,7 +939,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
             out, poster = config.MEDIA_DIR / f"ugc_{c.id}_{token}.mp4", config.MEDIA_DIR / f"ugc_{c.id}_{token}.jpg"
             f = ugc.facts(c.brand, product)
             end = (f["name"], f["price"], ugc.END_CTA.get(req.language, ugc.END_CTA["en"]))
-            look = caption = director = ""
+            look = caption = director = note = filmed_by = ""
             script = lines
             if req.engine == "avatar":
                 job["step"] = "HeyGen is filming your presenter (a few minutes)"
@@ -941,15 +968,13 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                         director = "nemotron"
                 caption = "soft" if aesthetic else req.caption if req.caption in ugc_video.CAPTIONS else random.choice(["outline", "box", "pop", "karaoke"])
                 seed = int(token, 16) % 997
-                voice = req.voice_key or _voice_for(lines, "female")
-                if req.source != "ai":  # the 3D camera, on this computer
-                    job["step"] = "Getting the 3D model (once, about 100 MB)"
-                    await asyncio.to_thread(depth3d.model_path)
-                    job["step"] = f"Filming {len(plan)} 3D shots on this computer (a minute or two)"
-                    async with reels.render_slots():
-                        seconds = await reels.render.run_in_worker(depth3d.make_ad, c.brand, path, plan, lines, voice, out, poster,
-                                                                   caption, seed, end, look, moves)
-                else:  # AI video on Hugging Face's free GPUs
+                spoken = None
+                if req.language == "roman" and not aesthetic:  # Nemotron writes it in Urdu letters for an Urdu voice
+                    job["step"] = "Nemotron is writing the script in Urdu letters for the voice"
+                    spoken = await ugc.to_urdu_script(lines)
+                voice = req.voice_key or _voice_for(spoken or lines, "female")
+                filmed_by = "ai" if req.source == "ai" else "local"
+                if filmed_by == "ai":  # AI video on Hugging Face's free GPUs
                     clips: list[str] = []
                     try:
                         async with SCENE_SLOTS:
@@ -958,18 +983,28 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                                 clip = out.with_name(f"{out.stem}_scene{i}.mp4")
                                 try:
                                     await asyncio.to_thread(scenes.generate, path, scene, look, int(token, 16) % 99991 + i, clip)
-                                except scenes.SceneError:
+                                except scenes.SceneError as exc:
                                     if not clips:
-                                        raise
+                                        # Nothing filmed: the 3D camera films the ad instead of it failing.
+                                        filmed_by, note = "local", f"{exc} So the 3D camera on this computer filmed it instead."
                                     break  # the free GPU share ran out mid-ad: the shots already filmed carry the rest
                                 clips.append(str(clip))
-                        job["step"] = "Recording the voice and editing the scenes"
-                        async with reels.render_slots():
-                            seconds = await reels.render.run_in_worker(
-                                ugc_video.make_scene_ad, c.brand, clips, lines, voice, out, poster, caption, seed, end, look)
+                        if clips:
+                            job["step"] = "Recording the voice and editing the scenes"
+                            async with reels.render_slots():
+                                seconds = await reels.render.run_in_worker(
+                                    ugc_video.make_scene_ad, c.brand, clips, lines, voice, out, poster, caption, seed, end, look,
+                                    req.music, spoken)
                     finally:
                         for clip in clips:
                             Path(clip).unlink(missing_ok=True)
+                if filmed_by == "local":  # the 3D camera, on this computer
+                    job["step"] = "Getting the 3D model (once, about 100 MB)"
+                    await asyncio.to_thread(depth3d.model_path)
+                    job["step"] = f"Filming {len(plan)} 3D shots on this computer (a minute or two)"
+                    async with reels.render_slots():
+                        seconds = await reels.render.run_in_worker(depth3d.make_ad, c.brand, path, plan, lines, voice, out, poster,
+                                                                   caption, seed, end, look, moves, req.music, spoken)
             elif req.engine == "presenter":
                 character = avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]
                 voice = req.voice_key or _voice_for(lines, character.gender)
@@ -992,16 +1027,18 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                        video_url=f"/media/{out.name}", poster_url=f"/media/{poster.name}" if poster.exists() else "",
                        seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else
                        (avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]).name if req.engine == "presenter" else "",
-                       look=look, caption=caption, source=(req.source if req.source == "ai" else "local") if req.engine == "scenes" else "", director=director, voice=(req.voice and req.engine == "builtin") or req.engine == "presenter" or (req.engine == "scenes" and not aesthetic))
+                       look=look, caption=caption, source=filmed_by if req.engine == "scenes" else "", director=director, voice=(req.voice and req.engine == "builtin") or req.engine == "presenter" or (req.engine == "scenes" and not aesthetic))
             c.ugc_ads.append(ad)
             store.save(c)
-            job.update(status="done", result=ad.model_dump(mode="json"))
+            job.update(status="done", result=ad.model_dump(mode="json"), note=note)
         except (ugc.UgcError, ugc_video.VideoError, scenes.SceneError, depth3d.DepthError, speech.SpeechError, reels.ReelError, httpx.HTTPError, ValueError,
                 OSError) as exc:
             job.update(status="error", error=redact(str(exc))[:300])
         except Exception as exc:  # noqa: BLE001 - reported to the page that's waiting
             logging.getLogger(__name__).exception("ugc job %s failed", job_id)
             job.update(status="error", error=f"The video couldn't be made ({type(exc).__name__}).")
+        finally:
+            UGC_JOBS.save()
 
     task = asyncio.create_task(run())
     _ugc_tasks.add(task)

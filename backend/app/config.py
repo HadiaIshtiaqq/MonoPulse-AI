@@ -93,6 +93,11 @@ LLM_TIMEOUT_S = float(_env("LLM_TIMEOUT_S", "60"))
 # A hard cap on model use per day (prompt + reply tokens), so free credits are never overspent. When it's
 # reached, MonoPlus falls back to templates until the next day. 0 = no cap.
 LLM_DAILY_TOKENS = int(_env("LLM_DAILY_TOKENS", "200000") or 0)
+# Optional cap in dollars a day too. It needs the prices from the Token Factory pricing page, in dollars
+# per million tokens (input and output together) for each tier; with no prices it's off.
+LLM_DAILY_DOLLARS = float(_env("LLM_DAILY_DOLLARS", "0") or 0)
+PRICE_PER_M_ULTRA = float(_env("PRICE_PER_M_ULTRA", "0") or 0)
+PRICE_PER_M_NANO = float(_env("PRICE_PER_M_NANO", "0") or 0)
 
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 

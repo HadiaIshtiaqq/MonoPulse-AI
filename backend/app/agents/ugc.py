@@ -148,6 +148,31 @@ Never invent results, reviews, ratings, ingredients, materials, stock levels or 
 it ("I've been using this..."). Language: {language}. Return JSON: {{"lines": ["...", "..."]}}"""
 
 
+TRANSLITERATE = """Rewrite each line of Roman Urdu (Urdu written in Latin letters) in Urdu script, so an Urdu voice can read
+it aloud. Keep the meaning and the words; don't translate or add anything. Keep brand names, product names, English
+words and prices exactly as written, in Latin letters. Return JSON: {"lines": ["...", "..."]} with the same number of lines."""
+
+
+async def to_urdu_script(lines: list[str]) -> list[str] | None:
+    """Roman Urdu lines in Urdu letters, for the voice only (captions keep the Roman Urdu). None
+    without a model, or if the answer doesn't fit (a different number of lines, or no Urdu in them)."""
+    from . import lang
+
+    if not router.enabled or not lines:
+        return None
+    try:
+        data = await router.complete_json("transliterate", TRANSLITERATE, "\n".join(lines), temperature=0.1, max_tokens=600)
+    except (LLMError, AttributeError, ValueError) as exc:
+        log.info("Roman Urdu stays in Latin letters for the voice: %s", exc)
+        return None
+    out = [str(x).strip() for x in (data.get("lines") if isinstance(data, dict) else None) or []]
+    # Every line in Urdu letters, or left exactly as it was (a line that's all English or a price).
+    if len(out) != len(lines) or not all(lang.ARABIC.search(x) or x == y for x, y in zip(out, lines)) \
+            or not any(lang.ARABIC.search(x) for x in out):
+        return None
+    return [x[:200] for x in out]
+
+
 async def write_script(kit: BrandKit, p: Product, fmt: str, language: str = "en") -> tuple[list[str], bool]:
     """(lines, used_model). language: en, ur (Urdu script) or roman (Roman Urdu)."""
     base = template_script(kit, p, fmt, language)

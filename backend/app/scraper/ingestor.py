@@ -389,6 +389,8 @@ def clean_input(raw: str) -> str:
 def source_key(raw: str) -> str:
     """What makes two campaigns "the same brand": the site's address without www, tags or a trailing
     slash, or the handle."""
+    if not raw.strip():
+        return ""
     kind, value = detect_input(clean_input(raw))
     if kind == "handle":
         return "@" + value.lower()
