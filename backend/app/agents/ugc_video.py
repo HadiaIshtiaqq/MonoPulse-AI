@@ -645,6 +645,69 @@ def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, floa
     return round(total, 1)
 
 
+# --------------------------------------------------------------------------- AI scenes
+
+def scene_footage(clips: list[str], durations: list[float], voice_wav: str, out: Path) -> None:
+    """The generated shots cut to the voice: each shot plays while its line is spoken, slowed a
+    little (or played forward then back) when the line is longer than the shot."""
+    from .reels.render import ffmpeg_exe
+
+    cmd = [ffmpeg_exe(), "-y", "-loglevel", "error"]
+    for c in clips:
+        cmd += ["-i", c]
+    cmd += ["-i", voice_wav]
+    parts = []
+    for i, (c, d) in enumerate(zip(clips, durations)):
+        length = max(0.5, probe_duration(c))
+        fit = f"[{i}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
+        if d > length * 1.35:
+            fit += f",split[a{i}][b{i}];[b{i}]reverse[r{i}];[a{i}][r{i}]concat=n=2:v=1:a=0"
+            length *= 2
+        k = max(0.6, d / length)
+        parts.append(f"{fit},setpts={k:.4f}*(PTS-STARTPTS),fps={FPS},tpad=stop_mode=clone:stop_duration={d:.3f},"
+                     f"trim=duration={d:.3f},setpts=PTS-STARTPTS[v{i}]")
+    graph = ";".join(parts) + ";" + "".join(f"[v{i}]" for i in range(len(clips))) + f"concat=n={len(clips)}:v=1:a=0[v]"
+    total = sum(durations)
+    cmd += ["-filter_complex", graph, "-map", "[v]", "-map", f"{len(clips)}:a", "-af", f"apad=whole_dur={total:.3f}",
+            "-t", f"{total:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k", str(out)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=600)
+    if proc.returncode != 0:
+        raise VideoError(f"The scenes couldn't be put together: {proc.stderr.strip()[:200]}")
+
+
+def spoken_words(lines: list[str], durations: list[float]) -> list[tuple[str, float, float]]:
+    """Caption timings for a voiced script: each line's words spread over the time it's spoken."""
+    words, t = [], 0.0
+    for line, d in zip(lines, durations):
+        parts = line.split()
+        weights = [len(w) + 2 for w in parts]
+        span, s = max(0.3, d - 0.2), t + 0.05
+        for w, k in zip(parts, weights):
+            step = span * k / sum(weights)
+            words.append((w, s, s + step))
+            s += step
+        t += d
+    return words
+
+
+def make_scene_ad(kit: BrandKit, clips: list[str], lines: list[str], voice: str, out: Path, poster: Path, caption: str,
+                  seed: int, end: tuple[str, str, str] = ("", "", "")) -> float:
+    """Voice, then the generated shots cut to it, then captions, logo and end card."""
+    from . import speech
+
+    wav = out.with_suffix(".voice.wav")
+    footage = out.with_suffix(".scenes.mp4")
+    try:
+        durations = speech.speak(lines, wav, voice)
+        shots = [clips[i % len(clips)] for i in range(len(lines))]
+        scene_footage(shots, durations, str(wav), footage)
+        return render_person_ad(kit, str(footage), spoken_words(lines, durations), "", [], out, poster, caption, seed, end)
+    finally:
+        wav.unlink(missing_ok=True)
+        footage.unlink(missing_ok=True)
+
+
 # --------------------------------------------------------------------------- speaking text
 
 def for_speech(line: str) -> str:

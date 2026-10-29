@@ -192,13 +192,13 @@ class UgcAd(BaseModel):
     id: str = Field(default_factory=new_id)
     product: str
     format: str
-    engine: str  # builtin (product video) | presenter (free AI presenter) | person (your own video) | avatar (HeyGen)
+    engine: str  # builtin (product video) | scenes (AI video) | presenter (free AI presenter) | person (your own video) | avatar (HeyGen)
     script: list[str] = []
     video_url: str
     poster_url: str = ""
     seconds: float = 0
     avatar: str = ""  # the presenter's name (free or HeyGen)
-    look: str = ""  # layout and caption style of a product ad, so the next one can differ
+    look: str = ""  # layout of a product ad (so the next one can differ), or the style of AI scenes (worn | faceless)
     caption: str = ""
     voice: bool = False
     created_at: datetime = Field(default_factory=now_utc)

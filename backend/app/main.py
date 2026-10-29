@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from . import config, connections, mcp_server, media_gc, publishing, ratelimit
 from .agents import (
-    avatar, calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, speech, strategist, ugc, ugc_video,
+    avatar, calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, scenes, speech, strategist, ugc, ugc_video,
     variety,
 )
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
@@ -734,6 +734,8 @@ async def _render_reel(campaign: Campaign, post: SocialPost, req: ReelRequest | 
 
 UGC_JOBS: dict[str, dict] = {}
 _ugc_tasks: set[asyncio.Task] = set()
+SCENE_SLOTS = asyncio.Semaphore(2)  # AI scenes filmed at once on Hugging Face's free GPUs
+MAX_SCENES = 4  # generated shots per ad; longer scripts reuse them
 
 
 def _products(c: Campaign) -> list:
@@ -751,6 +753,7 @@ async def ugc_overview(campaign_id: str) -> dict:
             "presenters": [{"key": ch.key, "name": ch.name, "gender": ch.gender, "preview": f"/api/ugc/presenters/{ch.key}.png"}
                            for ch in avatar.CHARACTERS],
             "listening": speech.whisper_available(),
+            "scenes": {"styles": [{"key": k, "label": v} for k, v in scenes.STYLES.items()], "huggingface": bool(config.HF_TOKEN)},
             "looks": [{"key": k, "label": v} for k, v in ugc_video.LOOK_LABELS.items()],
             "captions": [{"key": k, "label": v} for k, v in ugc_video.CAPTION_LABELS.items()],
             "products": [{"index": i, "name": strategist.display_name(c.brand, p), "price": p.price, "image": p.image_url}
@@ -783,11 +786,33 @@ async def ugc_script(campaign_id: str, req: UgcScriptRequest) -> dict:
     return {"lines": lines, "used_llm": used}
 
 
+class UgcScenesRequest(BaseModel):
+    product: int
+    lines: int = 3
+    style: str = "worn"  # worn | faceless
+
+
+class ScenePlan(BaseModel):
+    prompt: str
+    crop: str = "full"
+
+
+@app.post("/api/campaigns/{campaign_id}/ugc/scenes")
+async def ugc_scenes(campaign_id: str, req: UgcScenesRequest) -> dict:
+    """The shots an AI-scenes ad would film, one per line, for the page to show and edit."""
+    c = _campaign(campaign_id)
+    if not c.brand:
+        raise HTTPException(409, "This campaign has no brand kit yet.")
+    n = max(1, min(MAX_SCENES, req.lines))
+    plan = scenes.plan(c.brand, _ugc_product(c, req.product), n, req.style, random.randrange(1 << 30))
+    return {"scenes": [{"prompt": s.prompt, "crop": s.crop} for s in plan]}
+
+
 class UgcMakeRequest(BaseModel):
     product: int
     format: str = "pov"
     lines: list[str]
-    engine: str = "builtin"  # builtin (product video) | presenter (free AI presenter) | person (your own video) | avatar (HeyGen)
+    engine: str = "builtin"  # builtin (product video) | scenes (AI video) | presenter (free AI presenter) | person (your own video) | avatar (HeyGen)
     avatar_id: str = ""
     avatar_name: str = ""
     look: str = ""  # product video layout; "" = a different one each time
@@ -797,6 +822,8 @@ class UgcMakeRequest(BaseModel):
     character: str = ""  # the free presenter (avatar.CHARACTERS)
     language: str = "en"  # the script's language (en | ur | roman), for the end card
     footage: str = ""  # the uploaded video, for engine "person"
+    style: str = ""  # AI scenes: worn | faceless
+    scenes: list[ScenePlan] = []  # AI scenes: the shots, one per line ([] = planned for the product)
 
 
 @app.post("/api/campaigns/{campaign_id}/ugc", status_code=202)
@@ -809,7 +836,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
     lines = [line.strip()[:140] for line in req.lines if line.strip()][:8]
     if not lines:
         raise HTTPException(422, "Write at least one line.")
-    if req.engine not in ("builtin", "presenter", "person", "avatar"):
+    if req.engine not in ("builtin", "scenes", "presenter", "person", "avatar"):
         raise HTTPException(422, "Unknown way to make the ad.")
     footage = None
     if req.engine == "person":
@@ -819,7 +846,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
             raise HTTPException(404, "Record or upload your video first.") from exc
     if req.voice_key and req.voice_key not in speech.VOICES:
         raise HTTPException(422, "Unknown voice.")
-    if ((req.voice and req.engine == "builtin") or req.engine == "presenter") and not speech.tts_available():
+    if ((req.voice and req.engine == "builtin") or req.engine in ("presenter", "scenes")) and not speech.tts_available():
         raise HTTPException(409, "The AI voice isn't installed on this computer: pip install piper-tts")
     if req.engine == "avatar":
         if not ugc.heygen_ready():
@@ -854,6 +881,35 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                     seconds, script = await reels.render.run_in_worker(
                         ugc_video.make_person_ad, c.brand, str(footage), lines, path, [f["name"], f["price"]], out, poster,
                         caption, int(token, 16) % 997, end)
+            elif req.engine == "scenes":
+                look = req.style if req.style in scenes.STYLES else "worn"
+                n = min(MAX_SCENES, len(lines))
+                # The shots written on the page first, then planned ones for the remaining lines.
+                own = [scenes.Scene(s.prompt.strip()[:300], s.crop if s.crop in ("full", "detail", "lower") else "full")
+                       for s in req.scenes if s.prompt.strip()][:n]
+                plan = own + scenes.plan(c.brand, product, n, look, int(token, 16))[len(own):]
+                caption = req.caption if req.caption in ugc_video.CAPTIONS else random.choice(["outline", "box", "pop", "karaoke"])
+                clips: list[str] = []
+                try:
+                    async with SCENE_SLOTS:
+                        for i, scene in enumerate(plan):
+                            job["step"] = f"Filming scene {i + 1} of {len(plan)} with AI video (about a minute each)"
+                            clip = out.with_name(f"{out.stem}_scene{i}.mp4")
+                            try:
+                                await asyncio.to_thread(scenes.generate, path, scene, look, int(token, 16) % 99991 + i, clip)
+                            except scenes.SceneError:
+                                if not clips:
+                                    raise
+                                break  # the free GPU share ran out mid-ad: the shots already filmed carry the rest
+                            clips.append(str(clip))
+                    job["step"] = "Recording the voice and editing the scenes"
+                    async with reels.render_slots():
+                        seconds = await reels.render.run_in_worker(
+                            ugc_video.make_scene_ad, c.brand, clips, lines, req.voice_key or _voice_for(lines, "female"), out, poster,
+                            caption, int(token, 16) % 997, end)
+                finally:
+                    for clip in clips:
+                        Path(clip).unlink(missing_ok=True)
             elif req.engine == "presenter":
                 character = avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]
                 voice = req.voice_key or _voice_for(lines, character.gender)
@@ -876,11 +932,12 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                        video_url=f"/media/{out.name}", poster_url=f"/media/{poster.name}" if poster.exists() else "",
                        seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else
                        (avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]).name if req.engine == "presenter" else "",
-                       look=look, caption=caption, voice=(req.voice and req.engine == "builtin") or req.engine == "presenter")
+                       look=look, caption=caption, voice=(req.voice and req.engine == "builtin") or req.engine in ("presenter", "scenes"))
             c.ugc_ads.append(ad)
             store.save(c)
             job.update(status="done", result=ad.model_dump(mode="json"))
-        except (ugc.UgcError, ugc_video.VideoError, speech.SpeechError, reels.ReelError, httpx.HTTPError, ValueError, OSError) as exc:
+        except (ugc.UgcError, ugc_video.VideoError, scenes.SceneError, speech.SpeechError, reels.ReelError, httpx.HTTPError, ValueError,
+                OSError) as exc:
             job.update(status="error", error=redact(str(exc))[:300])
         except Exception as exc:  # noqa: BLE001 - reported to the page that's waiting
             logging.getLogger(__name__).exception("ugc job %s failed", job_id)
@@ -1161,6 +1218,7 @@ class KeysRequest(BaseModel):
     nebius_api_key: str | None = None
     tavily_api_key: str | None = None
     heygen_api_key: str | None = None
+    huggingface_token: str | None = None
 
 
 @app.get("/api/connections")
@@ -1194,6 +1252,9 @@ async def save_keys(req: KeysRequest) -> dict:
         if req.heygen_api_key:
             await ugc.heygen_check(req.heygen_api_key)
             connections.save(HEYGEN_API_KEY=req.heygen_api_key.strip())
+        if req.huggingface_token:
+            await connections.check_huggingface(req.huggingface_token)
+            connections.save(HF_TOKEN=req.huggingface_token.strip())
     except ugc.UgcError as exc:
         raise HTTPException(400, str(exc)) from exc
     except connections.ConnectionError_ as exc:
@@ -1205,7 +1266,7 @@ async def save_keys(req: KeysRequest) -> dict:
 
 @app.delete("/api/connections/{name}")
 def disconnect(name: str) -> dict:
-    if name not in ("meta", "nebius", "tavily", "heygen"):
+    if name not in ("meta", "nebius", "tavily", "heygen", "huggingface"):
         raise HTTPException(404, "Unknown connection.")
     connections.disconnect(name)
     return connections.status()

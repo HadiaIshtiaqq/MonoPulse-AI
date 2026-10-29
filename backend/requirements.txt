@@ -19,3 +19,4 @@ tzdata>=2026.5  # time zone rules: always the newest
 playwright~=1.64.1  # posting from MonoPlus's browser (optional)
 faster-whisper~=1.2.1  # captions from real speech in UGC ads (MIT); audio is decoded with ffmpeg, never PyAV
 piper-tts~=1.8.0  # the free AI voice for UGC ads (GPL-3.0: fine to run yourself; swap before selling MonoPlus as closed software)
+gradio_client~=2.7.2  # AI scenes: Wan 2.2 image-to-video on Hugging Face's free ZeroGPU (Apache-2.0)

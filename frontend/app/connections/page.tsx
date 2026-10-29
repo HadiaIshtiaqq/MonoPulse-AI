@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, CheckCircle2, ExternalLink, Instagram, KeyRound, Loader2, Search, ShieldCheck, Sparkles, Unplug } from "lucide-react";
+import { Bot, CheckCircle2, Clapperboard, ExternalLink, Instagram, KeyRound, Loader2, Search, ShieldCheck, Sparkles, Unplug } from "lucide-react";
 import { api, type Connections } from "@/lib/api";
 import { useFeedback } from "@/components/Feedback";
 
@@ -44,6 +44,12 @@ export default function ConnectionsPage() {
               icon={<Bot size={16} />} title="AI presenters: HeyGen" field="heygen_api_key" name="heygen" status={status.heygen} onChange={setStatus}
               blurb="Realistic AI people presenting your products in UGC ads."
               how={<>Create an API key in <a className="link" href="https://app.heygen.com/settings" target="_blank" rel="noreferrer">HeyGen settings</a> (API). Videos use your HeyGen credits.</>}
+            />
+            <KeyCard
+              icon={<Clapperboard size={16} />} title="AI scenes: Hugging Face (free)" field="huggingface_token" name="huggingface" status={status.huggingface}
+              onChange={setStatus}
+              blurb="AI scenes in UGC ads are filmed by an open-source video model on Hugging Face's free GPUs. A free account gets a bigger daily share than no account."
+              how={<>Sign up free at <a className="link" href="https://huggingface.co/join" target="_blank" rel="noreferrer">huggingface.co</a>, then create a token with &ldquo;Read&rdquo; access in <a className="link" href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">Settings, Access Tokens</a>.</>}
             />
           </div>
         </div>
@@ -132,8 +138,8 @@ function MetaCard({ status, onChange }: { status: Connections; onChange: (s: Con
 }
 
 function KeyCard({ icon, title, blurb, how, field, name, status, onChange }: {
-  icon: React.ReactNode; title: string; blurb: string; how: React.ReactNode; field: "nebius_api_key" | "tavily_api_key" | "heygen_api_key";
-  name: "nebius" | "tavily" | "heygen"; status: { connected: boolean; from_env: boolean }; onChange: (s: Connections) => void;
+  icon: React.ReactNode; title: string; blurb: string; how: React.ReactNode; field: "nebius_api_key" | "tavily_api_key" | "heygen_api_key" | "huggingface_token";
+  name: "nebius" | "tavily" | "heygen" | "huggingface"; status: { connected: boolean; from_env: boolean }; onChange: (s: Connections) => void;
 }) {
   const { toast } = useFeedback();
   const [key, setKey] = useState("");

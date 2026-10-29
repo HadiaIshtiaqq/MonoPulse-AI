@@ -3,8 +3,8 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Bot, Camera, Check, Clapperboard, Download, Film, Loader2, Mic, Plus, Sparkles, Trash2, Upload, Wand2, X } from "lucide-react";
-import { api, media, type Campaign, type CampaignSummary, type UgcAd, type UgcAvatar, type UgcOverview, type UgcVoice } from "@/lib/api";
+import { Bot, Camera, Check, Clapperboard, Download, Film, Hand, Loader2, Mic, Plus, RefreshCw, Sparkles, Trash2, Upload, Wand2, X } from "lucide-react";
+import { api, media, type Campaign, type CampaignSummary, type UgcAd, type UgcAvatar, type UgcOverview, type UgcScene, type UgcVoice } from "@/lib/api";
 import { useFeedback } from "@/components/Feedback";
 import { Recorder } from "@/components/Recorder";
 
@@ -24,7 +24,10 @@ function Studio() {
   const [format, setFormat] = useState("pov");
   const [lines, setLines] = useState<string[]>([]);
   const [writing, setWriting] = useState(false);
-  const [engine, setEngine] = useState<"builtin" | "presenter" | "person" | "avatar">("presenter");
+  const [engine, setEngine] = useState<"builtin" | "scenes" | "presenter" | "person" | "avatar">("scenes");
+  const [style, setStyle] = useState("worn");
+  const [shots, setShots] = useState<UgcScene[]>([]);
+  const [planning, setPlanning] = useState(false);
   const [language, setLanguage] = useState("en");
   const [voiceKey, setVoiceKey] = useState("");
   const [character, setCharacter] = useState("amna");
@@ -60,6 +63,16 @@ function Studio() {
     finally { setUploading(false); }
   }
 
+  // AI scenes: a shot for each line (up to four), planned for the product, editable before filming.
+  const shotCount = Math.min(4, Math.max(1, lines.filter((l) => l.trim()).length));
+  async function planShots() {
+    setPlanning(true);
+    try { setShots((await api.ugcScenes(cid, { product, lines: shotCount, style })).scenes); }
+    catch (e) { toast((e as Error).message, "error"); }
+    finally { setPlanning(false); }
+  }
+  useEffect(() => { if (engine === "scenes" && info?.products.length) planShots(); }, [engine, product, style, shotCount, info?.products.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function writeScript() {
     setWriting(true);
     try { setLines((await api.ugcScript(cid, { product, format, language })).lines); }
@@ -87,9 +100,10 @@ function Studio() {
         product, format, lines: lines.filter((l) => l.trim()), engine: noPresenter ? "builtin" : engine, avatar_id: avatar?.id,
         avatar_name: avatar?.name, look, caption: captionStyle, voice: (engine === "builtin" && voice) || noPresenter, footage: footage?.id,
         voice_key: voiceKey || undefined, character: engine === "presenter" && !noPresenter ? character : undefined, language,
+        style: engine === "scenes" ? style : undefined, scenes: engine === "scenes" ? shots.slice(0, shotCount) : undefined,
       }, (step) => setJob({ step }));
       setInfo((i) => (i ? { ...i, ads: [ad, ...i.ads] } : i));
-      toast(engine === "avatar" || engine === "presenter" ? "Your presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
+      toast(engine === "scenes" ? "Your AI scenes ad is ready" : engine === "avatar" || engine === "presenter" ? "Your presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
     } catch (e) { toast((e as Error).message, "error"); }
     finally { setJob(null); }
   }
@@ -181,11 +195,15 @@ function Studio() {
 
             <section className="card p-5">
               <p className="label mb-3">4. How it&apos;s made</p>
+              <button onClick={() => setEngine("scenes")}
+                className={`mb-2 w-full rounded-xl border p-4 text-left ${engine === "scenes" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
+                <p className="flex items-center gap-2 font-semibold"><Clapperboard size={16} /> AI scenes <span className="chip bg-brand text-white">Premium look, free</span></p>
+                <p className="mt-1 text-xs text-slate-600">
+                  Real AI video of your product being worn, applied, held or eaten, with a new shot for every line, like Flow or Higgsfield ads.
+                  Or faceless: only hands, fabric and texture. With a voice and captions.
+                </p>
+              </button>
               <div className="grid gap-2 sm:grid-cols-3">
-                <button onClick={() => setEngine("presenter")} className={`rounded-xl border p-4 text-left ${engine === "presenter" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
-                  <p className="flex items-center gap-2 font-semibold"><Bot size={16} /> AI presenter</p>
-                  <p className="mt-1 text-xs text-slate-600">An illustrated presenter speaks your script with lip-sync, beside your product. Free, made on this computer.</p>
-                </button>
                 <button onClick={() => setEngine("builtin")} className={`rounded-xl border p-4 text-left ${engine === "builtin" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
                   <p className="flex items-center gap-2 font-semibold"><Film size={16} /> Product video</p>
                   <p className="mt-1 text-xs text-slate-600">Your product photo filmed phone-style, a new look every time, with an optional AI voice. Free, about 15 seconds.</p>
@@ -194,11 +212,59 @@ function Studio() {
                   <p className="flex items-center gap-2 font-semibold"><Camera size={16} /> Real person</p>
                   <p className="mt-1 text-xs text-slate-600">Record yourself (teleprompter included) or upload a clip. MonoPlus captions it, adds the product and an end card. Free.</p>
                 </button>
+                <button onClick={() => setEngine("presenter")} className={`rounded-xl border p-4 text-left ${engine === "presenter" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
+                  <p className="flex items-center gap-2 font-semibold"><Bot size={16} /> Cartoon presenter</p>
+                  <p className="mt-1 text-xs text-slate-600">An illustrated character speaks your script beside your product. Free, made on this computer, works offline.</p>
+                </button>
               </div>
               {info.heygen && (
                 <button onClick={() => setEngine("avatar")} className={`mt-2 w-full rounded-xl border px-4 py-2.5 text-left text-xs ${engine === "avatar" ? "border-brand bg-brand-soft" : "border-slate-200 text-slate-600"}`}>
                   <span className="font-semibold">Realistic presenter (HeyGen, paid)</span> · you connected HeyGen, so its realistic presenters are available too.
                 </button>
+              )}
+              {engine === "scenes" && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-slate-600">Style</span>
+                    <div className="seg">
+                      {info.scenes.styles.map((s) => (
+                        <button key={s.key} data-active={style === s.key} onClick={() => setStyle(s.key)}>
+                          <span className="inline-flex items-center gap-1">{s.key === "faceless" && <Hand size={13} />}{s.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <p className="text-xs font-medium text-slate-600">
+                        The shots, one per line{shotCount < lines.filter((l) => l.trim()).length ? " (later lines reuse them)" : ""}
+                      </p>
+                      <button onClick={planShots} disabled={planning} className="btn-ghost btn-sm">
+                        {planning ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} New shots
+                      </button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {shots.slice(0, shotCount).map((s, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="w-12 shrink-0 text-[11px] text-slate-400">Shot {i + 1}</span>
+                          <input className="input text-xs" value={s.prompt} maxLength={300}
+                            onChange={(e) => setShots(shots.map((x, j) => (j === i ? { ...x, prompt: e.target.value } : x)))} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <VoicePicker voices={info.voices} value={voiceKey} onChange={(k) => { setVoiceKey(k); setVoicePicked(true); }} language={language} />
+                  <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions]} />
+                  <p className="text-xs text-slate-500">
+                    Each shot starts from your product photo and is filmed by Wan 2.2, an open-source video model, on Hugging Face&apos;s free GPUs: about a
+                    minute per shot. Only the photo and the shot description are sent.{" "}
+                    {info.scenes.huggingface ? "Your free Hugging Face account is connected for a bigger share." : (
+                      <>Without an account the free share covers only a few shots: <Link href="/connections" className="link">connect a free Hugging Face account</Link> for more.</>
+                    )}{" "}
+                    If the share runs out mid-ad, the shots already filmed carry the rest.
+                    {style === "worn" && <> When an ad shows AI-generated people, turn on the platform&apos;s &ldquo;AI-generated&rdquo; label when you post.</>}
+                  </p>
+                </div>
               )}
               {engine === "presenter" && (
                 <div className="mt-4 space-y-3">
@@ -292,7 +358,7 @@ function Studio() {
                   </p>
                 </div>
               )}
-              <button onClick={make} disabled={!!job || !lines.some((l) => l.trim()) || (engine === "avatar" && (!info.heygen || !avatar)) || (engine === "person" && !footage)}
+              <button onClick={make} disabled={!!job || !lines.some((l) => l.trim()) || (engine === "avatar" && (!info.heygen || !avatar)) || (engine === "person" && !footage) || (engine === "scenes" && (planning || !shots.length))}
                 className="btn-gradient mt-4 w-full">
                 {job ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} {job ? job.step : "Make the ad"}
               </button>
@@ -393,7 +459,7 @@ function AdCard({ ad, campaign, onDelete }: { ad: UgcAd; campaign: Campaign; onD
         <p className="font-semibold">
           {ad.product} · {ad.format.replace("_", " ")}
           {ad.engine === "avatar" ? ` · HeyGen presenter${ad.avatar ? ` (${ad.avatar})` : ""}` : ad.engine === "presenter" ? ` · presenter ${ad.avatar}`
-            : ad.engine === "person" ? " · real person" : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
+            : ad.engine === "person" ? " · real person" : ad.engine === "scenes" ? ` · AI scenes${ad.look === "faceless" ? ", faceless" : ""}` : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
         </p>
         <p className="line-clamp-2 text-slate-500">{ad.script.join(" / ")}</p>
         <div className="flex gap-1.5">

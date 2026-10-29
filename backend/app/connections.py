@@ -20,7 +20,7 @@ from . import config
 
 log = logging.getLogger(__name__)
 
-KEYS = ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HEYGEN_API_KEY", "META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID",
+KEYS = ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HEYGEN_API_KEY", "HF_TOKEN", "META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID",
         "META_PAGE_NAME", "INSTAGRAM_USERNAME")
 _from_env = {k: bool(os.environ.get(k)) for k in KEYS}
 
@@ -82,6 +82,7 @@ def status() -> dict:
         "nebius": {"connected": bool(config.NEBIUS_API_KEY), "from_env": _from_env["NEBIUS_API_KEY"]},
         "tavily": {"connected": bool(config.TAVILY_API_KEY), "from_env": _from_env["TAVILY_API_KEY"]},
         "heygen": {"connected": bool(config.HEYGEN_API_KEY), "from_env": _from_env["HEYGEN_API_KEY"]},
+        "huggingface": {"connected": bool(config.HF_TOKEN), "from_env": _from_env["HF_TOKEN"]},
         "file": str(path()),
     }
 
@@ -156,7 +157,14 @@ async def check_tavily(key: str) -> None:
         raise ConnectionError_("Tavily didn't accept that key." + ("" if r.status_code in (401, 403) else f" (HTTP {r.status_code})"))
 
 
+async def check_huggingface(token: str) -> None:
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.get("https://huggingface.co/api/whoami-v2", headers={"Authorization": f"Bearer {token.strip()}"})
+    if r.status_code != 200:
+        raise ConnectionError_("Hugging Face didn't accept that token." + ("" if r.status_code in (401, 403) else f" (HTTP {r.status_code})"))
+
+
 def disconnect(name: str) -> None:
     keys = {"meta": ("META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID", "META_PAGE_NAME", "INSTAGRAM_USERNAME"),
-            "nebius": ("NEBIUS_API_KEY",), "tavily": ("TAVILY_API_KEY",), "heygen": ("HEYGEN_API_KEY",)}[name]
+            "nebius": ("NEBIUS_API_KEY",), "tavily": ("TAVILY_API_KEY",), "heygen": ("HEYGEN_API_KEY",), "huggingface": ("HF_TOKEN",)}[name]
     save(**{k: "" for k in keys})

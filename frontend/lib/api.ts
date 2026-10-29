@@ -18,20 +18,23 @@ export type ReelOptionsInfo = {
   languages: { key: ReelLanguage; label: string }[];
   trends: { key: string; label: string }[];
 };
-export type UgcAd = { id: string; product: string; format: string; engine: "builtin" | "presenter" | "person" | "avatar"; script: string[]; video_url: string;
+export type UgcAd = { id: string; product: string; format: string; engine: "builtin" | "scenes" | "presenter" | "person" | "avatar"; script: string[]; video_url: string;
   poster_url: string; seconds: number; avatar: string; look: string; caption: string; voice: boolean; created_at: string };
 export type UgcAvatar = { id: string; name: string; preview: string; gender: string };
 export type UgcVoice = { key: string; name: string; accent: string; gender: string; language: string; clear: boolean; license: string };
+export type UgcScene = { prompt: string; crop: string };
 export type UgcPresenter = { key: string; name: string; gender: string; preview: string };
 export type UgcOverview = { formats: { key: string; label: string; blurb: string }[]; heygen: boolean; voice: boolean; listening: boolean;
   voices: UgcVoice[]; presenters: UgcPresenter[]; languages: { key: string; label: string }[];
   looks: { key: string; label: string }[]; captions: { key: string; label: string }[];
+  scenes: { styles: { key: string; label: string }[]; huggingface: boolean };
   products: { index: number; name: string; price: string; image: string }[]; ads: UgcAd[] };
 export type Connections = {
   meta: { connected: boolean; page: string; instagram: string; instagram_ready: boolean; from_env: boolean };
   nebius: { connected: boolean; from_env: boolean };
   tavily: { connected: boolean; from_env: boolean };
   heygen: { connected: boolean; from_env: boolean };
+  huggingface: { connected: boolean; from_env: boolean };
   file: string;
 };
 export type ReelResult = { post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string; topic: string; occasion: string };
@@ -456,6 +459,7 @@ export const api = {
   designPhoto: (id: string, body: { url?: string; stock_id?: string }) => req<{ url: string }>(`/api/posts/${id}/design/photo`, json("POST", body)),
   ugcOverview: (cid: string) => req<UgcOverview>(`/api/campaigns/${cid}/ugc`),
   ugcScript: (cid: string, body: { product: number; format: string; language?: string }) => req<{ lines: string[]; used_llm: boolean }>(`/api/campaigns/${cid}/ugc/script`, json("POST", body)),
+  ugcScenes: (cid: string, body: { product: number; lines: number; style: string }) => req<{ scenes: UgcScene[] }>(`/api/campaigns/${cid}/ugc/scenes`, json("POST", body)),
   ugcAvatars: () => req<UgcAvatar[]>("/api/ugc/avatars"),
   /** Starts the ad in the background and resolves when it's made (an AI presenter can take minutes). */
   uploadFootage: (clip: Blob, name = "recording.webm") => {
@@ -464,7 +468,8 @@ export const api = {
     return req<{ id: string; url: string; seconds: number }>("/api/ugc/footage", { method: "POST", body: fd });
   },
   makeUgc: async (cid: string, body: { product: number; format: string; lines: string[]; engine: string; avatar_id?: string; avatar_name?: string;
-    look?: string; caption?: string; voice?: boolean; voice_key?: string; character?: string; language?: string; footage?: string },
+    look?: string; caption?: string; voice?: boolean; voice_key?: string; character?: string; language?: string; footage?: string;
+    style?: string; scenes?: UgcScene[] },
     onStep?: (step: string) => void) => {
     const { job_id } = await req<{ job_id: string }>(`/api/campaigns/${cid}/ugc`, json("POST", body));
     for (;;) {
@@ -480,8 +485,8 @@ export const api = {
   connections: () => req<Connections>("/api/connections"),
   connectMeta: (body: { token: string; app_id?: string; app_secret?: string }) =>
     req<Connections & { result: { page: string; instagram: string; lasting: boolean; note: string } }>("/api/connections/meta", json("PUT", body)),
-  saveKeys: (body: { nebius_api_key?: string; tavily_api_key?: string; heygen_api_key?: string }) => req<Connections>("/api/connections/keys", json("PUT", body)),
-  disconnect: (name: "meta" | "nebius" | "tavily" | "heygen") => req<Connections>(`/api/connections/${name}`, { method: "DELETE" }),
+  saveKeys: (body: { nebius_api_key?: string; tavily_api_key?: string; heygen_api_key?: string; huggingface_token?: string }) => req<Connections>("/api/connections/keys", json("PUT", body)),
+  disconnect: (name: "meta" | "nebius" | "tavily" | "heygen" | "huggingface") => req<Connections>(`/api/connections/${name}`, { method: "DELETE" }),
   browserSignOut: () => req<{ signed_out: boolean }>("/api/browser/sign-out", { method: "POST" }),
   browserScheduled: (enabled: boolean) => req<{ scheduled: boolean }>("/api/browser/scheduled", json("PUT", { enabled })),
 
