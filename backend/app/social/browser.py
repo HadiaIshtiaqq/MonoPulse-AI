@@ -73,6 +73,26 @@ def explain(exc: Exception) -> str:
     return f"The browser couldn't do that ({type(exc).__name__}). Close MonoPlus's browser windows and try again."
 
 
+def installed_browser() -> str:
+    """Path to an installed Chrome (or Edge) for the plain sign-in window, or "" when there's none."""
+    import os
+    import shutil
+
+    if (config.BROWSER_CHANNEL or "").lower() in ("chromium", "playwright"):
+        return ""
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        shutil.which("google-chrome") or "", shutil.which("google-chrome-stable") or "", shutil.which("chrome") or "",
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"),
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", shutil.which("microsoft-edge") or "",
+    ]
+    return next((c for c in candidates if c and "%" not in c and os.path.isfile(c)), "")
+
+
 def channels() -> list[str]:
     """Browsers to try for the window, in order. MONOPLUS_BROWSER=chromium forces Playwright's own."""
     choice = (config.BROWSER_CHANNEL or "auto").lower()
@@ -103,6 +123,7 @@ class BrowserPoster:
         self.signed_in: dict[str, bool] = {}  # last known, so the scheduler never has to open a window to ask
         self.needs_check: dict[str, bool] = {}  # platforms showing you a security check in the window right now
         self.channel = ""  # which browser the window is: "chrome", "msedge" or "" (Playwright's own Chromium)
+        self._signin = None  # the plain browser window you sign in with, while it's open (a subprocess.Popen)
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ the window
@@ -117,6 +138,8 @@ class BrowserPoster:
                 return self._ctx
             except Exception:  # noqa: BLE001
                 self._ctx = None
+        if self.signing_in():
+            raise RuntimeError("The sign-in window is still open (the profile is already in use). Close it first.")
         if self._pw is None:
             self._pw = sync_playwright().start()
         self.profile.mkdir(parents=True, exist_ok=True)
@@ -127,8 +150,10 @@ class BrowserPoster:
         last: Exception | None = None
         for channel in channels():
             try:
+                # chromium_sandbox: keep Chrome's own security sandbox on (Playwright turns it off by default).
                 self._ctx = self._pw.chromium.launch_persistent_context(
-                    str(self.profile), channel=channel or None, headless=headless, viewport=None, args=["--start-maximized"])
+                    str(self.profile), channel=channel or None, headless=headless, viewport=None, args=["--start-maximized"],
+                    chromium_sandbox=True)
                 self.channel = channel
                 break
             except Exception as exc:  # noqa: BLE001 - not installed: try the next
@@ -145,7 +170,13 @@ class BrowserPoster:
         page.bring_to_front()
         return page
 
+    def signing_in(self) -> bool:
+        return self._signin is not None and self._signin.poll() is None
+
     def _status(self) -> dict[str, bool]:
+        if self.signing_in():  # the profile is busy with your sign-in window: report what we last knew
+            self.needs_check = {}
+            return self.signed_in
         ctx = self._ctx
         temporary = ctx is None
         if temporary:  # nothing open: read the saved profile without showing a window
@@ -164,8 +195,34 @@ class BrowserPoster:
         self.signed_in = found
         return found
 
-    def _login(self, platform: Platform) -> None:
-        """Show the platform's sign-in page, in its existing tab if there is one (not a new tab per click)."""
+    def _login(self, platform: Platform) -> str:
+        """Open the platform's sign-in page in a plain browser window on MonoPlus's profile.
+
+        Signing in is yours to do, so it happens in a window nothing controls: platforms keep
+        their human checks (Instagram's reCAPTCHA) away from remote-controlled browsers, and
+        MonoPlus doesn't try to change that. You sign in, answer any check, close the window, and
+        MonoPlus uses the saved sign-in to post. Returns "plain" or "controlled" (no Chrome/Edge found)."""
+        exe = installed_browser()
+        if exe:
+            if self.signing_in():
+                self._signin.terminate()  # one sign-in window at a time; this one shows the platform you asked for
+                self._signin.wait(timeout=10)
+            if self._ctx is not None:  # free the profile: two browsers can't share it
+                try:
+                    self._ctx.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._ctx = None
+            import subprocess
+
+            self.profile.mkdir(parents=True, exist_ok=True)
+            self._signin = subprocess.Popen([exe, f"--user-data-dir={self.profile}", "--no-first-run", "--no-default-browser-check",
+                                             "--new-window", LOGIN[platform]])
+            return "plain"
+        return self._login_controlled(platform)
+
+    def _login_controlled(self, platform: Platform) -> str:
+        """Without Chrome or Edge installed: the sign-in page in MonoPlus's own window, in its existing tab."""
         ctx = self._context()
         domain = SESSION[platform][0]
         page = next((pg for pg in ctx.pages if domain in pg.url), None)
@@ -175,6 +232,7 @@ class BrowserPoster:
         page.bring_to_front()
         if not CHALLENGE.search(page.url):  # never navigate away from a check you're in the middle of
             page.goto(LOGIN[platform])
+        return "controlled"
 
     # ------------------------------------------------------------------ posting
 
@@ -249,8 +307,8 @@ class BrowserPoster:
     async def status(self) -> dict[str, bool]:
         return await self.run(self._status)
 
-    async def login(self, platform: Platform) -> None:
-        await self.run(self._login, platform)
+    async def login(self, platform: Platform) -> str:
+        return await self.run(self._login, platform)
 
     async def post(self, platform: Platform, caption: str, files: list[Path], submit: bool) -> str:
         return await self.run(self._post, platform, caption, files, submit)

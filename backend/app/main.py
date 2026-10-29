@@ -793,7 +793,7 @@ async def browser_status() -> dict:
     except Exception as exc:  # noqa: BLE001 - e.g. a window already open, or no display on a server
         return {"available": True, "error": browser.explain(exc), "signed_in": browser.poster.signed_in,
                 "scheduled": store.settings.browser_publish}
-    return {"available": True, "signed_in": signed_in, "needs_check": browser.poster.needs_check, "browser": browser.poster.channel,
+    return {"available": True, "signed_in": signed_in, "needs_check": browser.poster.needs_check, "signing_in": browser.poster.signing_in(), "browser": browser.poster.channel,
             "scheduled": store.settings.browser_publish and store.settings.auto_publish}
 
 
@@ -805,10 +805,14 @@ async def browser_login(platform: Platform) -> dict:
     if not browser.available():
         raise HTTPException(503, "Posting from the browser needs Playwright: pip install playwright && python -m playwright install chromium")
     try:
-        await browser.poster.login(platform)
+        how = await browser.poster.login(platform)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, browser.explain(exc)) from exc
-    return {"opened": True, "note": f"A browser window opened on {platform.value.title()}'s sign-in page. Sign in there, then come back."}
+    name = platform.value.title()
+    if how == "plain":
+        return {"opened": True, "note": f"A Chrome window opened on {name}'s sign-in page. Sign in there (answer any check it shows), "
+                                        "then close that window: MonoPlus notices the sign-in once it's closed."}
+    return {"opened": True, "note": f"A browser window opened on {name}'s sign-in page. Sign in there, then come back."}
 
 
 @app.post("/api/browser/sign-out")

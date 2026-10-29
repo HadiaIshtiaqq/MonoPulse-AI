@@ -156,6 +156,7 @@ def test_switching_on_browser_posting_switches_on_auto_posting():
 
 
 def test_sign_in_reuses_the_platforms_tab_and_spots_a_security_check(site, tmp_path, monkeypatch):
+    monkeypatch.setattr(browser, "installed_browser", lambda: "")  # no Chrome: the controlled window's path
     poster = browser.BrowserPoster(profile=tmp_path / "profile", headless=True)
     check_url = site.replace("feed.html", "auth_platform/recaptcha/")
     monkeypatch.setitem(browser.LOGIN, Platform.INSTAGRAM, check_url)
@@ -178,3 +179,38 @@ def test_the_window_never_hides_that_it_is_automated():
     import inspect
 
     assert "enable-automation" not in inspect.getsource(browser)
+
+
+
+def test_signing_in_opens_a_plain_browser_window_that_nothing_controls(tmp_path, monkeypatch):
+    """Human checks are for humans: sign-in happens in an ordinary browser window on MonoPlus's
+    profile, not in the remote-controlled one, and status waits until it's closed."""
+    import subprocess
+
+    launched = []
+
+    class FakeWindow:
+        def __init__(self, args):
+            launched.append(args)
+            self.open = True
+
+        def poll(self):
+            return None if self.open else 0
+
+        def terminate(self):
+            self.open = False
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(browser, "installed_browser", lambda: "C:/Chrome/chrome.exe")
+    monkeypatch.setattr(subprocess, "Popen", FakeWindow)
+    poster = browser.BrowserPoster(profile=tmp_path / "profile", headless=True)
+    poster.signed_in = {"instagram": False}
+    assert poster._login(Platform.INSTAGRAM) == "plain"
+    args = launched[0]
+    assert args[0] == "C:/Chrome/chrome.exe" and f"--user-data-dir={tmp_path / 'profile'}" in args
+    assert args[-1] == browser.LOGIN[Platform.INSTAGRAM] and not any("remote-debugging" in a or "automation" in a for a in args)
+    assert poster.signing_in() and poster._status() == {"instagram": False}  # no second browser on a profile in use
+    with pytest.raises(RuntimeError, match="sign-in window is still open"):
+        poster._context()

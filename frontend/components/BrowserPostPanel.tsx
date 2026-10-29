@@ -6,7 +6,7 @@ import { api, type SocialPost } from "@/lib/api";
 import { PLATFORM_META } from "@/components/PlatformIcon";
 import { useFeedback } from "@/components/Feedback";
 
-type Status = { available: boolean; signed_in: Record<string, boolean>; needs_check?: Record<string, boolean>; scheduled: boolean; error?: string };
+type Status = { available: boolean; signed_in: Record<string, boolean>; needs_check?: Record<string, boolean>; signing_in?: boolean; scheduled: boolean; error?: string };
 
 /** Post the way a person (or Claude) does: in a real browser where you're signed in. */
 export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; onChange: (p: SocialPost) => void; dirty: boolean }) {
@@ -25,7 +25,7 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
   }, []);
   useEffect(() => { check(); }, [check]);
 
-  // After "Sign in", watch for the sign-in to land (every 4 s, up to 5 minutes), so the post
+  // After "Sign in", watch for the sign-in to land (every 4 s, up to 15 minutes), so the post
   // buttons appear by themselves once you've signed in in the browser window.
   const [waiting, setWaiting] = useState(false);
   const stopAt = useRef(0);
@@ -50,7 +50,7 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
     try {
       const res = await api.browserLogin(post.platform);
       toast(res.note, "info");
-      stopAt.current = Date.now() + 5 * 60_000;
+      stopAt.current = Date.now() + 15 * 60_000; // signing in with a code or a check can take a while
       setWaiting(true);
     } catch (e) { toast((e as Error).message, "error"); }
     finally { setBusy(null); }
@@ -158,7 +158,7 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
           ) : null}
           {!signedIn && waiting && (
             <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
-              <Loader2 size={12} className="animate-spin" /> Waiting for you to finish signing in to {label} in the browser window…
+              <Loader2 size={12} className="animate-spin" /> {status.signing_in ? `Sign in to ${label} in the Chrome window, then close that window. MonoPlus checks as soon as it's closed.` : `Waiting for you to finish signing in to ${label} in the browser window…`}
             </p>
           )}
           {!signedIn ? null : (
