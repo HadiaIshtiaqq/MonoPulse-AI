@@ -68,7 +68,7 @@ INSTAGRAM_ACCOUNT_ID = _env("INSTAGRAM_ACCOUNT_ID")
 HEYGEN_API_KEY = _env("HEYGEN_API_KEY")  # AI presenters for UGC ads
 HF_TOKEN = _env("HF_TOKEN")  # a free Hugging Face account: a bigger share of the free GPUs that film AI scenes
 WHISPER_MODEL = _env("MONOPLUS_WHISPER_MODEL", "base")  # speech recognition for captions on real-person videos (base, small, medium)
-META_PAGE_NAME = _env("META_PAGE_NAME")  # shown in the app; set by Connections
+META_PAGE_NAME = _env("META_PAGE_NAME")  # shown in the app; written by "python -m app.connections meta"
 INSTAGRAM_USERNAME = _env("INSTAGRAM_USERNAME")
 GRAPH_API_VERSION = _env("GRAPH_API_VERSION", "v21.0")
 # LinkedIn: token with w_member_social (person) or w_organization_social (company page).

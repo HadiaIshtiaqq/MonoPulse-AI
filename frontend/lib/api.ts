@@ -29,13 +29,13 @@ export type UgcOverview = { formats: { key: string; label: string; blurb: string
   looks: { key: string; label: string }[]; captions: { key: string; label: string }[];
   scenes: { styles: { key: string; label: string }[]; huggingface: boolean; local: boolean };
   products: { index: number; name: string; price: string; image: string }[]; ads: UgcAd[] };
+export type ConnectionItem = { connected: boolean; env: string[] }; // env: the backend/.env settings it needs
 export type Connections = {
-  meta: { connected: boolean; page: string; instagram: string; instagram_ready: boolean; from_env: boolean };
-  nebius: { connected: boolean; from_env: boolean };
-  tavily: { connected: boolean; from_env: boolean };
-  heygen: { connected: boolean; from_env: boolean };
-  huggingface: { connected: boolean; from_env: boolean };
-  file: string;
+  meta: ConnectionItem & { page: string; instagram: string; instagram_ready: boolean };
+  nebius: ConnectionItem;
+  tavily: ConnectionItem;
+  heygen: ConnectionItem;
+  huggingface: ConnectionItem;
 };
 export type ReelResult = { post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string; topic: string; occasion: string };
 export type ReelPhoto = { url: string; label: string; price: string; remote: boolean };
@@ -487,10 +487,6 @@ export const api = {
   deleteUgc: (cid: string, id: string) => req<void>(`/api/campaigns/${cid}/ugc/${id}`, { method: "DELETE" }),
   attachUgc: (cid: string, id: string, postId: string) => req<SocialPost>(`/api/campaigns/${cid}/ugc/${id}/attach`, json("POST", { post_id: postId })),
   connections: () => req<Connections>("/api/connections"),
-  connectMeta: (body: { token: string; app_id?: string; app_secret?: string }) =>
-    req<Connections & { result: { page: string; instagram: string; lasting: boolean; note: string } }>("/api/connections/meta", json("PUT", body)),
-  saveKeys: (body: { nebius_api_key?: string; tavily_api_key?: string; heygen_api_key?: string; huggingface_token?: string }) => req<Connections>("/api/connections/keys", json("PUT", body)),
-  disconnect: (name: "meta" | "nebius" | "tavily" | "heygen" | "huggingface") => req<Connections>(`/api/connections/${name}`, { method: "DELETE" }),
   browserSignOut: () => req<{ signed_out: boolean }>("/api/browser/sign-out", { method: "POST" }),
   browserScheduled: (enabled: boolean) => req<{ scheduled: boolean }>("/api/browser/scheduled", json("PUT", { enabled })),
 

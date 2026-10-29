@@ -439,10 +439,19 @@ The server was verified with the official MCP Python SDK client, which negotiate
 ### 1. Configure the environment
 
 ```bash
-cp .env.example .env
+cp .env.example backend/.env
 ```
 
 Set at least `NEBIUS_API_KEY`. Add `TAVILY_API_KEY` for live search and `PEXELS_API_KEY` for instant stock photos. The default model ids are corrected automatically if your key offers different Nemotron versions.
+
+Every key and token lives only in `backend/.env`: the web app never asks for, sends or stores one, and its Connections page only shows what's connected and which lines to add. To check the keys you've set with their services (it prints "ok" or why not, never a key):
+
+```bash
+cd backend
+.venv/bin/python -m app.connections check      # Windows: .venv\Scripts\python
+```
+
+For Instagram and Facebook, put a Graph API Explorer user token in `META_USER_TOKEN` (and `META_APP_ID` and `META_APP_SECRET` so it lasts), then run `python -m app.connections meta`: it finds your Page and Instagram account and writes `META_ACCESS_TOKEN`, `META_PAGE_ID` and `INSTAGRAM_ACCOUNT_ID` into `backend/.env`.
 
 ### 2. Start the backend
 

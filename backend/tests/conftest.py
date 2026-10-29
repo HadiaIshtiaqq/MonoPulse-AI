@@ -9,7 +9,14 @@ import pytest
 # imported, so they never read or change the real campaigns and media.
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="monoplus-tests-")
 os.environ["MONOPLUS_BROWSER_PROFILE"] = os.path.join(os.environ["DATA_DIR"], "signed-in-profile")  # never your real sign-ins
-os.environ["MONOPLUS_CONNECTIONS_FILE"] = os.path.join(os.environ["DATA_DIR"], "connections.json")  # never your real keys
+# Never your real keys: each is set blank before the app loads backend/.env (which doesn't override
+# what's already set), so tests can't call a real service or post to a real account.
+for _key in ("NEBIUS_API_KEY", "TAVILY_API_KEY", "PEXELS_API_KEY", "HEYGEN_API_KEY", "HF_TOKEN", "MONOPLUS_ACCESS_KEY", "ACCESS_KEY",
+             "META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID", "META_PAGE_NAME", "INSTAGRAM_USERNAME", "META_USER_TOKEN",
+             "META_APP_ID", "META_APP_SECRET", "LINKEDIN_ACCESS_TOKEN", "X_USER_ACCESS_TOKEN", "PUBLISH_WEBHOOK_URL", "MCP_TOKEN",
+             "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+    os.environ[_key] = ""
+os.environ["AWS_BEDROCK_ENABLED"] = "0"
 os.environ["MONOPLUS_RATE_LIMITS"] = "0"  # tests call the API far faster than a person; one test turns limits on
 os.environ["MONOPLUS_REEL_PROCESSES"] = "0"  # in-process, so tests can shrink the frame rate; one test uses a worker process
 

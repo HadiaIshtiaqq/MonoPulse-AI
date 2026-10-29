@@ -13,7 +13,7 @@ const PAGES: Item[] = [
   { id: "research", label: "Research", hint: "Competitors, trends, strategy", group: "Go to", icon: FlaskConical, href: "/research" },
   { id: "humanizer", label: "Humanizer", hint: "Make AI copy sound human", group: "Go to", icon: Wand2, href: "/humanizer" },
   { id: "ugc", label: "UGC ads", hint: "Phone-style video ads and AI presenters", group: "Go to", icon: Clapperboard, href: "/ugc" },
-  { id: "connections", label: "Connections", hint: "Instagram, Facebook, AI and search keys", group: "Go to", icon: Plug, href: "/connections" },
+  { id: "connections", label: "Connections", hint: "What's connected, and how to set it up in .env", group: "Go to", icon: Plug, href: "/connections" },
 ];
 
 /** "https://www.brand.com/collections/x?utm=…" -> "brand.com" */

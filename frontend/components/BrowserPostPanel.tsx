@@ -137,8 +137,8 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
           </div>
           {!signedIn && (post.platform === "instagram" || post.platform === "facebook") && (
             <p className="mt-2 rounded-xl bg-brand-soft px-3 py-2 text-xs text-brand-700">
-              {label} keeps asking for a check or won&apos;t sign you in? Connect it officially instead: no browser, no captchas.{" "}
-              <Link href="/connections" className="font-semibold underline">Open Connections</Link>
+              {label} keeps asking for a check or won&apos;t sign you in? Connect it officially instead (set up in backend/.env): no browser, no captchas.{" "}
+              <Link href="/connections" className="font-semibold underline">How</Link>
             </p>
           )}
           {!signedIn && status.needs_check?.[post.platform] && (

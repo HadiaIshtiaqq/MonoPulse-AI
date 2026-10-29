@@ -88,7 +88,6 @@ async def lifespan(app: FastAPI):
 
 
 install_log_redaction()  # before anything logs: keys never reach a log line
-connections.load()  # keys you saved in the app (Connections) join the ones from .env
 
 app = FastAPI(title="MonoPlus", version="0.4.0", lifespan=lifespan)
 app.include_router(mcp_server.router)  # /mcp authenticates itself (Bearer token), see mcp_server._authorized
@@ -892,7 +891,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
         raise HTTPException(409, "The AI voice isn't installed on this computer: pip install piper-tts")
     if req.engine == "avatar":
         if not ugc.heygen_ready():
-            raise HTTPException(409, "Connect HeyGen on the Connections page to use AI presenters.")
+            raise HTTPException(409, "Add HEYGEN_API_KEY to backend/.env to use HeyGen presenters.")
         if not req.avatar_id:
             raise HTTPException(422, "Pick a presenter.")
     if sum(j["status"] == "running" for j in UGC_JOBS.values()) >= config.REEL_RENDERS + reels.MAX_WAITING:
@@ -1101,7 +1100,7 @@ async def ugc_job(job_id: str) -> dict:
 @app.get("/api/ugc/avatars")
 async def ugc_avatars() -> list[dict]:
     if not ugc.heygen_ready():
-        raise HTTPException(409, "Connect HeyGen on the Connections page to use AI presenters.")
+        raise HTTPException(409, "Add HEYGEN_API_KEY to backend/.env to use HeyGen presenters.")
     try:
         return await ugc.heygen_avatars()
     except ugc.UgcError as exc:
@@ -1269,67 +1268,9 @@ class BrowserPostRequest(BaseModel):
     media: str = "images"  # images | reel
 
 
-class MetaConnectRequest(BaseModel):
-    token: str
-    app_id: str = ""
-    app_secret: str = ""
-
-
-class KeysRequest(BaseModel):
-    nebius_api_key: str | None = None
-    tavily_api_key: str | None = None
-    heygen_api_key: str | None = None
-    huggingface_token: str | None = None
-
-
 @app.get("/api/connections")
 async def get_connections() -> dict:
-    """What's connected (never the keys themselves)."""
-    return connections.status()
-
-
-@app.put("/api/connections/meta")
-async def connect_meta(req: MetaConnectRequest) -> dict:
-    """Connect Instagram and the Facebook Page through Meta's official API: no browser sign-in, no captchas."""
-    try:
-        result = await connections.connect_meta(req.token, req.app_id, req.app_secret)
-    except connections.ConnectionError_ as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, f"Couldn't reach Meta: {exc}") from exc
-    return {**connections.status(), "result": result}
-
-
-@app.put("/api/connections/keys")
-async def save_keys(req: KeysRequest) -> dict:
-    """Save the Nemotron (Nebius) and Tavily keys, each checked with its service first."""
-    try:
-        if req.nebius_api_key:
-            await connections.check_nebius(req.nebius_api_key)
-            connections.save(NEBIUS_API_KEY=req.nebius_api_key.strip())
-        if req.tavily_api_key:
-            await connections.check_tavily(req.tavily_api_key)
-            connections.save(TAVILY_API_KEY=req.tavily_api_key.strip())
-        if req.heygen_api_key:
-            await ugc.heygen_check(req.heygen_api_key)
-            connections.save(HEYGEN_API_KEY=req.heygen_api_key.strip())
-        if req.huggingface_token:
-            await connections.check_huggingface(req.huggingface_token)
-            connections.save(HF_TOKEN=req.huggingface_token.strip())
-    except ugc.UgcError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except connections.ConnectionError_ as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(502, f"Couldn't reach the service: {exc}") from exc
-    return connections.status()
-
-
-@app.delete("/api/connections/{name}")
-def disconnect(name: str) -> dict:
-    if name not in ("meta", "nebius", "tavily", "heygen", "huggingface"):
-        raise HTTPException(404, "Unknown connection.")
-    connections.disconnect(name)
+    """What's connected and which .env settings each needs (never a value). Keys are set only in the backend's .env."""
     return connections.status()
 
 

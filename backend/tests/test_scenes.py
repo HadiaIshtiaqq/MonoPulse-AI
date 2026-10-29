@@ -93,7 +93,7 @@ def test_the_next_free_gpu_is_tried_and_quota_is_explained(tmp_path, monkeypatch
     assert not (tmp_path / "shot.start.jpg").exists()  # the start frame is cleaned up
 
     _fake_gradio(monkeypatch, {s: busy for s in scenes.SPACES})
-    with pytest.raises(scenes.SceneError, match="Connect a free Hugging Face account"):
+    with pytest.raises(scenes.SceneError, match="HF_TOKEN in backend/.env"):
         scenes.generate(str(photo), scenes.Scene("x"), "worn", 1, tmp_path / "shot2.mp4")
     calls = _fake_gradio(monkeypatch, {s: busy for s in scenes.SPACES})
     monkeypatch.setattr(config, "HF_TOKEN", "hf_" + "a" * 34)

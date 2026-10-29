@@ -1,7 +1,5 @@
-"""Connecting services in the app: checked before saving, kept outside the project, never sent back."""
-import json
-import os
-
+"""Keys live only in the backend's .env: the web app can see what's connected but can't send, save
+or read a key, and the Meta helper writes its token into .env without ever printing it."""
 import httpx
 from fastapi.testclient import TestClient
 
@@ -32,49 +30,71 @@ def mock_meta(monkeypatch, pages):
     return seen
 
 
-def test_instagram_connects_through_the_official_api_and_the_token_never_comes_back(monkeypatch):
-    for k in ("META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID", "META_PAGE_NAME", "INSTAGRAM_USERNAME"):
-        monkeypatch.setattr(config, k, "")
+def test_the_page_sees_what_is_connected_but_never_a_key(monkeypatch):
     monkeypatch.setattr(config, "ACCESS_KEY", "")
+    monkeypatch.setattr(config, "NEBIUS_API_KEY", "nb-secret-key-987654321")
+    monkeypatch.setattr(config, "HF_TOKEN", "")
+    with TestClient(app) as client:
+        r = client.get("/api/connections")
+        assert r.status_code == 200 and "nb-secret-key-987654321" not in r.text
+        body = r.json()
+        assert body["nebius"] == {"connected": True, "env": ["NEBIUS_API_KEY"]}
+        assert body["huggingface"]["connected"] is False and body["huggingface"]["env"] == ["HF_TOKEN"]
+        # Nothing on the API takes a key any more.
+        assert client.put("/api/connections/keys", json={"nebius_api_key": "x"}).status_code in (404, 405)
+        assert client.put("/api/connections/meta", json={"token": "x"}).status_code in (404, 405)
+        assert client.delete("/api/connections/nebius").status_code in (404, 405)
+    assert config.NEBIUS_API_KEY == "nb-secret-key-987654321"
+
+
+def test_the_meta_helper_writes_the_page_token_into_env_and_never_prints_it(monkeypatch, tmp_path, capsys):
+    env = tmp_path / ".env"
+    env.write_text("# my settings\nNEBIUS_API_KEY=keep-me\nMETA_USER_TOKEN=short-user-token\nMETA_ACCESS_TOKEN=\n", encoding="utf-8")
+    monkeypatch.setattr(connections, "ENV_FILE", env)
+    monkeypatch.setenv("META_USER_TOKEN", "short-user-token")
+    monkeypatch.setenv("META_APP_ID", "123")
+    monkeypatch.setenv("META_APP_SECRET", "app-secret-xyz")
     seen = mock_meta(monkeypatch, [{"id": "1", "name": "Other Page", "access_token": "x"},
                                    {"id": "42", "name": "Outfitters", "access_token": PAGE_TOKEN,
                                     "instagram_business_account": {"id": "1789", "username": "outfitterspk"}}])
-    with TestClient(app) as client:
-        r = client.put("/api/connections/meta", json={"token": "short-user-token", "app_id": "123", "app_secret": "app-secret-xyz"})
-        assert r.status_code == 200, r.text
-        body = r.json()
-        assert body["meta"]["connected"] and body["meta"]["instagram"] == "outfitterspk" and body["result"]["lasting"]
-        assert PAGE_TOKEN not in r.text and "app-secret-xyz" not in r.text
-        assert PAGE_TOKEN not in client.get("/api/connections").text
-    assert config.META_ACCESS_TOKEN == PAGE_TOKEN and config.INSTAGRAM_ACCOUNT_ID == "1789" and config.META_PAGE_ID == "42"
-    saved = connections._read()
-    assert saved["META_ACCESS_TOKEN"] == PAGE_TOKEN and "app_secret" not in json.dumps(saved)
-    on_disk = connections.path().read_text(encoding="utf-8")
-    if os.name == "nt":  # encrypted for this Windows account: the token isn't in the file as text
-        assert PAGE_TOKEN not in on_disk and "dpapi" in json.loads(on_disk)
+    assert connections.main(["meta"]) == 0
+    out = capsys.readouterr().out
+    assert "Outfitters" in out and "@outfitterspk" in out and "lasting" in out
+    assert PAGE_TOKEN not in out and "app-secret-xyz" not in out and "short-user-token" not in out
+    text = env.read_text(encoding="utf-8")
+    assert f"META_ACCESS_TOKEN={PAGE_TOKEN}" in text and "META_PAGE_ID=42" in text and "INSTAGRAM_ACCOUNT_ID=1789" in text
+    assert "# my settings" in text and "NEBIUS_API_KEY=keep-me" in text  # the rest of the file is untouched
+    assert "META_USER_TOKEN=\n" in text  # the short-lived token is cleared once used
+    assert text.count("META_ACCESS_TOKEN=") == 1
     assert all("app-secret-xyz" not in str(req.url) for req in seen)  # the secret went in a body, never a URL
-    assert not str(connections.path()).startswith(str(config.DATA_DIR.parent.parent / "MonoPlus" / "backend"))
 
 
-def test_a_bad_token_or_key_is_refused_and_nothing_is_saved(monkeypatch):
-    monkeypatch.setattr(config, "META_ACCESS_TOKEN", "")
-    monkeypatch.setattr(config, "NEBIUS_API_KEY", "")
-    monkeypatch.setattr(config, "ACCESS_KEY", "")
+def test_a_bad_meta_token_changes_nothing(monkeypatch, tmp_path, capsys):
+    env = tmp_path / ".env"
+    env.write_text("META_USER_TOKEN=bad\n", encoding="utf-8")
+    monkeypatch.setattr(connections, "ENV_FILE", env)
+    monkeypatch.setenv("META_USER_TOKEN", "bad")
+    monkeypatch.delenv("META_APP_ID", raising=False)
     mock_meta(monkeypatch, [])
-    with TestClient(app) as client:
-        r = client.put("/api/connections/meta", json={"token": "bad"})
-        assert r.status_code == 400 and "Invalid OAuth" in r.json()["detail"]
-        r = client.put("/api/connections/keys", json={"nebius_api_key": "nb-wrong"})
-        assert r.status_code == 400 and not config.NEBIUS_API_KEY
-        r = client.put("/api/connections/keys", json={"nebius_api_key": "nb-good-key-123"})
-        assert r.status_code == 200 and r.json()["nebius"]["connected"] and "nb-good-key-123" not in r.text
-        assert config.NEBIUS_API_KEY == "nb-good-key-123"
-        assert client.delete("/api/connections/nebius").json()["nebius"]["connected"] is False
-    assert not config.NEBIUS_API_KEY
+    assert connections.main(["meta"]) == 1
+    assert "Invalid OAuth" in capsys.readouterr().out
+    assert env.read_text(encoding="utf-8") == "META_USER_TOKEN=bad\n"
 
 
-def test_connections_are_only_managed_from_this_computer(monkeypatch):
+def test_checking_keys_says_ok_or_why_not_and_never_shows_them(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(config, "NEBIUS_API_KEY", "nb-wrong")
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "")
+    monkeypatch.setattr(config, "HEYGEN_API_KEY", "")
+    monkeypatch.setattr(config, "HF_TOKEN", "")
+    mock_meta(monkeypatch, [])
+    results = dict(asyncio.run(connections.check_all()))
+    assert "didn't accept" in results["Nemotron on Nebius (NEBIUS_API_KEY)"] and results["Tavily (TAVILY_API_KEY)"] == "not set"
+    assert not any("nb-wrong" in r for r in results.values())
+
+
+def test_connections_are_only_shown_to_this_computer(monkeypatch):
     monkeypatch.setattr(config, "ACCESS_KEY", "")
     with TestClient(app, client=("203.0.113.9", 5000)) as remote:
         assert remote.get("/api/connections").status_code == 403
-        assert remote.put("/api/connections/keys", json={"nebius_api_key": "x"}).status_code == 403

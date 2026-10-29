@@ -285,7 +285,7 @@ function Studio() {
                     Each shot starts from your product photo and is filmed by Wan 2.2, an open-source video model, on Hugging Face&apos;s free GPUs: about a
                     minute per shot. Only the photo and the shot description are sent.{" "}
                     {info.scenes.huggingface ? "Your free Hugging Face account is connected for a bigger share." : (
-                      <>Without an account the free share covers only a few shots: <Link href="/connections" className="link">connect a free Hugging Face account</Link> for more.</>
+                      <>Without an account the free share covers only a few shots: add a free Hugging Face token as <code>HF_TOKEN</code> in backend/.env for more (<Link href="/connections" className="link">how</Link>).</>
                     )}{" "}
                     If the share runs out mid-ad, the shots already filmed carry the rest.
                     {style === "worn" && <> When an ad shows AI-generated people, turn on the platform&apos;s &ldquo;AI-generated&rdquo; label when you post.</>}
@@ -363,7 +363,7 @@ function Studio() {
               )}
               {engine === "avatar" && !info.heygen && (
                 <p className="mt-3 rounded-xl bg-brand-soft px-3 py-2 text-xs text-brand-700">
-                  Connect HeyGen first: <Link href="/connections" className="font-semibold underline">Open Connections</Link>.
+                  Add <code>HEYGEN_API_KEY</code> to backend/.env first: <Link href="/connections" className="font-semibold underline">how</Link>.
                 </p>
               )}
               {engine === "avatar" && info.heygen && (

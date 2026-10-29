@@ -1,119 +1,45 @@
-"""Connections you set up in the app instead of in a .env file: the official Instagram/Facebook
-connection, the Nemotron (Nebius) key and the Tavily search key.
+"""What MonoPlus is connected to. Every key and token lives in the backend's .env file and nowhere
+else: the web app never sees, sends or stores one. It only hears which services are set up.
 
-They're kept in a file on this computer, outside the project folder (next to MonoPlus's browser
-profile), so they're never committed or copied with the project, and encrypted with Windows' own
-protection (DPAPI) so only your Windows account can read them. A setting in the environment
-(.env) wins over the file. Values are checked with the service before they're saved, never sent
-back to the page (only "connected" and names), and hidden from logs and errors by redact.py,
-which reads them from config.
+Two commands help fill the .env file, run from the backend folder:
+
+    .venv\\Scripts\\python -m app.connections check   # checks each key that's set with its service
+    .venv\\Scripts\\python -m app.connections meta    # turns META_USER_TOKEN into the lasting Page connection
+
+Neither prints a key. Values are hidden from logs and errors by redact.py, which reads them from config.
 """
 from __future__ import annotations
 
-import base64
-import json
-import logging
-import os
+import asyncio
+import re
+import sys
 from pathlib import Path
 
 import httpx
 
 from . import config
 
-log = logging.getLogger(__name__)
-
-KEYS = ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HEYGEN_API_KEY", "HF_TOKEN", "META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID",
-        "META_PAGE_NAME", "INSTAGRAM_USERNAME")
-_from_env = {k: bool(os.environ.get(k)) for k in KEYS}
-
-
-def path() -> Path:
-    return Path(os.environ.get("MONOPLUS_CONNECTIONS_FILE") or config.BROWSER_PROFILE_DIR.parent / "connections.json")
-
-
-def _dpapi(data: bytes, protect: bool) -> bytes:
-    """Windows' own encryption for a user's secrets (DPAPI): only this Windows account on this
-    computer can read them back, so a copied file is useless."""
-    import ctypes
-    from ctypes import wintypes
-
-    class Blob(ctypes.Structure):
-        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
-
-    buf = ctypes.create_string_buffer(data, len(data))
-    src, out = Blob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char))), Blob()
-    crypt32 = ctypes.windll.crypt32
-    fn = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
-    if not fn(ctypes.byref(src), None, None, None, None, 0x01, ctypes.byref(out)):  # 0x01: no UI prompts
-        raise OSError("Windows couldn't " + ("encrypt" if protect else "decrypt") + " the saved connections.")
-    try:
-        return ctypes.string_at(out.pbData, out.cbData)
-    finally:
-        ctypes.windll.kernel32.LocalFree(out.pbData)
-
-
-def _read() -> dict:
-    try:
-        data = json.loads(path().read_text(encoding="utf-8"))
-        if "dpapi" in data:  # saved encrypted
-            data = json.loads(_dpapi(base64.b64decode(data["dpapi"]), protect=False))
-        return {k: str(v) for k, v in data.items() if k in KEYS and v}
-    except (OSError, ValueError):
-        return {}
-
-
-def load() -> None:
-    """Apply saved connections to the running settings (an environment value always wins)."""
-    for k, v in _read().items():
-        if not _from_env.get(k):
-            setattr(config, k, v)
-
-
-def _write(data: dict) -> None:
-    p = path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    text = json.dumps({k: v for k, v in data.items() if v}, indent=2)
-    if os.name == "nt":
-        text = json.dumps({"dpapi": base64.b64encode(_dpapi(text.encode(), protect=True)).decode()})
-    tmp.write_text(text, encoding="utf-8")
-    if os.name != "nt":
-        tmp.chmod(0o600)  # readable by your user only
-    tmp.replace(p)
-
-
-def save(**values: str) -> None:
-    data = _read()
-    for k, v in values.items():
-        assert k in KEYS, k
-        data[k] = v or ""
-        if not _from_env.get(k):
-            setattr(config, k, v or "")
-    _write(data)
-    _reset_clients()
-
-
-def _reset_clients() -> None:
-    """Clients built with the old key are dropped, so the next call uses the new one."""
-    from .agents import trends
-    from .llm import router
-
-    router._client, router._resolved = None, False
-    trends._client = None
+ENV_FILE = config.BACKEND_DIR / ".env"
+# What each connection needs in .env, for the Connections page to show.
+NEEDS = {
+    "meta": ("META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID"),
+    "nebius": ("NEBIUS_API_KEY",),
+    "tavily": ("TAVILY_API_KEY",),
+    "heygen": ("HEYGEN_API_KEY",),
+    "huggingface": ("HF_TOKEN",),
+}
 
 
 def status() -> dict:
-    """What's connected, without a single secret in it."""
+    """What's connected, and the .env settings each one needs. Never a value."""
     return {
         "meta": {"connected": bool(config.META_ACCESS_TOKEN and (config.INSTAGRAM_ACCOUNT_ID or config.META_PAGE_ID)),
                  "page": getattr(config, "META_PAGE_NAME", "") or "", "instagram": getattr(config, "INSTAGRAM_USERNAME", "") or "",
-                 "instagram_ready": bool(config.META_ACCESS_TOKEN and config.INSTAGRAM_ACCOUNT_ID),
-                 "from_env": _from_env["META_ACCESS_TOKEN"]},
-        "nebius": {"connected": bool(config.NEBIUS_API_KEY), "from_env": _from_env["NEBIUS_API_KEY"]},
-        "tavily": {"connected": bool(config.TAVILY_API_KEY), "from_env": _from_env["TAVILY_API_KEY"]},
-        "heygen": {"connected": bool(config.HEYGEN_API_KEY), "from_env": _from_env["HEYGEN_API_KEY"]},
-        "huggingface": {"connected": bool(config.HF_TOKEN), "from_env": _from_env["HF_TOKEN"]},
-        "file": str(path()),
+                 "instagram_ready": bool(config.META_ACCESS_TOKEN and config.INSTAGRAM_ACCOUNT_ID), "env": list(NEEDS["meta"])},
+        "nebius": {"connected": bool(config.NEBIUS_API_KEY), "env": list(NEEDS["nebius"])},
+        "tavily": {"connected": bool(config.TAVILY_API_KEY), "env": list(NEEDS["tavily"])},
+        "heygen": {"connected": bool(config.HEYGEN_API_KEY), "env": list(NEEDS["heygen"])},
+        "huggingface": {"connected": bool(config.HF_TOKEN), "env": list(NEEDS["huggingface"])},
     }
 
 
@@ -121,55 +47,7 @@ class ConnectionError_(RuntimeError):
     pass
 
 
-def _graph(p: str) -> str:
-    return f"https://graph.facebook.com/{config.GRAPH_API_VERSION}/{p.lstrip('/')}"
-
-
-def _meta_error(resp: httpx.Response) -> str:
-    try:
-        err = resp.json().get("error") or {}
-        return err.get("error_user_msg") or err.get("message") or resp.text[:200]
-    except ValueError:
-        return resp.text[:200]
-
-
-async def connect_meta(user_token: str, app_id: str = "", app_secret: str = "") -> dict:
-    """Turn a Meta user access token into a lasting connection: find the Facebook Page you manage
-    and the Instagram Business/Creator account linked to it, and keep the Page's token.
-
-    With the app's id and secret, the token is first exchanged for a long-lived one, so the Page
-    token never expires; without them it lasts as long as the token you pasted (about an hour
-    from the Graph API Explorer)."""
-    token = user_token.strip()
-    if not token:
-        raise ConnectionError_("Paste an access token first.")
-    async with httpx.AsyncClient(timeout=20) as client:
-        lasting = False
-        if app_id.strip() and app_secret.strip():
-            # In the request body, not the URL, so the secret can't turn up in an address or an error message.
-            r = await client.post(_graph("oauth/access_token"), data={
-                "grant_type": "fb_exchange_token", "client_id": app_id.strip(), "client_secret": app_secret.strip(),
-                "fb_exchange_token": token})
-            if r.status_code != 200:
-                raise ConnectionError_(f"Meta didn't accept the app id and secret: {_meta_error(r)}")
-            token, lasting = r.json().get("access_token", token), True
-        r = await client.get(_graph("me/accounts"), params={"fields": "name,access_token,instagram_business_account{id,username}"},
-                             headers={"Authorization": f"Bearer {token}"})
-        if r.status_code != 200:
-            raise ConnectionError_(f"Meta didn't accept that token: {_meta_error(r)}")
-        pages = r.json().get("data") or []
-    if not pages:
-        raise ConnectionError_("That token doesn't manage any Facebook Page. It needs the pages_show_list and pages_manage_posts "
-                               "permissions, and an Instagram account linked to the Page.")
-    page = next((p for p in pages if p.get("instagram_business_account")), pages[0])
-    ig = page.get("instagram_business_account") or {}
-    save(META_ACCESS_TOKEN=page.get("access_token") or token, META_PAGE_ID=str(page.get("id", "")),
-         INSTAGRAM_ACCOUNT_ID=str(ig.get("id", "")), META_PAGE_NAME=str(page.get("name", "")),
-         INSTAGRAM_USERNAME=str(ig.get("username", "")))
-    return {"page": page.get("name", ""), "instagram": ig.get("username", ""), "lasting": lasting,
-            "note": "" if ig else "Connected to the Facebook Page, but no Instagram Business or Creator account is linked to it. "
-                                  "Link one in the Page's settings, then connect again."}
-
+# --------------------------------------------------------------------------- checking keys
 
 async def check_nebius(key: str) -> None:
     async with httpx.AsyncClient(timeout=20) as client:
@@ -194,7 +72,119 @@ async def check_huggingface(token: str) -> None:
         raise ConnectionError_("Hugging Face didn't accept that token." + ("" if r.status_code in (401, 403) else f" (HTTP {r.status_code})"))
 
 
-def disconnect(name: str) -> None:
-    keys = {"meta": ("META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID", "META_PAGE_NAME", "INSTAGRAM_USERNAME"),
-            "nebius": ("NEBIUS_API_KEY",), "tavily": ("TAVILY_API_KEY",), "heygen": ("HEYGEN_API_KEY",), "huggingface": ("HF_TOKEN",)}[name]
-    save(**{k: "" for k in keys})
+async def check_all() -> list[tuple[str, str]]:
+    """(service, "ok" | why not) for each key that's set."""
+    from .agents import ugc
+
+    checks = [("Nemotron on Nebius (NEBIUS_API_KEY)", config.NEBIUS_API_KEY, check_nebius),
+              ("Tavily (TAVILY_API_KEY)", config.TAVILY_API_KEY, check_tavily),
+              ("HeyGen (HEYGEN_API_KEY)", config.HEYGEN_API_KEY, ugc.heygen_check),
+              ("Hugging Face (HF_TOKEN)", config.HF_TOKEN, check_huggingface)]
+    out = []
+    for name, key, check in checks:
+        if not key:
+            out.append((name, "not set"))
+            continue
+        try:
+            await check(key)
+            out.append((name, "ok"))
+        except (ConnectionError_, ugc.UgcError) as exc:
+            out.append((name, str(exc)))
+        except httpx.HTTPError as exc:
+            out.append((name, f"couldn't reach the service ({type(exc).__name__})"))
+    return out
+
+
+# --------------------------------------------------------------------------- the Meta connection
+
+def _graph(p: str) -> str:
+    return f"https://graph.facebook.com/{config.GRAPH_API_VERSION}/{p.lstrip('/')}"
+
+
+def _meta_error(resp: httpx.Response) -> str:
+    try:
+        err = resp.json().get("error") or {}
+        return err.get("error_user_msg") or err.get("message") or resp.text[:200]
+    except ValueError:
+        return resp.text[:200]
+
+
+async def connect_meta(user_token: str, app_id: str = "", app_secret: str = "") -> dict:
+    """Turn a Meta user access token into a lasting connection: find the Facebook Page you manage
+    and the Instagram Business/Creator account linked to it, and return the settings for .env.
+
+    With the app's id and secret, the token is first exchanged for a long-lived one, so the Page
+    token never expires; without them it lasts as long as the token given (about an hour from the
+    Graph API Explorer)."""
+    token = user_token.strip()
+    if not token:
+        raise ConnectionError_("Set META_USER_TOKEN in backend/.env first.")
+    async with httpx.AsyncClient(timeout=20) as client:
+        lasting = False
+        if app_id.strip() and app_secret.strip():
+            # In the request body, not the URL, so the secret can't turn up in an address or an error message.
+            r = await client.post(_graph("oauth/access_token"), data={
+                "grant_type": "fb_exchange_token", "client_id": app_id.strip(), "client_secret": app_secret.strip(),
+                "fb_exchange_token": token})
+            if r.status_code != 200:
+                raise ConnectionError_(f"Meta didn't accept the app id and secret: {_meta_error(r)}")
+            token, lasting = r.json().get("access_token", token), True
+        r = await client.get(_graph("me/accounts"), params={"fields": "name,access_token,instagram_business_account{id,username}"},
+                             headers={"Authorization": f"Bearer {token}"})
+        if r.status_code != 200:
+            raise ConnectionError_(f"Meta didn't accept that token: {_meta_error(r)}")
+        pages = r.json().get("data") or []
+    if not pages:
+        raise ConnectionError_("That token doesn't manage any Facebook Page. It needs the pages_show_list and pages_manage_posts "
+                               "permissions, and an Instagram account linked to the Page.")
+    page = next((p for p in pages if p.get("instagram_business_account")), pages[0])
+    ig = page.get("instagram_business_account") or {}
+    return {"settings": {"META_ACCESS_TOKEN": page.get("access_token") or token, "META_PAGE_ID": str(page.get("id", "")),
+                         "INSTAGRAM_ACCOUNT_ID": str(ig.get("id", "")), "META_PAGE_NAME": str(page.get("name", "")),
+                         "INSTAGRAM_USERNAME": str(ig.get("username", ""))},
+            "page": page.get("name", ""), "instagram": ig.get("username", ""), "lasting": lasting,
+            "note": "" if ig else "Connected to the Facebook Page, but no Instagram Business or Creator account is linked to it. "
+                                  "Link one in the Page's settings, then run this again."}
+
+
+def write_env(values: dict[str, str], path: Path = ENV_FILE) -> None:
+    """Set these lines in the .env file, keeping everything else in it as it was."""
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    left = dict(values)
+    for i, line in enumerate(lines):
+        m = re.match(r"^\s*([A-Z0-9_]+)\s*=", line)
+        if m and m.group(1) in left:
+            lines[i] = f"{m.group(1)}={left.pop(m.group(1))}"
+    lines += [f"{k}={v}" for k, v in left.items()]
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def main(argv: list[str]) -> int:
+    import os
+
+    if argv[:1] == ["check"]:
+        for name, result in asyncio.run(check_all()):
+            print(f"{name}: {result}")
+        return 0
+    if argv[:1] == ["meta"]:
+        try:
+            result = asyncio.run(connect_meta(os.environ.get("META_USER_TOKEN", ""), os.environ.get("META_APP_ID", ""),
+                                              os.environ.get("META_APP_SECRET", "")))
+        except (ConnectionError_, httpx.HTTPError) as exc:
+            print(f"Not connected: {exc}")
+            return 1
+        write_env({**result["settings"], "META_USER_TOKEN": ""}, ENV_FILE)  # the short-lived token is no longer needed
+        print(f"Connected the Facebook Page {result['page']!r}" + (f" and Instagram @{result['instagram']}" if result["instagram"] else "")
+              + (", lasting" if result["lasting"] else ", for about an hour (add META_APP_ID and META_APP_SECRET for a lasting one)")
+              + f". Saved to {ENV_FILE}. Restart MonoPlus to use it.")
+        if result["note"]:
+            print(result["note"])
+        return 0
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

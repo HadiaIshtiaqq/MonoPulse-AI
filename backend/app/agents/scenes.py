@@ -4,8 +4,8 @@ Higgsfield ads, for free.
 Each line of the script gets its own shot: the product photo is the first frame, and an open-source
 image-to-video model (Wan 2.2, Apache-2.0) makes it move: the model turns in the outfit, a hand
 smooths the cream on, steam rises off the burger. The model runs on Hugging Face's free ZeroGPU
-hardware (this computer has no GPU for it); a free Hugging Face account, connected on the
-Connections page, gets a bigger daily share. Only the product photo and the shot description are
+hardware (this computer has no GPU for it); a free Hugging Face account (HF_TOKEN in
+backend/.env) gets a bigger daily share. Only the product photo and the shot description are
 sent, nothing else about the brand.
 
 Faceless ads keep faces out of every shot: the photo is cropped below the shoulders and the shots
@@ -297,5 +297,5 @@ def generate(photo: str, scene: Scene, style: str, seed: int, out: Path) -> Path
     if quota:
         raise SceneError("Hugging Face's free video GPUs are busy or today's free share is used up. "
                          + ("Try again in a while." if config.HF_TOKEN else
-                            "Connect a free Hugging Face account on the Connections page for a bigger share, or try again later."))
+                            "Add a free Hugging Face token (HF_TOKEN in backend/.env) for a bigger share, or film with the 3D camera."))
     raise SceneError(f"The AI video model couldn't film this shot right now: {errors[-1] if errors else 'no response'}")
