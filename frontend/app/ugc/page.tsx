@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Bot, Camera, Check, Clapperboard, Download, Film, Loader2, Mic, Plus, Sparkles, Trash2, Upload, Wand2, X } from "lucide-react";
-import { api, media, type Campaign, type CampaignSummary, type UgcAd, type UgcAvatar, type UgcOverview } from "@/lib/api";
+import { api, media, type Campaign, type CampaignSummary, type UgcAd, type UgcAvatar, type UgcOverview, type UgcVoice } from "@/lib/api";
 import { useFeedback } from "@/components/Feedback";
 import { Recorder } from "@/components/Recorder";
 
@@ -24,7 +24,10 @@ function Studio() {
   const [format, setFormat] = useState("pov");
   const [lines, setLines] = useState<string[]>([]);
   const [writing, setWriting] = useState(false);
-  const [engine, setEngine] = useState<"builtin" | "person" | "avatar">("builtin");
+  const [engine, setEngine] = useState<"builtin" | "presenter" | "person" | "avatar">("presenter");
+  const [language, setLanguage] = useState("en");
+  const [voiceKey, setVoiceKey] = useState("");
+  const [character, setCharacter] = useState("amna");
   const [look, setLook] = useState("");
   const [captionStyle, setCaptionStyle] = useState("");
   const [voice, setVoice] = useState(false);
@@ -59,12 +62,21 @@ function Studio() {
 
   async function writeScript() {
     setWriting(true);
-    try { setLines((await api.ugcScript(cid, { product, format })).lines); }
+    try { setLines((await api.ugcScript(cid, { product, format, language })).lines); }
     catch (e) { toast((e as Error).message, "error"); }
     finally { setWriting(false); }
   }
   // A fresh script whenever the product or format changes.
-  useEffect(() => { if (info?.products.length) writeScript(); }, [product, format, info?.products.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (info?.products.length) writeScript(); }, [product, format, language, info?.products.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The voice follows the script's language and the presenter, until you pick one yourself.
+  const [voicePicked, setVoicePicked] = useState(false);
+  useEffect(() => {
+    if (voicePicked || !info) return;
+    const gender = engine === "presenter" ? info.presenters.find((p) => p.key === character)?.gender ?? "female" : "female";
+    const lang = language === "ur" ? "ur" : "en";
+    const match = info.voices.find((v) => v.language === lang && v.gender === gender && v.clear) ?? info.voices[0];
+    if (match) setVoiceKey(match.key);
+  }, [info, language, character, engine, voicePicked]);
 
   async function make() {
     setJob({ step: "Starting" });
@@ -72,9 +84,10 @@ function Studio() {
       const ad = await api.makeUgc(cid, {
         product, format, lines: lines.filter((l) => l.trim()), engine, avatar_id: avatar?.id, avatar_name: avatar?.name,
         look, caption: captionStyle, voice: engine === "builtin" && voice, footage: footage?.id,
+        voice_key: voiceKey || undefined, character: engine === "presenter" ? character : undefined, language,
       }, (step) => setJob({ step }));
       setInfo((i) => (i ? { ...i, ads: [ad, ...i.ads] } : i));
-      toast(engine === "avatar" ? "Your AI presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
+      toast(engine === "avatar" || engine === "presenter" ? "Your presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
     } catch (e) { toast((e as Error).message, "error"); }
     finally { setJob(null); }
   }
@@ -141,13 +154,18 @@ function Studio() {
             <section className="card p-5">
               <div className="mb-3 flex items-center justify-between">
                 <p className="label">3. Script</p>
-                <button onClick={writeScript} disabled={writing} className="btn-ghost btn-sm">{writing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />} Write again</button>
+                <div className="flex items-center gap-2">
+                  <div className="seg">
+                    {info.languages.map((l) => <button key={l.key} data-active={language === l.key} onClick={() => setLanguage(l.key)}>{l.label}</button>)}
+                  </div>
+                  <button onClick={writeScript} disabled={writing} className="btn-ghost btn-sm">{writing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />} Write again</button>
+                </div>
               </div>
               <div className="space-y-2">
                 {lines.map((l, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <span className="w-5 shrink-0 text-right text-xs text-slate-400">{i + 1}</span>
-                    <input className="input" value={l} maxLength={140} onChange={(e) => setLines(lines.map((x, j) => (j === i ? e.target.value : x)))} />
+                    <input className="input" dir="auto" value={l} maxLength={140} onChange={(e) => setLines(lines.map((x, j) => (j === i ? e.target.value : x)))} />
                     <button onClick={() => setLines(lines.filter((_, j) => j !== i))} className="rounded p-1.5 text-slate-400 hover:text-red-600" title="Remove line"><X size={14} /></button>
                   </div>
                 ))}
@@ -162,6 +180,10 @@ function Studio() {
             <section className="card p-5">
               <p className="label mb-3">4. How it&apos;s made</p>
               <div className="grid gap-2 sm:grid-cols-3">
+                <button onClick={() => setEngine("presenter")} className={`rounded-xl border p-4 text-left ${engine === "presenter" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
+                  <p className="flex items-center gap-2 font-semibold"><Bot size={16} /> AI presenter</p>
+                  <p className="mt-1 text-xs text-slate-600">An illustrated presenter speaks your script with lip-sync, beside your product. Free, made on this computer.</p>
+                </button>
                 <button onClick={() => setEngine("builtin")} className={`rounded-xl border p-4 text-left ${engine === "builtin" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
                   <p className="flex items-center gap-2 font-semibold"><Film size={16} /> Product video</p>
                   <p className="mt-1 text-xs text-slate-600">Your product photo filmed phone-style, a new look every time, with an optional AI voice. Free, about 15 seconds.</p>
@@ -170,11 +192,30 @@ function Studio() {
                   <p className="flex items-center gap-2 font-semibold"><Camera size={16} /> Real person</p>
                   <p className="mt-1 text-xs text-slate-600">Record yourself (teleprompter included) or upload a clip. MonoPlus captions it, adds the product and an end card. Free.</p>
                 </button>
-                <button onClick={() => setEngine("avatar")} className={`rounded-xl border p-4 text-left ${engine === "avatar" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
-                  <p className="flex items-center gap-2 font-semibold"><Bot size={16} /> AI presenter</p>
-                  <p className="mt-1 text-xs text-slate-600">A realistic AI person speaks your script in front of the product (HeyGen). Takes a few minutes; uses your HeyGen credits.</p>
-                </button>
               </div>
+              {info.heygen && (
+                <button onClick={() => setEngine("avatar")} className={`mt-2 w-full rounded-xl border px-4 py-2.5 text-left text-xs ${engine === "avatar" ? "border-brand bg-brand-soft" : "border-slate-200 text-slate-600"}`}>
+                  <span className="font-semibold">Realistic presenter (HeyGen, paid)</span> · you connected HeyGen, so its realistic presenters are available too.
+                </button>
+              )}
+              {engine === "presenter" && (
+                <div className="mt-4 space-y-3">
+                  <p className="text-xs font-medium text-slate-600">Choose a presenter</p>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                    {info.presenters.map((p) => (
+                      <button key={p.key} onClick={() => setCharacter(p.key)} title={p.name}
+                        className={`overflow-hidden rounded-xl border-2 bg-[#EEECFA] ${character === p.key ? "border-brand" : "border-transparent hover:border-slate-200"}`}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={media(p.preview)} alt={p.name} className="aspect-square w-full object-cover" />
+                        <p className="py-1 text-center text-[11px] font-medium">{p.name}</p>
+                      </button>
+                    ))}
+                  </div>
+                  <VoicePicker voices={info.voices} value={voiceKey} onChange={(k) => { setVoiceKey(k); setVoicePicked(true); }} language={language} />
+                  <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions]} />
+                  <p className="text-xs text-slate-500">The presenter is an illustrated, fictional character: lips follow the voice, eyes blink, and the shirt wears your brand colour and logo.</p>
+                </div>
+              )}
               {engine === "builtin" && (
                 <div className="mt-4 space-y-3">
                   <Chips label="Look" value={look} onChange={setLook} options={[{ key: "", label: "Surprise me" }, ...info.looks]} />
@@ -184,10 +225,11 @@ function Studio() {
                     <span>
                       <span className="flex items-center gap-1.5 font-medium"><Mic size={14} /> AI voice reads the script</span>
                       <span className="block text-xs text-slate-500">
-                        {info.voice ? "A free voice made on this computer (English). The first time, it downloads (about 60 MB)." : "Not installed on this computer: pip install piper-tts"}
+                        {info.voice ? "Free voices made on this computer, in several accents and languages. Each downloads once (about 60 MB)." : "Not installed on this computer: pip install piper-tts"}
                       </span>
                     </span>
                   </label>
+                  {voice && <VoicePicker voices={info.voices} value={voiceKey} onChange={(k) => { setVoiceKey(k); setVoicePicked(true); }} language={language} />}
                 </div>
               )}
               {engine === "person" && (
@@ -264,6 +306,42 @@ function Studio() {
   );
 }
 
+function VoicePicker({ voices, value, onChange, language }: { voices: UgcVoice[]; value: string; onChange: (k: string) => void; language: string }) {
+  const groups = Array.from(new Set(voices.map((v) => v.accent)));
+  const chosen = voices.find((v) => v.key === value);
+  const mismatch = chosen && ((language === "ur") !== (chosen.language === "ur"));
+  return (
+    <div className="rounded-xl border border-slate-200 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-1.5 text-xs font-medium text-slate-600"><Mic size={13} /> Voice</span>
+        <select value={value} onChange={(e) => onChange(e.target.value)} className="input w-auto flex-1 py-1.5 text-sm">
+          {groups.map((g) => (
+            <optgroup key={g} label={g}>
+              {voices.filter((v) => v.accent === g).map((v) => (
+                <option key={v.key} value={v.key}>{v.name} · {v.gender}{v.clear ? "" : " · for testing"}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {value && <audio key={value} src={media(`/api/ugc/voices/${value}/sample.wav`)} controls preload="none" className="h-8 w-44" />}
+      </div>
+      {chosen && !chosen.clear && (
+        <p className="mt-2 text-xs text-amber-700">&ldquo;{chosen.name}&rdquo; is built on a voice trained on research-licensed recordings: fine for trying out, check before using it in paid ads.</p>
+      )}
+      {mismatch && (
+        <p className="mt-2 text-xs text-amber-700">
+          {language === "ur" ? "This script is in Urdu: choose an Urdu voice (Ayesha or Fasih)." : language === "roman"
+            ? "Voices can't read Roman Urdu well. Switch the script to اردو (Urdu) for an Urdu voice, or keep English."
+            : "This voice reads Urdu script; the script is in English."}
+        </p>
+      )}
+      {!mismatch && language === "roman" && (
+        <p className="mt-2 text-xs text-amber-700">Voices can&apos;t read Roman Urdu well. Switch the script to اردو (Urdu) for an Urdu voice, or keep English.</p>
+      )}
+    </div>
+  );
+}
+
 function Chips({ label, value, options, onChange }: { label: string; value: string; options: { key: string; label: string }[]; onChange: (v: string) => void }) {
   return (
     <div>
@@ -303,7 +381,8 @@ function AdCard({ ad, campaign, onDelete }: { ad: UgcAd; campaign: Campaign; onD
       <div className="space-y-2 p-3 text-xs">
         <p className="font-semibold">
           {ad.product} · {ad.format.replace("_", " ")}
-          {ad.engine === "avatar" ? ` · AI presenter${ad.avatar ? ` (${ad.avatar})` : ""}` : ad.engine === "person" ? " · real person" : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
+          {ad.engine === "avatar" ? ` · HeyGen presenter${ad.avatar ? ` (${ad.avatar})` : ""}` : ad.engine === "presenter" ? ` · presenter ${ad.avatar}`
+            : ad.engine === "person" ? " · real person" : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
         </p>
         <p className="line-clamp-2 text-slate-500">{ad.script.join(" / ")}</p>
         <div className="flex gap-1.5">

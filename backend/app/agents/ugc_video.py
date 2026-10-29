@@ -31,6 +31,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from ..schemas import BrandKit
 from .reels.core import WORKERS
+from . import lang as lang_mod
 from .renderer import font, rgb
 
 W, H, FPS = 1080, 1920, 30
@@ -160,16 +161,47 @@ def _wrap(draw, words, fnt, max_w):
     return lines
 
 
+def _positions(line: list[str], widths: list[float], left: float, total: float, rtl: bool) -> list[float]:
+    """Where each word of a line goes, in reading order. Right to left for Urdu, with a run of
+    English words kept left to right as one block ("Light Khaddar Suit" inside an Urdu sentence)."""
+    if not rtl:
+        xs, x = [], left
+        for wd in widths:
+            xs.append(x)
+            x += wd
+        return xs
+    xs = [0.0] * len(line)
+    right = left + total
+    i = 0
+    while i < len(line):
+        j = i
+        if not lang_mod.ARABIC.search(line[i]):
+            while j + 1 < len(line) and not lang_mod.ARABIC.search(line[j + 1]):
+                j += 1
+        block = sum(widths[i:j + 1])
+        x = right - block
+        for k in range(i, j + 1):  # inside an English run, left to right
+            xs[k] = x
+            x += widths[k]
+        right -= block
+        i = j + 1
+    return xs
+
+
 def draw_caption(img: Image.Image, style: str, words: list[str], shown: int, accent, box: tuple[int, int, int, int],
                  ink=(255, 255, 255), panel=None) -> None:
-    """Captions in one of several creator styles, inside box (x0, y0, x1, y1)."""
+    """Captions in one of several creator styles, inside box (x0, y0, x1, y1). Urdu is shaped (letters
+    joined) and laid out right to left; English words inside an Urdu line keep their own direction."""
     if not words or shown <= 0:
         return
+    rtl = any(lang_mod.ARABIC.search(w) for w in words)
+    words = [lang_mod.shape(w) for w in words]  # display forms; order and count unchanged
     draw = ImageDraw.Draw(img)
     x0, y0, x1, y1 = box
     if style == "pop":  # one or two words at a time, huge
         i = shown - 1
-        chunk = " ".join(words[max(0, i - (1 if len(words[i]) < 4 else 0)): i + 1])
+        picked = words[max(0, i - (1 if len(words[i]) < 4 else 0)): i + 1]
+        chunk = " ".join(reversed(picked) if rtl else picked)
         size = 150
         fnt = font(size, True)
         while draw.textlength(chunk, font=fnt) > (x1 - x0) and size > 70:
@@ -196,10 +228,12 @@ def draw_caption(img: Image.Image, style: str, words: list[str], shown: int, acc
                                               fill=(*(panel or (0, 0, 0)), 170))
         img.paste(bar, (0, 0), bar)
     n = 0
+    space = draw.textlength(" ", font=fnt)
     for line in lines:
         widths = [draw.textlength(w + " ", font=fnt) for w in line]
-        x = (x0 + x1 - sum(widths) + draw.textlength(" ", font=fnt)) / 2
-        for w, wd in zip(line, widths):
+        total = sum(widths) - space
+        xs = _positions(line, widths, (x0 + x1 - total) / 2, total, rtl)
+        for w, wd, x in zip(line, widths, xs):
             said, newest = n < shown, n == shown - 1
             if style == "karaoke":  # the whole line on screen, lighting up as it's said
                 fill = accent if newest else ink if said else tuple(int(c * 0.45 + 40) for c in ink)
@@ -213,7 +247,6 @@ def draw_caption(img: Image.Image, style: str, words: list[str], shown: int, acc
                     draw.text((x, y), w, font=fnt, fill=accent if newest else (255, 255, 255))
                 else:
                     draw.text((x, y), w, font=fnt, fill=accent if newest else ink, stroke_width=max(5, size // 12), stroke_fill=(15, 15, 15))
-            x += wd
             n += 1
         y += lh
 
@@ -242,7 +275,7 @@ def end_card(kit: BrandKit, title: str, price: str, cta: str, logo: Image.Image 
             continue
         fnt = font(size, True)
         for line in _wrap(d, text.split(), fnt, W - 160)[:2]:
-            s = " ".join(line)
+            s = lang_mod.shape(" ".join(line))  # Urdu joined and right to left
             d.text(((W - d.textlength(s, font=fnt)) / 2, y), s, font=fnt, fill=color)
             y += int(size * 1.25)
         y += 30
@@ -615,12 +648,9 @@ def render_person_ad(kit: BrandKit, video_path: str, words: list[tuple[str, floa
 # --------------------------------------------------------------------------- speaking text
 
 def for_speech(line: str) -> str:
-    """How a line should be read aloud: "POV" -> "P.O.V.", "Rs. 6,990" -> "6,990 rupees"."""
-    s = re.sub(r"\bPOV\b", "P O V", line)
-    s = re.sub(r"\b(?:Rs\.?|PKR)\s?([\d,]+(?:\.\d+)?)", r"\1 rupees", s)
-    s = re.sub(r"\$\s?([\d,]+(?:\.\d+)?)", r"\1 dollars", s)
-    s = s.replace("%", " percent").replace("&", " and ")
-    return re.sub(r"[\U0001F300-\U0001FAFF☀-➿]", "", s).strip()
+    from .speech import for_speech as spoken
+
+    return spoken(line)
 
 
 # --------------------------------------------------------------------------- whole jobs (run in a worker process)
@@ -633,7 +663,7 @@ def make_product_ad(kit: BrandKit, photo: str, lines: list[str], out: Path, post
         from . import speech
 
         wav_path = out.with_suffix(".voice.wav")
-        durations = speech.speak([for_speech(line) for line in lines], wav_path, voice)
+        durations = speech.speak(lines, wav_path, voice)
         wav = str(wav_path)
     try:
         return render_product_ad(kit, photo, lines, out, poster, mix, durations=durations, voice_wav=wav, end=end)

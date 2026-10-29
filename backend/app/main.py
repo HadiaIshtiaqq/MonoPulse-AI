@@ -23,13 +23,14 @@ import httpx
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, connections, mcp_server, media_gc, publishing, ratelimit
 from .agents import (
-    calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, speech, strategist, ugc, ugc_video, variety,
+    avatar, calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, speech, strategist, ugc, ugc_video,
+    variety,
 )
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
@@ -746,6 +747,9 @@ async def ugc_overview(campaign_id: str) -> dict:
     if not c.brand:
         raise HTTPException(409, "This campaign has no brand kit yet.")
     return {"formats": ugc.formats_for(c.brand), "heygen": ugc.heygen_ready(), "voice": speech.tts_available(),
+            "voices": speech.voice_list(), "languages": [{"key": k, "label": v} for k, v in ugc.SCRIPT_LANGUAGES.items()],
+            "presenters": [{"key": ch.key, "name": ch.name, "gender": ch.gender, "preview": f"/api/ugc/presenters/{ch.key}.png"}
+                           for ch in avatar.CHARACTERS],
             "listening": speech.whisper_available(),
             "looks": [{"key": k, "label": v} for k, v in ugc_video.LOOK_LABELS.items()],
             "captions": [{"key": k, "label": v} for k, v in ugc_video.CAPTION_LABELS.items()],
@@ -757,7 +761,7 @@ async def ugc_overview(campaign_id: str) -> dict:
 class UgcScriptRequest(BaseModel):
     product: int
     format: str = "pov"
-    language: str = "English"
+    language: str = "en"  # en | ur | roman
 
 
 def _ugc_product(c: Campaign, index: int):
@@ -774,7 +778,8 @@ async def ugc_script(campaign_id: str, req: UgcScriptRequest) -> dict:
         raise HTTPException(409, "This campaign has no brand kit yet.")
     if req.format not in ugc.FORMATS:
         raise HTTPException(422, "Unknown format.")
-    lines, used = await ugc.write_script(c.brand, _ugc_product(c, req.product), req.format, req.language[:30])
+    language = req.language if req.language in ugc.SCRIPT_LANGUAGES else "en"
+    lines, used = await ugc.write_script(c.brand, _ugc_product(c, req.product), req.format, language)
     return {"lines": lines, "used_llm": used}
 
 
@@ -782,12 +787,15 @@ class UgcMakeRequest(BaseModel):
     product: int
     format: str = "pov"
     lines: list[str]
-    engine: str = "builtin"  # builtin (product video) | person (your own video) | avatar (HeyGen)
+    engine: str = "builtin"  # builtin (product video) | presenter (free AI presenter) | person (your own video) | avatar (HeyGen)
     avatar_id: str = ""
     avatar_name: str = ""
     look: str = ""  # product video layout; "" = a different one each time
     caption: str = ""  # caption style; "" = a different one each time
     voice: bool = False  # a free AI voice reads the script (product video)
+    voice_key: str = ""  # which voice (speech.VOICES); "" = one that fits the script's language and the presenter
+    character: str = ""  # the free presenter (avatar.CHARACTERS)
+    language: str = "en"  # the script's language (en | ur | roman), for the end card
     footage: str = ""  # the uploaded video, for engine "person"
 
 
@@ -801,7 +809,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
     lines = [line.strip()[:140] for line in req.lines if line.strip()][:8]
     if not lines:
         raise HTTPException(422, "Write at least one line.")
-    if req.engine not in ("builtin", "person", "avatar"):
+    if req.engine not in ("builtin", "presenter", "person", "avatar"):
         raise HTTPException(422, "Unknown way to make the ad.")
     footage = None
     if req.engine == "person":
@@ -809,7 +817,9 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
             footage = photos.upload_path(req.footage)
         except KeyError as exc:
             raise HTTPException(404, "Record or upload your video first.") from exc
-    if req.voice and req.engine == "builtin" and not speech.tts_available():
+    if req.voice_key and req.voice_key not in speech.VOICES:
+        raise HTTPException(422, "Unknown voice.")
+    if ((req.voice and req.engine == "builtin") or req.engine == "presenter") and not speech.tts_available():
         raise HTTPException(409, "The AI voice isn't installed on this computer: pip install piper-tts")
     if req.engine == "avatar":
         if not ugc.heygen_ready():
@@ -830,7 +840,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
             token = uuid.uuid4().hex[:8]
             out, poster = config.MEDIA_DIR / f"ugc_{c.id}_{token}.mp4", config.MEDIA_DIR / f"ugc_{c.id}_{token}.jpg"
             f = ugc.facts(c.brand, product)
-            end = (f["name"], f["price"], "Link in bio")
+            end = (f["name"], f["price"], ugc.END_CTA.get(req.language, ugc.END_CTA["en"]))
             look = caption = ""
             script = lines
             if req.engine == "avatar":
@@ -844,6 +854,15 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                     seconds, script = await reels.render.run_in_worker(
                         ugc_video.make_person_ad, c.brand, str(footage), lines, path, [f["name"], f["price"]], out, poster,
                         caption, int(token, 16) % 997, end)
+            elif req.engine == "presenter":
+                character = avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]
+                voice = req.voice_key or _voice_for(lines, character.gender)
+                mix = ugc_video.choose_mix(len(lines), int(token, 16) % 99991, caption=req.caption)
+                caption = mix.caption
+                job["step"] = f"{character.name} is recording the voice and filming"
+                async with reels.render_slots():
+                    seconds = await reels.render.run_in_worker(
+                        avatar.make_presenter_ad, c.brand, path, lines, voice, character.key, out, poster, mix, end, (f["name"], f["price"]))
             else:
                 last = next((a for a in reversed(c.ugc_ads) if a.engine == "builtin"), None)
                 mix = ugc_video.choose_mix(len(lines), int(token, 16) % 99991, req.look, req.caption,
@@ -852,11 +871,12 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                 job["step"] = "Recording the voice, then filming" if req.voice else "Filming and captioning"
                 async with reels.render_slots():
                     seconds = await reels.render.run_in_worker(ugc_video.make_product_ad, c.brand, path, lines, out, poster, mix,
-                                                               "en-female" if req.voice else "", end)
+                                                               (req.voice_key or _voice_for(lines, "female")) if req.voice else "", end)
             ad = UgcAd(product=strategist.display_name(c.brand, product), format=req.format, engine=req.engine, script=script,
                        video_url=f"/media/{out.name}", poster_url=f"/media/{poster.name}" if poster.exists() else "",
-                       seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else "", look=look, caption=caption,
-                       voice=req.voice and req.engine == "builtin")
+                       seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else
+                       (avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]).name if req.engine == "presenter" else "",
+                       look=look, caption=caption, voice=(req.voice and req.engine == "builtin") or req.engine == "presenter")
             c.ugc_ads.append(ad)
             store.save(c)
             job.update(status="done", result=ad.model_dump(mode="json"))
@@ -870,6 +890,51 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
     _ugc_tasks.add(task)
     task.add_done_callback(_ugc_tasks.discard)
     return {"job_id": job_id, "status": "running"}
+
+
+def _voice_for(lines: list[str], gender: str) -> str:
+    """A voice that fits the script: Urdu script gets an Urdu voice, everything else an American one."""
+    urdu = any(lang.ARABIC.search(line) for line in lines)
+    if urdu:
+        return "ur-pk-aegis" if gender == "female" else "ur-pk-fasih"
+    return "en-us-ljspeech" if gender == "female" else "en-us-john"
+
+
+@app.get("/api/ugc/presenters/{key}.png")
+async def presenter_preview(key: str):
+    """A portrait of a free presenter, drawn once and kept."""
+    ch = avatar.BY_KEY.get(key)
+    if not ch:
+        raise HTTPException(404, "Unknown presenter.")
+    path = config.MEDIA_DIR / f"presenter_{key}.png"
+    if not path.exists():
+        await asyncio.to_thread(lambda: avatar.preview(ch).save(path))
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+SAMPLE_LINES = {
+    "en": "Hi! This is how I'd sound in your ad.", "ur": "السلام علیکم! آپ کے اشتہار میں میری آواز ایسی ہوگی۔",
+    "it": "Ciao! Ecco come suonerei nel tuo annuncio.", "es": "¡Hola! Así sonaría en tu anuncio.", "fr": "Bonjour ! Voici ma voix dans votre publicité.",
+    "de": "Hallo! So klinge ich in deiner Anzeige.", "pt": "Olá! É assim que eu soaria no seu anúncio.", "ru": "Привет! Так я буду звучать в вашей рекламе.",
+    "fa": "سلام! صدای من در تبلیغ شما این‌گونه است.", "ne": "नमस्ते! तपाईंको विज्ञापनमा मेरो आवाज यस्तो हुनेछ।", "te": "నమస్తే! మీ ప్రకటనలో నా స్వరం ఇలా ఉంటుంది.",
+}
+
+
+@app.get("/api/ugc/voices/{key}/sample.wav")
+async def voice_sample(key: str):
+    """A few seconds of a voice, to hear it before choosing (made once, then kept)."""
+    v = speech.VOICES.get(key)
+    if not v:
+        raise HTTPException(404, "Unknown voice.")
+    if not speech.tts_available():
+        raise HTTPException(409, "The voices aren't installed on this computer: pip install piper-tts")
+    path = config.MEDIA_DIR / f"voice_sample_{v.key}.wav"
+    if not path.exists():
+        try:
+            await asyncio.to_thread(speech.speak, [SAMPLE_LINES.get(v.language, SAMPLE_LINES["en"])], path, v.key)
+        except (speech.SpeechError, httpx.HTTPError, OSError) as exc:
+            raise HTTPException(502, f"That voice couldn't be loaded: {exc}") from exc
+    return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "public, max-age=86400"})
 
 
 MAX_FOOTAGE_BYTES = 300 * 1024 * 1024

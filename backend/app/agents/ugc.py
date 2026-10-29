@@ -73,24 +73,63 @@ def facts(kit: BrandKit, p: Product) -> dict:
             "city": (kit.location or "").split(",")[0].strip()}
 
 
-def template_script(kit: BrandKit, p: Product, fmt: str) -> list[str]:
+SCRIPT_LANGUAGES = {"en": "English", "ur": "Urdu (اردو)", "roman": "Roman Urdu"}
+END_CTA = {"en": "Link in bio", "ur": "لنک بائیو میں ہے", "roman": "Link bio mein hai"}
+
+# Words around the facts, per language. Product names, prices and the brand's own promises stay as
+# the brand writes them (an Urdu voice hands English words to an English voice, as people speak).
+WORDS = {
+    "en": {
+        "price": "Just {price}", "sale": "Now {price}, down from {was}", "pct": "{pct}% off right now",
+        "detail": "From the {collection} collection", "only": "Only at {brand}", "cta": ["Link in bio", "Tap the link in bio", "Find it at {site}"],
+        "pov": "POV: you just found the {name}", "first": "First look: the {name}", "look": "Look at the details", "ask": "Would you get it? {cta}",
+        "reasons": "{n} reasons to get the {name}", "before": "Before you buy {category}, see this", "the": "The {name}",
+        "sign": "This is your sign to treat yourself", "crave": "Craving something good?", "from": "From {brand}",
+        "outfit": "Outfit check: the {name}", "wear": "Dress it up or keep it easy",
+    },
+    "roman": {
+        "price": "Sirf {price}", "sale": "Ab sirf {price}, pehle {was}", "pct": "Abhi {pct}% off",
+        "detail": "{collection} collection se", "only": "Sirf {brand} par", "cta": ["Link bio mein hai", "Link bio mein", "{site} par dekhein"],
+        "pov": "POV: aap ko mil gaya {name}", "first": "Pehli nazar: {name}", "look": "Zara details dekhein", "ask": "Lena chahenge? {cta}",
+        "reasons": "{n} wajah {name} lene ki", "before": "{category} lene se pehle yeh dekhein", "the": "{name}",
+        "sign": "Yeh sign hai khud ko treat karne ka", "crave": "Kuch mazedaar khane ka dil hai?", "from": "{brand} se",
+        "outfit": "Aaj ka outfit: {name}", "wear": "Har mauqe ke liye",
+    },
+    "ur": {
+        "price": "صرف {price}", "sale": "اب صرف {price}، پہلے {was}", "pct": "ابھی {pct}% رعایت",
+        "detail": "{collection} کلیکشن سے", "only": "صرف {brand} پر", "cta": ["لنک بائیو میں ہے", "لنک بائیو میں", "{site} پر دیکھیں"],
+        "pov": "جب آپ کو مل جائے {name}", "first": "پہلی نظر: {name}", "look": "ذرا تفصیل دیکھیں", "ask": "لینا چاہیں گے؟ {cta}",
+        "reasons": "{name} لینے کی {n} وجوہات", "before": "{category} لینے سے پہلے یہ دیکھیں", "the": "{name}",
+        "sign": "یہ نشانی ہے کہ خود کو ٹریٹ کریں", "crave": "کچھ مزیدار کھانے کا دل ہے؟", "from": "{brand} سے",
+        "outfit": "آج کا آؤٹ فٹ: {name}", "wear": "ہر موقع کے لیے",
+    },
+}
+
+
+def template_script(kit: BrandKit, p: Product, fmt: str, language: str = "en") -> list[str]:
     f = facts(kit, p)
-    price_line = (f"Now {f['price']}, down from {f['was']}" if f["pct"] and f["was"] else f"Just {f['price']}" if f["price"] else "")
-    detail = f"From the {f['collection']} collection" if f["collection"] else (f"Only at {f['brand']}" if f["brand"] else "")
+    w = WORDS.get(language, WORDS["en"])
+
+    def say(key: str, **extra) -> str:
+        return w[key].format(**{**f, **extra})
+
+    price_line = (say("sale") if f["pct"] and f["was"] else say("price") if f["price"] else "")
+    detail = say("detail") if f["collection"] else (say("only") if f["brand"] else "")
     promise = f["promises"][0] if f["promises"] else ""
-    cta = random.Random(f["name"] + fmt).choice(["Link in bio", "Tap the link in bio", f"Find it at {f['site']}" if f["site"] else "Link in bio"])
+    options = [c for c in w["cta"] if f["site"] or "{site}" not in c]
+    cta = random.Random(f["name"] + fmt).choice(options).format(**f)
     # Each reason a different fact: the price (with the saving if there is one), a promise, where it's from.
-    sale = f"{f['pct']}% off right now" if f["pct"] and not f["was"] else ""
+    sale = say("pct") if f["pct"] and not f["was"] else ""
     reasons = [x for x in [price_line, sale, promise, *f["promises"][1:2], detail] if x]
     lines = {
-        "pov": [f"POV: you just found the {f['name']}", price_line, detail, promise, cta],
-        "first_look": [f"First look: the {f['name']}", "Look at the details", detail, price_line, f"Would you get it? {cta}"],
-        "reasons": [f"{min(3, len(reasons)) or 1} reasons to get the {f['name']}"] + [f"{i + 1}. {r}" for i, r in enumerate(reasons[:3])] + [cta],
-        "before_you_buy": [f"Before you buy {f['category']}, see this", f"The {f['name']}", price_line, promise or detail, cta],
-        "sign": ["This is your sign to treat yourself", f"The {f['name']}", price_line, cta],
-        "taste": ["Craving something good?", f"The {f['name']}", price_line, promise or (f"From {f['brand']}" if f["brand"] else ""), cta],
-        "outfit": [f"Outfit check: the {f['name']}", detail or "Dress it up or keep it easy", price_line, cta],
-    }.get(fmt) or [f"The {f['name']}", price_line, cta]
+        "pov": [say("pov"), price_line, detail, promise, cta],
+        "first_look": [say("first"), say("look"), detail, price_line, say("ask", cta=cta)],
+        "reasons": [say("reasons", n=min(3, len(reasons)) or 1)] + [f"{i + 1}. {r}" for i, r in enumerate(reasons[:3])] + [cta],
+        "before_you_buy": [say("before"), say("the"), price_line, promise or detail, cta],
+        "sign": [say("sign"), say("the"), price_line, cta],
+        "taste": [say("crave"), say("the"), price_line, promise or (say("from") if f["brand"] else ""), cta],
+        "outfit": [say("outfit"), detail or say("wear"), price_line, cta],
+    }.get(fmt) or [say("the"), price_line, cta]
     return [x for x in dict.fromkeys(line.strip() for line in lines) if x][:7]
 
 
@@ -101,15 +140,17 @@ Never invent results, reviews, ratings, ingredients, materials, stock levels or 
 it ("I've been using this..."). Language: {language}. Return JSON: {{"lines": ["...", "..."]}}"""
 
 
-async def write_script(kit: BrandKit, p: Product, fmt: str, language: str = "English") -> tuple[list[str], bool]:
-    """(lines, used_model)."""
-    base = template_script(kit, p, fmt)
+async def write_script(kit: BrandKit, p: Product, fmt: str, language: str = "en") -> tuple[list[str], bool]:
+    """(lines, used_model). language: en, ur (Urdu script) or roman (Roman Urdu)."""
+    base = template_script(kit, p, fmt, language)
     if not router.enabled:
         return base, False
     label, blurb = FORMATS.get(fmt, ("Product ad", ""))
     f = facts(kit, p)
     try:
-        data = await router.complete_json("rewrite", SCRIPT_SYSTEM.format(fmt_label=label, fmt_blurb=blurb, language=language),
+        lang_name = {"ur": "Urdu in Urdu script (keep product names in English letters)", "roman": "Roman Urdu (Urdu in Latin letters)"}.get(
+            language, "English")
+        data = await router.complete_json("rewrite", SCRIPT_SYSTEM.format(fmt_label=label, fmt_blurb=blurb, language=lang_name),
                                           f"Brand: {kit.name}\nFacts: {f}\nA plain draft to improve on:\n" + "\n".join(base),
                                           temperature=0.8, max_tokens=500)
         lines = [str(x).strip() for x in (data.get("lines") if isinstance(data, dict) else None) or [] if str(x).strip()]
