@@ -36,6 +36,9 @@ def referenced() -> set[str]:
             names.add(Path(value.split("?")[0]).name)
 
     for c in store.campaigns.values():
+        for ad in c.ugc_ads:
+            add(ad.video_url)
+            add(ad.poster_url)
         if c.brand:
             add(c.brand.logo_path)
             for url in c.brand.images:  # photos saved at import (Instagram's)

@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { CornerDownLeft, FlaskConical, LayoutGrid, Megaphone, Plug, Plus, Search, Wand2 } from "lucide-react";
+import { Clapperboard, CornerDownLeft, FlaskConical, LayoutGrid, Megaphone, Plug, Plus, Search, Wand2 } from "lucide-react";
 import { api, type CampaignSummary } from "@/lib/api";
 
 type Item = { id: string; label: string; hint?: string; group: string; icon: typeof Search; href: string };
@@ -12,6 +12,7 @@ const PAGES: Item[] = [
   { id: "campaigns", label: "Campaigns", group: "Go to", icon: LayoutGrid, href: "/campaigns" },
   { id: "research", label: "Research", hint: "Competitors, trends, strategy", group: "Go to", icon: FlaskConical, href: "/research" },
   { id: "humanizer", label: "Humanizer", hint: "Make AI copy sound human", group: "Go to", icon: Wand2, href: "/humanizer" },
+  { id: "ugc", label: "UGC ads", hint: "Phone-style video ads and AI presenters", group: "Go to", icon: Clapperboard, href: "/ugc" },
   { id: "connections", label: "Connections", hint: "Instagram, Facebook, AI and search keys", group: "Go to", icon: Plug, href: "/connections" },
 ];
 

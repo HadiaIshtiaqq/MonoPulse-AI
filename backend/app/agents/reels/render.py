@@ -150,6 +150,18 @@ def _process_pool() -> ProcessPoolExecutor:
     return _pool
 
 
+async def run_in_worker(fn, *args):
+    """Any CPU-heavy video function in a worker process (threads when processes are off)."""
+    global _pool
+    if config.REEL_PROCESSES:
+        try:
+            return await asyncio.get_running_loop().run_in_executor(_process_pool(), fn, *args)
+        except BrokenProcessPool:
+            log.warning("video worker process died; using a thread for this one")
+            _pool = None
+    return await asyncio.to_thread(fn, *args)
+
+
 async def render_elsewhere(*args) -> float:
     """render_reel in a worker process (frame drawing holds Python's GIL, which in the API process
     would slow every other request), falling back to a thread if the pool can't be used."""

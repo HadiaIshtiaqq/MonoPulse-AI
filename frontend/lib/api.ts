@@ -18,10 +18,16 @@ export type ReelOptionsInfo = {
   languages: { key: ReelLanguage; label: string }[];
   trends: { key: string; label: string }[];
 };
+export type UgcAd = { id: string; product: string; format: string; engine: "builtin" | "avatar"; script: string[]; video_url: string;
+  poster_url: string; seconds: number; avatar: string; created_at: string };
+export type UgcAvatar = { id: string; name: string; preview: string; gender: string };
+export type UgcOverview = { formats: { key: string; label: string; blurb: string }[]; heygen: boolean;
+  products: { index: number; name: string; price: string; image: string }[]; ads: UgcAd[] };
 export type Connections = {
   meta: { connected: boolean; page: string; instagram: string; instagram_ready: boolean; from_env: boolean };
   nebius: { connected: boolean; from_env: boolean };
   tavily: { connected: boolean; from_env: boolean };
+  heygen: { connected: boolean; from_env: boolean };
   file: string;
 };
 export type ReelResult = { post: SocialPost; seconds: number; scenes: string[]; used_llm: boolean; render_ms: number; style: string; topic: string; occasion: string };
@@ -444,11 +450,28 @@ export const api = {
   saveDesign: (id: string, design: unknown, pages: string[]) => req<SocialPost>(`/api/posts/${id}/design`, json("PUT", { design, pages })),
   resetDesign: (id: string) => req<SocialPost>(`/api/posts/${id}/design`, { method: "DELETE" }),
   designPhoto: (id: string, body: { url?: string; stock_id?: string }) => req<{ url: string }>(`/api/posts/${id}/design/photo`, json("POST", body)),
+  ugcOverview: (cid: string) => req<UgcOverview>(`/api/campaigns/${cid}/ugc`),
+  ugcScript: (cid: string, body: { product: number; format: string }) => req<{ lines: string[]; used_llm: boolean }>(`/api/campaigns/${cid}/ugc/script`, json("POST", body)),
+  ugcAvatars: () => req<UgcAvatar[]>("/api/ugc/avatars"),
+  /** Starts the ad in the background and resolves when it's made (an AI presenter can take minutes). */
+  makeUgc: async (cid: string, body: { product: number; format: string; lines: string[]; engine: string; avatar_id?: string; avatar_name?: string },
+    onStep?: (step: string) => void) => {
+    const { job_id } = await req<{ job_id: string }>(`/api/campaigns/${cid}/ugc`, json("POST", body));
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const job = await req<{ status: string; step?: string; result?: UgcAd; error?: string }>(`/api/ugc-jobs/${job_id}`);
+      if (job.step) onStep?.(job.step);
+      if (job.status === "done" && job.result) return job.result;
+      if (job.status === "error") throw new Error(job.error || "The ad couldn't be made.");
+    }
+  },
+  deleteUgc: (cid: string, id: string) => req<void>(`/api/campaigns/${cid}/ugc/${id}`, { method: "DELETE" }),
+  attachUgc: (cid: string, id: string, postId: string) => req<SocialPost>(`/api/campaigns/${cid}/ugc/${id}/attach`, json("POST", { post_id: postId })),
   connections: () => req<Connections>("/api/connections"),
   connectMeta: (body: { token: string; app_id?: string; app_secret?: string }) =>
     req<Connections & { result: { page: string; instagram: string; lasting: boolean; note: string } }>("/api/connections/meta", json("PUT", body)),
-  saveKeys: (body: { nebius_api_key?: string; tavily_api_key?: string }) => req<Connections>("/api/connections/keys", json("PUT", body)),
-  disconnect: (name: "meta" | "nebius" | "tavily") => req<Connections>(`/api/connections/${name}`, { method: "DELETE" }),
+  saveKeys: (body: { nebius_api_key?: string; tavily_api_key?: string; heygen_api_key?: string }) => req<Connections>("/api/connections/keys", json("PUT", body)),
+  disconnect: (name: "meta" | "nebius" | "tavily" | "heygen") => req<Connections>(`/api/connections/${name}`, { method: "DELETE" }),
   browserSignOut: () => req<{ signed_out: boolean }>("/api/browser/sign-out", { method: "POST" }),
   browserScheduled: (enabled: boolean) => req<{ scheduled: boolean }>("/api/browser/scheduled", json("PUT", { enabled })),
 

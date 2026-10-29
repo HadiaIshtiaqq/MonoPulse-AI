@@ -20,7 +20,7 @@ from . import config
 
 log = logging.getLogger(__name__)
 
-KEYS = ("NEBIUS_API_KEY", "TAVILY_API_KEY", "META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID",
+KEYS = ("NEBIUS_API_KEY", "TAVILY_API_KEY", "HEYGEN_API_KEY", "META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID",
         "META_PAGE_NAME", "INSTAGRAM_USERNAME")
 _from_env = {k: bool(os.environ.get(k)) for k in KEYS}
 
@@ -81,6 +81,7 @@ def status() -> dict:
                  "from_env": _from_env["META_ACCESS_TOKEN"]},
         "nebius": {"connected": bool(config.NEBIUS_API_KEY), "from_env": _from_env["NEBIUS_API_KEY"]},
         "tavily": {"connected": bool(config.TAVILY_API_KEY), "from_env": _from_env["TAVILY_API_KEY"]},
+        "heygen": {"connected": bool(config.HEYGEN_API_KEY), "from_env": _from_env["HEYGEN_API_KEY"]},
         "file": str(path()),
     }
 
@@ -157,5 +158,5 @@ async def check_tavily(key: str) -> None:
 
 def disconnect(name: str) -> None:
     keys = {"meta": ("META_ACCESS_TOKEN", "META_PAGE_ID", "INSTAGRAM_ACCOUNT_ID", "META_PAGE_NAME", "INSTAGRAM_USERNAME"),
-            "nebius": ("NEBIUS_API_KEY",), "tavily": ("TAVILY_API_KEY",)}[name]
+            "nebius": ("NEBIUS_API_KEY",), "tavily": ("TAVILY_API_KEY",), "heygen": ("HEYGEN_API_KEY",)}[name]
     save(**{k: "" for k in keys})

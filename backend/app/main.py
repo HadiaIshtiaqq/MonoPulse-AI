@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import shutil
+import uuid
 import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import asdict
@@ -25,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config, connections, mcp_server, media_gc, publishing, ratelimit
-from .agents import calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, strategist, variety
+from .agents import calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, strategist, ugc, variety
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
 from .llm import LLMError, router
 from .publishing import share_links
@@ -47,6 +48,7 @@ from .schemas import (
     RewriteRequest,
     SetBackgroundRequest,
     SocialPost,
+    UgcAd,
     UpdatePostRequest,
     new_id,
 )
@@ -723,6 +725,159 @@ async def _render_reel(campaign: Campaign, post: SocialPost, req: ReelRequest | 
     return {"post": post, **info}
 
 
+# --------------------------------------------------------------------------- UGC ads
+
+UGC_JOBS: dict[str, dict] = {}
+_ugc_tasks: set[asyncio.Task] = set()
+
+
+def _products(c: Campaign) -> list:
+    return [p for p in (c.brand.products if c.brand else []) if p.image_url][:40]
+
+
+@app.get("/api/campaigns/{campaign_id}/ugc")
+async def ugc_overview(campaign_id: str) -> dict:
+    """What a UGC ad can be made from: the brand's products with photos, the formats, the ads made so far."""
+    c = _campaign(campaign_id)
+    if not c.brand:
+        raise HTTPException(409, "This campaign has no brand kit yet.")
+    return {"formats": ugc.formats_for(c.brand), "heygen": ugc.heygen_ready(),
+            "products": [{"index": i, "name": strategist.display_name(c.brand, p), "price": p.price, "image": p.image_url}
+                         for i, p in enumerate(_products(c))],
+            "ads": [a.model_dump(mode="json") for a in reversed(c.ugc_ads)]}
+
+
+class UgcScriptRequest(BaseModel):
+    product: int
+    format: str = "pov"
+    language: str = "English"
+
+
+def _ugc_product(c: Campaign, index: int):
+    items = _products(c)
+    if not 0 <= index < len(items):
+        raise HTTPException(404, "Pick one of the brand's products.")
+    return items[index]
+
+
+@app.post("/api/campaigns/{campaign_id}/ugc/script")
+async def ugc_script(campaign_id: str, req: UgcScriptRequest) -> dict:
+    c = _campaign(campaign_id)
+    if not c.brand:
+        raise HTTPException(409, "This campaign has no brand kit yet.")
+    if req.format not in ugc.FORMATS:
+        raise HTTPException(422, "Unknown format.")
+    lines, used = await ugc.write_script(c.brand, _ugc_product(c, req.product), req.format, req.language[:30])
+    return {"lines": lines, "used_llm": used}
+
+
+class UgcMakeRequest(BaseModel):
+    product: int
+    format: str = "pov"
+    lines: list[str]
+    engine: str = "builtin"  # builtin | avatar
+    avatar_id: str = ""
+    avatar_name: str = ""
+
+
+@app.post("/api/campaigns/{campaign_id}/ugc", status_code=202)
+async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
+    """Start making a UGC ad in the background; poll /api/ugc-jobs/{id}."""
+    c = _campaign(campaign_id)
+    if not c.brand:
+        raise HTTPException(409, "This campaign has no brand kit yet.")
+    product = _ugc_product(c, req.product)
+    lines = [line.strip()[:140] for line in req.lines if line.strip()][:8]
+    if not lines:
+        raise HTTPException(422, "Write at least one line.")
+    if req.engine == "avatar":
+        if not ugc.heygen_ready():
+            raise HTTPException(409, "Connect HeyGen on the Connections page to use AI presenters.")
+        if not req.avatar_id:
+            raise HTTPException(422, "Pick a presenter.")
+    if sum(j["status"] == "running" for j in UGC_JOBS.values()) >= config.REEL_RENDERS + reels.MAX_WAITING:
+        raise HTTPException(429, "Lots of videos are being made right now. Please try again in a minute.", headers={"Retry-After": "60"})
+    job_id = new_id()
+    UGC_JOBS[job_id] = {"status": "running", "step": "Getting the product photo", "at": datetime.now(timezone.utc)}
+
+    async def run() -> None:
+        job = UGC_JOBS[job_id]
+        try:
+            photo = await photos.website_background(product.image_url, credit=f"Photo from {c.brand.name}") \
+                if not product.image_url.startswith("/media/") else None
+            path = photo.path if photo else str(config.MEDIA_DIR / product.image_url.split("?")[0].removeprefix("/media/"))
+            token = uuid.uuid4().hex[:8]
+            out, poster = config.MEDIA_DIR / f"ugc_{c.id}_{token}.mp4", config.MEDIA_DIR / f"ugc_{c.id}_{token}.jpg"
+            if req.engine == "avatar":
+                job["step"] = "HeyGen is filming your presenter (a few minutes)"
+                seconds = await ugc.heygen_video(path, req.avatar_id, " ".join(lines), out, poster,
+                                                 on_progress=lambda s: job.update(step=s))
+            else:
+                job["step"] = "Filming and captioning"
+                async with reels.render_slots():
+                    seconds = await reels.render.run_in_worker(ugc.render_builtin, c.brand, path, lines, out, poster, abs(hash(token)) % 97)
+            ad = UgcAd(product=strategist.display_name(c.brand, product), format=req.format, engine=req.engine, script=lines,
+                       video_url=f"/media/{out.name}", poster_url=f"/media/{poster.name}" if poster.exists() else "",
+                       seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else "")
+            c.ugc_ads.append(ad)
+            store.save(c)
+            job.update(status="done", result=ad.model_dump(mode="json"))
+        except (ugc.UgcError, reels.ReelError, httpx.HTTPError, ValueError, OSError) as exc:
+            job.update(status="error", error=redact(str(exc))[:300])
+        except Exception as exc:  # noqa: BLE001 - reported to the page that's waiting
+            logging.getLogger(__name__).exception("ugc job %s failed", job_id)
+            job.update(status="error", error=f"The video couldn't be made ({type(exc).__name__}).")
+
+    task = asyncio.create_task(run())
+    _ugc_tasks.add(task)
+    task.add_done_callback(_ugc_tasks.discard)
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/ugc-jobs/{job_id}")
+async def ugc_job(job_id: str) -> dict:
+    job = UGC_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "That video job has finished and been cleared. Make it again.")
+    return {k: v for k, v in job.items() if k != "at"}
+
+
+@app.get("/api/ugc/avatars")
+async def ugc_avatars() -> list[dict]:
+    if not ugc.heygen_ready():
+        raise HTTPException(409, "Connect HeyGen on the Connections page to use AI presenters.")
+    try:
+        return await ugc.heygen_avatars()
+    except ugc.UgcError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+
+@app.delete("/api/campaigns/{campaign_id}/ugc/{ad_id}", status_code=204)
+async def delete_ugc(campaign_id: str, ad_id: str) -> None:
+    c = _campaign(campaign_id)
+    c.ugc_ads = [a for a in c.ugc_ads if a.id != ad_id]
+    store.save(c)
+
+
+class UgcAttachRequest(BaseModel):
+    post_id: str
+
+
+@app.post("/api/campaigns/{campaign_id}/ugc/{ad_id}/attach")
+async def attach_ugc(campaign_id: str, ad_id: str, req: UgcAttachRequest) -> SocialPost:
+    """Use the ad as a post's video (it then posts as a Reel / video, like a made reel)."""
+    c = _campaign(campaign_id)
+    ad = next((a for a in c.ugc_ads if a.id == ad_id), None)
+    post = next((p for p in c.posts if p.id == req.post_id), None)
+    if not ad or not post:
+        raise HTTPException(404, "Ad or post not found.")
+    for p in c.posts:
+        if p.id == post.id or (post.group_id and p.group_id == post.group_id):
+            p.video_url, p.video_poster = ad.video_url, ad.poster_url or None
+    store.save(c)
+    return post
+
+
 @app.get("/api/reel-styles")
 def reel_styles() -> list[dict]:
     return reels.style_list()
@@ -867,6 +1022,7 @@ class MetaConnectRequest(BaseModel):
 class KeysRequest(BaseModel):
     nebius_api_key: str | None = None
     tavily_api_key: str | None = None
+    heygen_api_key: str | None = None
 
 
 @app.get("/api/connections")
@@ -897,6 +1053,11 @@ async def save_keys(req: KeysRequest) -> dict:
         if req.tavily_api_key:
             await connections.check_tavily(req.tavily_api_key)
             connections.save(TAVILY_API_KEY=req.tavily_api_key.strip())
+        if req.heygen_api_key:
+            await ugc.heygen_check(req.heygen_api_key)
+            connections.save(HEYGEN_API_KEY=req.heygen_api_key.strip())
+    except ugc.UgcError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except connections.ConnectionError_ as exc:
         raise HTTPException(400, str(exc)) from exc
     except httpx.HTTPError as exc:
@@ -906,7 +1067,7 @@ async def save_keys(req: KeysRequest) -> dict:
 
 @app.delete("/api/connections/{name}")
 def disconnect(name: str) -> dict:
-    if name not in ("meta", "nebius", "tavily"):
+    if name not in ("meta", "nebius", "tavily", "heygen"):
         raise HTTPException(404, "Unknown connection.")
     connections.disconnect(name)
     return connections.status()

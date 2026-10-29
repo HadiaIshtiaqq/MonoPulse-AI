@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, Instagram, KeyRound, Loader2, Search, ShieldCheck, Sparkles, Unplug } from "lucide-react";
+import { Bot, CheckCircle2, ExternalLink, Instagram, KeyRound, Loader2, Search, ShieldCheck, Sparkles, Unplug } from "lucide-react";
 import { api, type Connections } from "@/lib/api";
 import { useFeedback } from "@/components/Feedback";
 
@@ -39,6 +39,11 @@ export default function ConnectionsPage() {
               icon={<Search size={16} />} title="Web search: Tavily" field="tavily_api_key" name="tavily" status={status.tavily} onChange={setStatus}
               blurb="Faster, more complete research and trends. Without it MonoPlus uses free sources (news, DuckDuckGo, Wikipedia)."
               how={<>Get a free key (1,000 searches a month) at <a className="link" href="https://app.tavily.com/" target="_blank" rel="noreferrer">tavily.com</a>.</>}
+            />
+            <KeyCard
+              icon={<Bot size={16} />} title="AI presenters: HeyGen" field="heygen_api_key" name="heygen" status={status.heygen} onChange={setStatus}
+              blurb="Realistic AI people presenting your products in UGC ads."
+              how={<>Create an API key in <a className="link" href="https://app.heygen.com/settings" target="_blank" rel="noreferrer">HeyGen settings</a> (API). Videos use your HeyGen credits.</>}
             />
           </div>
         </div>
@@ -127,8 +132,8 @@ function MetaCard({ status, onChange }: { status: Connections; onChange: (s: Con
 }
 
 function KeyCard({ icon, title, blurb, how, field, name, status, onChange }: {
-  icon: React.ReactNode; title: string; blurb: string; how: React.ReactNode; field: "nebius_api_key" | "tavily_api_key";
-  name: "nebius" | "tavily"; status: { connected: boolean; from_env: boolean }; onChange: (s: Connections) => void;
+  icon: React.ReactNode; title: string; blurb: string; how: React.ReactNode; field: "nebius_api_key" | "tavily_api_key" | "heygen_api_key";
+  name: "nebius" | "tavily" | "heygen"; status: { connected: boolean; from_env: boolean }; onChange: (s: Connections) => void;
 }) {
   const { toast } = useFeedback();
   const [key, setKey] = useState("");

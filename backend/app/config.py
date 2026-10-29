@@ -65,6 +65,7 @@ REEL_RENDERS = max(1, int(_env("MONOPLUS_REEL_RENDERS", "2") or 2))  # reels ren
 META_ACCESS_TOKEN = _env("META_ACCESS_TOKEN")
 META_PAGE_ID = _env("META_PAGE_ID")
 INSTAGRAM_ACCOUNT_ID = _env("INSTAGRAM_ACCOUNT_ID")
+HEYGEN_API_KEY = _env("HEYGEN_API_KEY")  # AI presenters for UGC ads
 META_PAGE_NAME = _env("META_PAGE_NAME")  # shown in the app; set by Connections
 INSTAGRAM_USERNAME = _env("INSTAGRAM_USERNAME")
 GRAPH_API_VERSION = _env("GRAPH_API_VERSION", "v21.0")

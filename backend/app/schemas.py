@@ -188,6 +188,19 @@ class SocialPost(BaseModel):
     ai_tell_after: float | None = None
 
 
+class UgcAd(BaseModel):
+    id: str = Field(default_factory=new_id)
+    product: str
+    format: str
+    engine: str  # builtin | avatar
+    script: list[str] = []
+    video_url: str
+    poster_url: str = ""
+    seconds: float = 0
+    avatar: str = ""  # the AI presenter's name, for avatar ads
+    created_at: datetime = Field(default_factory=now_utc)
+
+
 class Campaign(BaseModel):
     id: str = Field(default_factory=new_id)
     source_input: str = ""  # the website or handle the campaign was created from
@@ -206,6 +219,7 @@ class Campaign(BaseModel):
     research_ids: list[str] = []
     content_mix: dict = {}  # post types, layouts and repeated headlines (see variety.variety_report)
     competitor_task_id: str | None = None  # the competitor analysis started with this campaign
+    ugc_ads: list["UgcAd"] = []  # UGC-style video ads made for this brand
     created_at: datetime = Field(default_factory=now_utc)
 
 

@@ -14,3 +14,5 @@ from .draw import _lines, caption_blocks, dotted, drop_shadow, ease_out, faded, 
 from .colours import AUTO_PALETTES, HEX, PACES, PALETTES, Palette, _brand, _complement, _custom, _hex, _midnight, _pastel, choose_palette, hue_shift, palette_colors, palette_kit, palette_list  # noqa: F401
 from .styles import Base, Cinematic, Magazine, POLAROID_ANGLES, Punch, STYLES, Scrapbook, Showcase, Style, choose_style  # noqa: F401
 from .render import WHITE, ffmpeg_exe, make_reel, render_reel, resolve_options, style_list, tag_chip, timeline  # noqa: F401
+
+render_slots = _render_slots  # shared by every video maker (reels, UGC ads), so they share the same slots
