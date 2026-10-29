@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from . import config, connections, mcp_server, media_gc, publishing, ratelimit
 from .agents import (
-    avatar, calendar, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, scenes, speech, strategist, ugc, ugc_video,
+    avatar, calendar, depth3d, humanizer, lang, memory, occasions, photos, pipeline, reels, renderer, research, scenes, speech, strategist, ugc, ugc_video,
     variety,
 )
 from .agents.formatter import HASHTAG_COUNT, enforce_limits, normalize_hashtags
@@ -792,7 +792,8 @@ async def ugc_overview(campaign_id: str) -> dict:
             "presenters": [{"key": ch.key, "name": ch.name, "gender": ch.gender, "preview": f"/api/ugc/presenters/{ch.key}.png"}
                            for ch in avatar.CHARACTERS],
             "listening": speech.whisper_available(),
-            "scenes": {"styles": [{"key": k, "label": v} for k, v in scenes.STYLES.items()], "huggingface": bool(config.HF_TOKEN)},
+            "scenes": {"styles": [{"key": k, "label": v} for k, v in scenes.STYLES.items()], "huggingface": bool(config.HF_TOKEN),
+                       "local": depth3d.available()},
             "looks": [{"key": k, "label": v} for k, v in ugc_video.LOOK_LABELS.items()],
             "captions": [{"key": k, "label": v} for k, v in ugc_video.CAPTION_LABELS.items()],
             "products": [{"index": i, "name": strategist.display_name(c.brand, p), "price": p.price, "image": p.image_url}
@@ -863,6 +864,7 @@ class UgcMakeRequest(BaseModel):
     footage: str = ""  # the uploaded video, for engine "person"
     style: str = ""  # AI scenes: worn | faceless
     scenes: list[ScenePlan] = []  # AI scenes: the shots, one per line ([] = planned for the product)
+    source: str = "local"  # AI scenes: local (3D camera on this computer) | ai (AI video on Hugging Face's free GPUs)
 
 
 @app.post("/api/campaigns/{campaign_id}/ugc", status_code=202)
@@ -931,28 +933,37 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                 own = [scenes.Scene(s.prompt.strip()[:300], s.crop if s.crop in ("full", "detail", "lower") else "full")
                        for s in req.scenes if s.prompt.strip()][:n]
                 plan = own + scenes.plan(c.brand, product, n, look, int(token, 16))[len(own):]
-                caption = "soft" if aesthetic else req.caption if req.caption in ugc_video.CAPTIONS else                     random.choice(["outline", "box", "pop", "karaoke"])
-                clips: list[str] = []
-                try:
-                    async with SCENE_SLOTS:
-                        for i, scene in enumerate(plan):
-                            job["step"] = f"Filming scene {i + 1} of {len(plan)} with AI video (about a minute each)"
-                            clip = out.with_name(f"{out.stem}_scene{i}.mp4")
-                            try:
-                                await asyncio.to_thread(scenes.generate, path, scene, look, int(token, 16) % 99991 + i, clip)
-                            except scenes.SceneError:
-                                if not clips:
-                                    raise
-                                break  # the free GPU share ran out mid-ad: the shots already filmed carry the rest
-                            clips.append(str(clip))
-                    job["step"] = "Recording the voice and editing the scenes"
+                caption = "soft" if aesthetic else req.caption if req.caption in ugc_video.CAPTIONS else random.choice(["outline", "box", "pop", "karaoke"])
+                seed = int(token, 16) % 997
+                voice = req.voice_key or _voice_for(lines, "female")
+                if req.source != "ai":  # the 3D camera, on this computer
+                    job["step"] = "Getting the 3D model (once, about 100 MB)"
+                    await asyncio.to_thread(depth3d.model_path)
+                    job["step"] = f"Filming {len(plan)} 3D shots on this computer (a minute or two)"
                     async with reels.render_slots():
-                        seconds = await reels.render.run_in_worker(
-                            ugc_video.make_scene_ad, c.brand, clips, lines, req.voice_key or _voice_for(lines, "female"), out, poster,
-                            caption, int(token, 16) % 997, end, look)
-                finally:
-                    for clip in clips:
-                        Path(clip).unlink(missing_ok=True)
+                        seconds = await reels.render.run_in_worker(depth3d.make_ad, c.brand, path, plan, lines, voice, out, poster,
+                                                                   caption, seed, end, look)
+                else:  # AI video on Hugging Face's free GPUs
+                    clips: list[str] = []
+                    try:
+                        async with SCENE_SLOTS:
+                            for i, scene in enumerate(plan):
+                                job["step"] = f"Filming scene {i + 1} of {len(plan)} with AI video (about a minute each)"
+                                clip = out.with_name(f"{out.stem}_scene{i}.mp4")
+                                try:
+                                    await asyncio.to_thread(scenes.generate, path, scene, look, int(token, 16) % 99991 + i, clip)
+                                except scenes.SceneError:
+                                    if not clips:
+                                        raise
+                                    break  # the free GPU share ran out mid-ad: the shots already filmed carry the rest
+                                clips.append(str(clip))
+                        job["step"] = "Recording the voice and editing the scenes"
+                        async with reels.render_slots():
+                            seconds = await reels.render.run_in_worker(
+                                ugc_video.make_scene_ad, c.brand, clips, lines, voice, out, poster, caption, seed, end, look)
+                    finally:
+                        for clip in clips:
+                            Path(clip).unlink(missing_ok=True)
             elif req.engine == "presenter":
                 character = avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]
                 voice = req.voice_key or _voice_for(lines, character.gender)
@@ -975,11 +986,11 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                        video_url=f"/media/{out.name}", poster_url=f"/media/{poster.name}" if poster.exists() else "",
                        seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else
                        (avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]).name if req.engine == "presenter" else "",
-                       look=look, caption=caption, voice=(req.voice and req.engine == "builtin") or req.engine == "presenter" or (req.engine == "scenes" and not aesthetic))
+                       look=look, caption=caption, source=(req.source if req.source == "ai" else "local") if req.engine == "scenes" else "", voice=(req.voice and req.engine == "builtin") or req.engine == "presenter" or (req.engine == "scenes" and not aesthetic))
             c.ugc_ads.append(ad)
             store.save(c)
             job.update(status="done", result=ad.model_dump(mode="json"))
-        except (ugc.UgcError, ugc_video.VideoError, scenes.SceneError, speech.SpeechError, reels.ReelError, httpx.HTTPError, ValueError,
+        except (ugc.UgcError, ugc_video.VideoError, scenes.SceneError, depth3d.DepthError, speech.SpeechError, reels.ReelError, httpx.HTTPError, ValueError,
                 OSError) as exc:
             job.update(status="error", error=redact(str(exc))[:300])
         except Exception as exc:  # noqa: BLE001 - reported to the page that's waiting

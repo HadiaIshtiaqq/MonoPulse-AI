@@ -201,6 +201,7 @@ class UgcAd(BaseModel):
     look: str = ""  # layout of a product ad (so the next one can differ), or the style of AI scenes (worn | faceless)
     caption: str = ""
     voice: bool = False
+    source: str = ""  # AI scenes: local (3D camera on this computer) | ai (AI video model)
     created_at: datetime = Field(default_factory=now_utc)
 
 

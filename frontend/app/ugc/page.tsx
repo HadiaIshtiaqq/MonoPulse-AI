@@ -26,6 +26,7 @@ function Studio() {
   const [writing, setWriting] = useState(false);
   const [engine, setEngine] = useState<"builtin" | "scenes" | "presenter" | "person" | "avatar">("scenes");
   const [style, setStyle] = useState("worn");
+  const [source, setSource] = useState<"local" | "ai">("local");
   const [shots, setShots] = useState<UgcScene[]>([]);
   const [planning, setPlanning] = useState(false);
   const [language, setLanguage] = useState("en");
@@ -101,6 +102,7 @@ function Studio() {
         avatar_name: avatar?.name, look, caption: captionStyle, voice: (engine === "builtin" && voice) || noPresenter, footage: footage?.id,
         voice_key: voiceKey || undefined, character: engine === "presenter" && !noPresenter ? character : undefined, language,
         style: engine === "scenes" ? style : undefined, scenes: engine === "scenes" ? shots.slice(0, shotCount) : undefined,
+        source: engine === "scenes" ? source : undefined,
       }, (step) => setJob({ step }));
       setInfo((i) => (i ? { ...i, ads: [ad, ...i.ads] } : i));
       toast(engine === "scenes" ? "Your AI scenes ad is ready" : engine === "avatar" || engine === "presenter" ? "Your presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
@@ -199,8 +201,8 @@ function Studio() {
                 className={`mb-2 w-full rounded-xl border p-4 text-left ${engine === "scenes" ? "border-brand bg-brand-soft" : "border-slate-200"}`}>
                 <p className="flex items-center gap-2 font-semibold"><Clapperboard size={16} /> AI scenes <span className="chip bg-brand text-white">Premium look, free</span></p>
                 <p className="mt-1 text-xs text-slate-600">
-                  Real AI video of your product being worn, applied, held or eaten, with a new shot for every line, like Flow or Higgsfield ads.
-                  Or faceless: only hands, fabric and texture. With a voice and captions.
+                  A new shot for every line, like Flow or Higgsfield ads: your product filmed with a 3D camera right on this computer (free, no
+                  limits), or AI video of it being worn, applied or held. Worn, faceless or soft aesthetic, with a voice or music and captions.
                 </p>
               </button>
               <div className="grid gap-2 sm:grid-cols-3">
@@ -225,7 +227,14 @@ function Studio() {
               {engine === "scenes" && (
                 <div className="mt-4 space-y-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-medium text-slate-600">Style</span>
+                    <span className="w-16 text-xs font-medium text-slate-600">Filmed by</span>
+                    <div className="seg">
+                      <button data-active={source === "local"} onClick={() => setSource("local")}>3D camera, on this computer</button>
+                      <button data-active={source === "ai"} onClick={() => setSource("ai")}>AI video (Hugging Face)</button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-16 text-xs font-medium text-slate-600">Style</span>
                     <div className="seg">
                       {info.scenes.styles.map((s) => (
                         <button key={s.key} data-active={style === s.key}
@@ -235,7 +244,7 @@ function Studio() {
                       ))}
                     </div>
                   </div>
-                  <div>
+                  {source === "ai" && <div>
                     <div className="mb-1.5 flex items-center justify-between">
                       <p className="text-xs font-medium text-slate-600">
                         The shots, one per line{shotCount < lines.filter((l) => l.trim()).length ? " (later lines reuse them)" : ""}
@@ -253,7 +262,7 @@ function Studio() {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </div>}
                   {style === "aesthetic" ? (
                     <p className="rounded-xl bg-brand-soft px-3 py-2 text-xs text-brand-700">
                       No voice: soft music composed for this ad (yours to post anywhere), slow dissolves, a warm film look and quiet captions.
@@ -265,6 +274,13 @@ function Studio() {
                       <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions]} />
                     </>
                   )}
+                  {source === "local" ? (
+                    <p className="text-xs text-slate-500">
+                      MonoPlus works out the depth of your product photo and films it with a moving 3D camera (dolly, orbit, rise, a little
+                      handheld sway), a new crop and move for every line. Everything runs on this computer: no account, no daily limit, nothing sent
+                      anywhere. The 3D model downloads once (about 100 MB). It moves the camera, not the person: for hands and people moving, choose AI video.
+                    </p>
+                  ) : (
                   <p className="text-xs text-slate-500">
                     Each shot starts from your product photo and is filmed by Wan 2.2, an open-source video model, on Hugging Face&apos;s free GPUs: about a
                     minute per shot. Only the photo and the shot description are sent.{" "}
@@ -274,6 +290,7 @@ function Studio() {
                     If the share runs out mid-ad, the shots already filmed carry the rest.
                     {style === "worn" && <> When an ad shows AI-generated people, turn on the platform&apos;s &ldquo;AI-generated&rdquo; label when you post.</>}
                   </p>
+                  )}
                 </div>
               )}
               {engine === "presenter" && (
@@ -469,7 +486,7 @@ function AdCard({ ad, campaign, onDelete }: { ad: UgcAd; campaign: Campaign; onD
         <p className="font-semibold">
           {ad.product} · {ad.format.replace("_", " ")}
           {ad.engine === "avatar" ? ` · HeyGen presenter${ad.avatar ? ` (${ad.avatar})` : ""}` : ad.engine === "presenter" ? ` · presenter ${ad.avatar}`
-            : ad.engine === "person" ? " · real person" : ad.engine === "scenes" ? ` · AI scenes${ad.look === "faceless" ? ", faceless" : ad.look === "aesthetic" ? ", aesthetic" : ""}` : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
+            : ad.engine === "person" ? " · real person" : ad.engine === "scenes" ? ` · ${ad.source === "ai" ? "AI video" : "3D camera"}${ad.look === "faceless" ? ", faceless" : ad.look === "aesthetic" ? ", aesthetic" : ""}` : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
         </p>
         <p className="line-clamp-2 text-slate-500">{ad.script.join(" / ")}</p>
         <div className="flex gap-1.5">

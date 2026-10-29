@@ -155,7 +155,7 @@ def test_an_ai_scenes_ad_end_to_end(client, monkeypatch, tmp_path):  # noqa: F81
     assert len(planned) == 4 and all(s["prompt"] for s in planned)
     lines = ["POV: you just found the Black Cambric Kurta", "Just Rs.6,000", "Link in bio"]
     r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "lines": lines, "engine": "scenes", "style": "faceless",
-                                                        "scenes": [{"prompt": "hands smooth the kurta", "crop": "lower"}]})
+                                                        "source": "ai", "scenes": [{"prompt": "hands smooth the kurta", "crop": "lower"}]})
     assert r.status_code == 202, r.text
     for _ in range(120):
         j = client.get(f"/api/ugc-jobs/{r.json()['job_id']}").json()
@@ -213,7 +213,7 @@ def test_an_aesthetic_ad_has_music_not_a_voice(client, monkeypatch, tmp_path):  
     photo.write_bytes(_png_bytes(size=(900, 1200)))
     c.brand.products = [Product(name="Black Cambric Kurta", price="Rs.6,000", image_url="/media/up_aesphoto.png")]
     r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "format": "aesthetic", "lines": ["the kurta", "Rs.6,000"],
-                                                        "engine": "scenes", "style": "aesthetic"})
+                                                        "engine": "scenes", "style": "aesthetic", "source": "ai"})
     assert r.status_code == 202, r.text
     for _ in range(120):
         j = client.get(f"/api/ugc-jobs/{r.json()['job_id']}").json()
@@ -227,3 +227,51 @@ def test_an_aesthetic_ad_has_music_not_a_voice(client, monkeypatch, tmp_path):  
     probe = subprocess.run([ffmpeg_exe(), "-i", str(path)], capture_output=True, text=True, errors="replace").stderr
     assert "Audio:" in probe and ugc_video.probe_duration(str(path)) > 5.5  # two unhurried shots and the end card
     assert client.delete(f"/api/campaigns/{c.id}/ugc/{ad['id']}").status_code == 204
+
+
+def test_3d_camera_shots_are_made_on_this_computer(client, monkeypatch):  # noqa: F811
+    """The default way to film AI scenes: depth from the photo, a moving camera, no service at all."""
+    import numpy as np
+
+    from app.agents import depth3d
+
+    monkeypatch.setattr(ugc_video, "FPS", 6)
+    monkeypatch.setattr(depth3d, "FPS", 6)
+    monkeypatch.setattr(depth3d, "model_path", lambda: "unused")
+    # A stand-in depth map: the bottom of the photo is near, the top far.
+    monkeypatch.setattr(depth3d, "depth_map", lambda img: np.tile(np.linspace(0, 1, img.height, dtype=np.float32)[:, None], (1, img.width)))
+    monkeypatch.setattr(speech, "tts_available", lambda: False)
+
+    def no_ai(*a, **kw):
+        raise AssertionError("3D shots don't use the AI video service")
+
+    monkeypatch.setattr(scenes, "generate", no_ai)
+    assert len(set(depth3d.moves_for(6, 1))) > 1
+    assert all(a != b for a, b in zip(depth3d.moves_for(8, 2), depth3d.moves_for(8, 2)[1:]))
+    c = _campaign_with_posts(days=1)
+    photo = config.MEDIA_DIR / "up_3dphoto.png"
+    photo.write_bytes(_png_bytes(size=(900, 1200)))
+    c.brand.products = [Product(name="Black Cambric Kurta", price="Rs.6,000", image_url="/media/up_3dphoto.png")]
+    assert client.get(f"/api/campaigns/{c.id}/ugc").json()["scenes"]["local"] is True
+    r = client.post(f"/api/campaigns/{c.id}/ugc", json={"product": 0, "format": "aesthetic", "lines": ["the kurta", "Rs.6,000"],
+                                                        "engine": "scenes", "style": "aesthetic"})
+    assert r.status_code == 202, r.text
+    for _ in range(240):
+        j = client.get(f"/api/ugc-jobs/{r.json()['job_id']}").json()
+        if j["status"] != "running":
+            break
+        time.sleep(0.25)
+    assert j["status"] == "done", j
+    ad = j["result"]
+    assert ad["source"] == "local" and ad["look"] == "aesthetic" and ad["seconds"] > 5
+    assert not list(config.MEDIA_DIR.glob("*_3d*.mp4"))  # the shots are cleaned up
+    assert client.delete(f"/api/campaigns/{c.id}/ugc/{ad['id']}").status_code == 204
+
+
+def test_the_camera_moves_stay_inside_the_photo():
+    from app.agents import depth3d
+
+    for move in depth3d.MOVES:
+        for k in (0.0, 0.5, 1.0):
+            zoom, side, up = depth3d.camera(move, k)
+            assert 1.0 <= zoom <= 1.08 and abs(side) <= 0.031 and abs(up) <= 0.026, (move, k)
