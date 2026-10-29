@@ -47,6 +47,7 @@ DESIGN_VERSION = 7
 # copied, committed or backed up along with it.
 BROWSER_PROFILE_DIR = Path(_env("MONOPLUS_BROWSER_PROFILE", str(Path(os.getenv("LOCALAPPDATA") or Path.home() / ".local" / "share")
                                                              / "MonoPlus" / "browser-profile")))
+BROWSER_CHANNEL = _env("MONOPLUS_BROWSER", "auto")  # auto (installed Chrome, then Edge, then Playwright's), chrome, msedge, chromium
 TRUST_PROXY = _env("MONOPLUS_TRUST_PROXY", "0") in ("1", "true", "yes")  # behind a proxy: read the client from X-Forwarded-For
 RATE_LIMITS = _env("MONOPLUS_RATE_LIMITS", "1") not in ("0", "false", "no", "off")  # per-client limits on expensive calls
 REEL_RENDERS = max(1, int(_env("MONOPLUS_REEL_RENDERS", "2") or 2))  # reels rendered at the same time

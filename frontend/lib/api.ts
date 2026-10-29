@@ -429,7 +429,8 @@ export const api = {
     req<{ platform: Platform; url: string; caption: string; image_url: string | null; image_urls: string[]; note: string }>(`/api/posts/${id}/share`),
   markPublished: (id: string) => req<SocialPost>(`/api/posts/${id}/mark-published`, { method: "POST" }),
   publishNow: (id: string) => req<SocialPost>(`/api/posts/${id}/publish`, { method: "POST" }),
-  browserStatus: () => req<{ available: boolean; signed_in: Record<string, boolean>; scheduled: boolean; error?: string }>("/api/browser"),
+  browserStatus: () => req<{ available: boolean; signed_in: Record<string, boolean>; needs_check?: Record<string, boolean>; scheduled: boolean;
+    error?: string; browser?: string }>("/api/browser"),
   browserLogin: (platform: Platform) => req<{ opened: boolean; note: string }>(`/api/browser/login/${platform}`, { method: "POST" }),
   browserPost: (id: string, submit: boolean, media: "images" | "reel") =>
     req<{ post: SocialPost; message: string }>(`/api/posts/${id}/browser-post`, json("POST", { submit, media })),

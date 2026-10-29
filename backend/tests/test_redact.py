@@ -92,3 +92,22 @@ def test_the_access_cookie_is_not_the_key(monkeypatch):
         client.cookies.clear()
         client.cookies.set("monoplus_access", "s3cret-key")  # the raw key isn't accepted as a cookie
         assert client.get("/api/campaigns").status_code == 401
+
+
+def test_uvicorn_access_lines_still_format(monkeypatch, capsys):
+    """Redaction must not break uvicorn's access formatter, which reads the record's arguments by position."""
+    from uvicorn.logging import AccessFormatter
+
+    from app.redact import install_log_redaction
+
+    install_log_redaction()
+    monkeypatch.setattr(config, "ACCESS_KEY", "k3y-k3y-k3y")
+    formatter = AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s')
+    log = logging.getLogger("uvicorn.access.test")
+    plain = log.makeRecord(log.name, logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+                           ("127.0.0.1:5000", "GET", "/api/browser", "1.1", 200), None)
+    assert formatter.format(plain) == '127.0.0.1:5000 - "GET /api/browser HTTP/1.1" 200 OK'
+    secret = log.makeRecord(log.name, logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+                            ("127.0.0.1:5000", "GET", "/api/x?token=k3y-k3y-k3y", "1.1", 401), None)
+    line = formatter.format(secret)
+    assert "k3y-k3y-k3y" not in line and "/api/x?token=" in line and "401" in line

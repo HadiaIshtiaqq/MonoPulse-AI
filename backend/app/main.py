@@ -793,7 +793,7 @@ async def browser_status() -> dict:
     except Exception as exc:  # noqa: BLE001 - e.g. a window already open, or no display on a server
         return {"available": True, "error": browser.explain(exc), "signed_in": browser.poster.signed_in,
                 "scheduled": store.settings.browser_publish}
-    return {"available": True, "signed_in": signed_in,
+    return {"available": True, "signed_in": signed_in, "needs_check": browser.poster.needs_check, "browser": browser.poster.channel,
             "scheduled": store.settings.browser_publish and store.settings.auto_publish}
 
 

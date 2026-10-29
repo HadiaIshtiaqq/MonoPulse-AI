@@ -153,3 +153,28 @@ def test_switching_on_browser_posting_switches_on_auto_posting():
         assert body == {"scheduled": True, "auto_publish": True} and store.settings.auto_publish
         client.put("/api/browser/scheduled", json={"enabled": False})
     store.settings.browser_publish = store.settings.auto_publish = False
+
+
+def test_sign_in_reuses_the_platforms_tab_and_spots_a_security_check(site, tmp_path, monkeypatch):
+    poster = browser.BrowserPoster(profile=tmp_path / "profile", headless=True)
+    check_url = site.replace("feed.html", "auth_platform/recaptcha/")
+    monkeypatch.setitem(browser.LOGIN, Platform.INSTAGRAM, check_url)
+    monkeypatch.setitem(browser.SESSION, Platform.INSTAGRAM, ("127.0.0.1", "sessionid"))
+
+    async def run():
+        await poster.login(Platform.INSTAGRAM)
+        await poster.login(Platform.INSTAGRAM)  # pressed again: same tab, not a new one
+        pages = await poster.run(lambda: [p.url for p in poster._ctx.pages])
+        await poster.status()
+        await poster.run(lambda: poster._ctx.close())
+        return pages
+
+    pages = asyncio.run(run())
+    assert sum("auth_platform" in u for u in pages) == 1, pages
+    assert poster.needs_check["instagram"] and not poster.signed_in["instagram"]
+
+
+def test_the_window_never_hides_that_it_is_automated():
+    import inspect
+
+    assert "enable-automation" not in inspect.getsource(browser)

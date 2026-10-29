@@ -74,7 +74,18 @@ def install_log_redaction() -> None:
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - a malformed record: leave it for logging to report
             return record
-        record.msg, record.args = redact(message), None
+        clean = redact(message)
+        if clean != message:
+            if isinstance(record.args, tuple):  # keep the shape formatters expect, with each value cleaned
+                record.args = tuple(redact(a) if isinstance(a, str) else a for a in record.args)
+                record.msg = redact(record.msg) if isinstance(record.msg, str) else record.msg
+                try:
+                    if record.getMessage() != clean:
+                        raise ValueError
+                except Exception:  # noqa: BLE001 - cleaning per value didn't add up: fall back to the whole line
+                    record.msg, record.args = clean, ()
+            else:
+                record.msg, record.args = clean, ()
         if record.exc_info and record.exc_info[1] is not None:
             record.exc_text = redact(logging.Formatter().formatException(record.exc_info))
             record.exc_info = None

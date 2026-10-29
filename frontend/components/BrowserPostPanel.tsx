@@ -6,7 +6,7 @@ import { api, type SocialPost } from "@/lib/api";
 import { PLATFORM_META } from "@/components/PlatformIcon";
 import { useFeedback } from "@/components/Feedback";
 
-type Status = { available: boolean; signed_in: Record<string, boolean>; scheduled: boolean; error?: string };
+type Status = { available: boolean; signed_in: Record<string, boolean>; needs_check?: Record<string, boolean>; scheduled: boolean; error?: string };
 
 /** Post the way a person (or Claude) does: in a real browser where you're signed in. */
 export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; onChange: (p: SocialPost) => void; dirty: boolean }) {
@@ -134,6 +134,16 @@ export function BrowserPostPanel({ post, onChange, dirty }: { post: SocialPost; 
               {busy === "check" ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Check
             </button>
           </div>
+          {!signedIn && status.needs_check?.[post.platform] && (
+            <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+              <p className="font-semibold">{label} is asking you to confirm it&apos;s you</p>
+              <p className="mt-0.5">
+                Finish the check in MonoPlus&apos;s browser window (a code, a tick box or &ldquo;This was me&rdquo;). If the page is
+                blank, press reload in that window. You can also approve the sign-in from the {label} app on your phone.
+                MonoPlus never answers these checks for you; once you&apos;re through, it notices by itself.
+              </p>
+            </div>
+          )}
           {status.error && (
             <div className="mt-2 flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
               <p className="min-w-0 flex-1 break-words">{status.error}</p>

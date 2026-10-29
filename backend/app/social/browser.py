@@ -73,6 +73,16 @@ def explain(exc: Exception) -> str:
     return f"The browser couldn't do that ({type(exc).__name__}). Close MonoPlus's browser windows and try again."
 
 
+def channels() -> list[str]:
+    """Browsers to try for the window, in order. MONOPLUS_BROWSER=chromium forces Playwright's own."""
+    choice = (config.BROWSER_CHANNEL or "auto").lower()
+    if choice in ("chrome", "msedge"):
+        return [choice, ""]
+    if choice in ("chromium", "playwright"):
+        return [""]
+    return ["chrome", "msedge", ""]
+
+
 def available() -> bool:
     try:
         import playwright.sync_api  # noqa: F401
@@ -91,6 +101,8 @@ class BrowserPoster:
         self._pw = None
         self._ctx = None
         self.signed_in: dict[str, bool] = {}  # last known, so the scheduler never has to open a window to ask
+        self.needs_check: dict[str, bool] = {}  # platforms showing you a security check in the window right now
+        self.channel = ""  # which browser the window is: "chrome", "msedge" or "" (Playwright's own Chromium)
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------------ the window
@@ -108,9 +120,21 @@ class BrowserPoster:
         if self._pw is None:
             self._pw = sync_playwright().start()
         self.profile.mkdir(parents=True, exist_ok=True)
-        self._ctx = self._pw.chromium.launch_persistent_context(
-            str(self.profile), headless=headless, viewport=None, args=["--start-maximized"],
-            ignore_default_args=["--enable-automation"])
+        # Your installed Chrome (or Edge) first: a full browser, so the platforms' own sign-in and
+        # security-check pages load as they do in your everyday browser (Playwright's test build
+        # lacks parts of them, and Meta's check pages came up blank in it). The window says plainly
+        # that it's automated: MonoPlus never hides that from a site.
+        last: Exception | None = None
+        for channel in channels():
+            try:
+                self._ctx = self._pw.chromium.launch_persistent_context(
+                    str(self.profile), channel=channel or None, headless=headless, viewport=None, args=["--start-maximized"])
+                self.channel = channel
+                break
+            except Exception as exc:  # noqa: BLE001 - not installed: try the next
+                last = exc
+        else:
+            raise last or RuntimeError("no browser could start")
         self._ctx.on("close", lambda *_: setattr(self, "_ctx", None))
         return self._ctx
 
@@ -130,6 +154,9 @@ class BrowserPoster:
             cookies = ctx.cookies()
             found = {p.value: any(c["name"] == name and domain in c["domain"] and c["value"] for c in cookies)
                      for p, (domain, name) in SESSION.items()}
+            # A tab sitting on a platform's security check: signing in isn't finished until you answer it.
+            self.needs_check = {p.value: any(domain in pg.url and CHALLENGE.search(pg.url) for pg in ctx.pages)
+                                for p, (domain, _) in SESSION.items()} if not temporary else {}
         finally:
             if temporary:
                 ctx.close()
@@ -138,8 +165,16 @@ class BrowserPoster:
         return found
 
     def _login(self, platform: Platform) -> None:
-        page = self._page()
-        page.goto(LOGIN[platform])
+        """Show the platform's sign-in page, in its existing tab if there is one (not a new tab per click)."""
+        ctx = self._context()
+        domain = SESSION[platform][0]
+        page = next((pg for pg in ctx.pages if domain in pg.url), None)
+        if page is None:
+            page = ctx.pages[0] if len(ctx.pages) == 1 and ctx.pages[0].url in ("about:blank", "") else ctx.new_page()
+            page.set_default_timeout(STEP_MS)
+        page.bring_to_front()
+        if not CHALLENGE.search(page.url):  # never navigate away from a check you're in the middle of
+            page.goto(LOGIN[platform])
 
     # ------------------------------------------------------------------ posting
 
