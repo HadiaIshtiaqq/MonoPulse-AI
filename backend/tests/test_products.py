@@ -330,3 +330,29 @@ def test_differently_named_products_come_up_before_a_name_repeats():
     out = strategist.varied(items)
     assert len(out) == 4
     assert [strategist.short_name(p.name) for p in out[:3]] == ["Lawn Suit", "Khaddar Shawl", "Silk Dupatta"]
+
+
+def test_the_brands_own_logo_beats_a_bigger_page_icon_and_is_fetched_sharp():
+    def png(size):
+        buf = io.BytesIO()
+        Image.effect_noise(size, 60).convert("RGB").save(buf, "PNG")  # a real image, not a 100-byte flat square
+        return buf.getvalue()
+
+    asked = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(str(request.url))
+        width = int(request.url.params.get("width", "32"))
+        side = min(width, 60)  # the CDN serves up to the file's own size
+        return httpx.Response(200, content=png((side, side)), headers={"content-type": "image/png"})
+
+    arch = "data:image/svg+xml;utf8," + "%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 10%22%3E%3Crect width=%2224%22 height=%2210%22/%3E%3C/svg%3E"
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await ingestor.download_logo(["https://shop.example/cdn/files/logo.png?crop=center&height=32&width=32", arch],
+                                                client, "sharp")
+
+    url, path, data = asyncio.run(run())
+    assert url.endswith("width=600") and "height" not in url  # asked for the big version
+    assert Image.open(io.BytesIO(data)).size == (60, 60)  # and kept the brand's logo, not the page's SVG icon

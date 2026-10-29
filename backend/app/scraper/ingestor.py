@@ -13,7 +13,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from urllib.parse import quote, unquote, urljoin, urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -529,13 +529,31 @@ def darken_light_logo(img: Image.Image) -> Image.Image:
     return rgba
 
 
-GOOD_LOGO_SIDE = 120  # a logo this wide is sharp on a post; smaller ones (favicons) are a last resort
+GOOD_LOGO_SIDE = 120  # a logo this wide is sharp on a post
+# Site icons, not logos: only used when the page offers nothing better.
+SITE_ICON = re.compile(r"favicon|apple-touch-icon|\.ico(\?|$)|/icons?/|android-chrome|mstile", re.I)
+SIZE_PARAM = re.compile(r"(?i)^(width|height|w|h|crop|size)$")
+
+
+def larger_variant(url: str) -> str | None:
+    """Image CDNs (Shopify and others) serve a logo at the size the page asked for: "…logo.png?width=32".
+    The same address with a bigger width gives the same logo, sharp."""
+    parts = urlparse(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)]
+    sizes = [int(v) for k, v in query if k.lower() in ("width", "w") and v.isdigit()]
+    if not sizes or max(sizes) >= 400:
+        return None
+    kept = [(k, v) for k, v in query if not SIZE_PARAM.match(k)] + [("width", "600")]
+    return parts._replace(query=urlencode(kept)).geturl()
 
 
 async def download_logo(candidates: list[str], client: httpx.AsyncClient, brand_id: str) -> tuple[str | None, str | None, bytes | None]:
-    """The first candidate (they come best-guess first) that's big enough to print sharply; when
-    every one is small, the largest of them rather than whichever came first."""
-    small: list[tuple[int, str | None, Image.Image]] = []
+    """The first candidate that is the brand's logo (candidates come best guess first), fetched at a
+    sharp size where the image server allows it. Site icons (favicons) are passed over while a
+    better candidate might follow, and used, the largest of them, only when nothing else works.
+    A later candidate never replaces an earlier real logo just for being bigger: an inline SVG is
+    always "big", and the page's decorative icons are SVGs too."""
+    icons: list[tuple[int, str | None, Image.Image]] = []
 
     def keep(url: str | None, img: Image.Image) -> tuple[str | None, str | None, bytes | None]:
         path = config.MEDIA_DIR / f"logo_{brand_id}.png"
@@ -545,30 +563,34 @@ async def download_logo(candidates: list[str], client: httpx.AsyncClient, brand_
         img.save(buf, "PNG")
         return url, str(path), buf.getvalue()
 
+    async def fetch(url: str) -> bytes | None:
+        r = await client.get(url, timeout=8)
+        if r.status_code != 200 or len(r.content) < 200:
+            return None
+        return rasterize_svg(r.content) if is_svg(url, r.headers.get("content-type", ""), r.content) else r.content
+
     for url in candidates[:5]:
         try:
             if url.startswith("data:image/svg+xml;utf8,"):  # an inline SVG logo, read from the page itself
-                data = rasterize_svg(unquote(url.split(",", 1)[1]).encode())
-                url = None
+                data, url = rasterize_svg(unquote(url.split(",", 1)[1]).encode()), None
             else:
-                r = await client.get(url, timeout=8)
-                if r.status_code != 200 or len(r.content) < 200:
+                big = larger_variant(url)
+                data = (await fetch(big) if big else None) or await fetch(url)
+                url = big if big and data else url
+                if data is None:
                     continue
-                data = r.content
-                if is_svg(url, r.headers.get("content-type", ""), data):
-                    data = rasterize_svg(data)
             img = Image.open(io.BytesIO(data))
             img.load()
             if min(img.size) < 32 and max(img.size) < 120:
                 continue
-            if max(img.size) < GOOD_LOGO_SIDE:
-                small.append((img.width * img.height, url, img))
+            if url and SITE_ICON.search(url) and max(img.size) < GOOD_LOGO_SIDE:
+                icons.append((img.width * img.height, url, img))
                 continue
             return keep(url, img)
         except Exception:  # noqa: BLE001 - any broken image just means "try the next one"
             continue
-    if small:
-        _, url, img = max(small, key=lambda s: s[0])
+    if icons:
+        _, url, img = max(icons, key=lambda s: s[0])
         return keep(url, img)
     return (candidates[0] if candidates else None), None, None
 
