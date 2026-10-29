@@ -19,7 +19,7 @@ export type ReelOptionsInfo = {
   trends: { key: string; label: string }[];
 };
 export type UgcAd = { id: string; product: string; format: string; engine: "builtin" | "scenes" | "presenter" | "person" | "avatar"; script: string[]; video_url: string;
-  poster_url: string; seconds: number; avatar: string; look: string; caption: string; voice: boolean; source?: string; created_at: string };
+  poster_url: string; seconds: number; avatar: string; look: string; caption: string; voice: boolean; source?: string; director?: string; created_at: string };
 export type UgcAvatar = { id: string; name: string; preview: string; gender: string };
 export type UgcVoice = { key: string; name: string; accent: string; gender: string; language: string; clear: boolean; license: string };
 export type UgcScene = { prompt: string; crop: string };

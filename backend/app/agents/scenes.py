@@ -27,6 +27,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 from .. import config
+from ..llm import LLMError, router
 from ..schemas import BrandKit, Product
 from .playbooks import playbook_key
 
@@ -172,6 +173,54 @@ def plan(kit: BrandKit, p: Product, n: int, style: str, seed: int) -> list[Scene
             text += ", filmed from a different angle"
         out.append(Scene(text, crop))
     return out
+
+
+DIRECTOR = """You are the director of a short vertical UGC video ad (Reels/TikTok). One shot per line of the on-screen
+script. Every shot starts from the same product photo. For each line choose:
+- "crop": "full" (the whole product), "detail" (a close-up of the middle) or "lower" (below the shoulders, no face);
+- "move": the 3D camera move, one of {moves}; never the same move twice in a row;
+- "shot": one sentence describing what happens in the shot for an image-to-video model (camera, light, motion of the
+  product or hands). Describe only what the photo can show; no text, no new products, no claims.
+Style: {style}. {style_rule}
+Return JSON: {{"shots": [{{"crop": "...", "move": "...", "shot": "..."}}, ...]}} with exactly {n} shots."""
+STYLE_RULES = {
+    "worn": "The product is worn or used by the person in the photo; show the fit and how it moves.",
+    "faceless": "Never show a face: use \"detail\" or \"lower\" crops only; hands, fabric and texture.",
+    "aesthetic": "Soft and slow: morning light, slow motion, calm close-ups, never a face; \"detail\" or \"lower\" crops only.",
+}
+
+
+async def direct(kit: BrandKit, p: Product, lines: list[str], style: str, moves: list[str]) -> tuple[list[Scene], list[str]] | None:
+    """Nemotron 3 Ultra directs the ad: a crop, a camera move and a shot description for each line.
+    None without a model (or if its answer doesn't fit), and the planned shots are used instead."""
+    if not router.enabled or not lines:
+        return None
+    n = len(lines)
+    style = style if style in STYLES else "worn"
+    system = DIRECTOR.format(moves=", ".join(moves), style=STYLES[style], style_rule=STYLE_RULES[style], n=n)
+    facts = {"brand": kit.name, "industry": kit.industry, "product": p.name, "category": p.category, "price": p.price}
+    try:
+        data = await router.complete_json("ugc_director", system, f"Facts: {facts}\nScript lines:\n" + "\n".join(lines),
+                                          temperature=0.7, max_tokens=700)
+        shots = data.get("shots") if isinstance(data, dict) else None
+    except (LLMError, AttributeError, ValueError) as exc:
+        log.info("the director fell back to the planned shots: %s", exc)
+        return None
+    if not isinstance(shots, list) or len(shots) < n:
+        return None
+    plan, chosen = [], []
+    allowed = ("detail", "lower") if style in FACELESS else ("full", "detail", "lower")
+    for s in shots[:n]:
+        if not isinstance(s, dict):
+            return None
+        crop = s.get("crop") if s.get("crop") in allowed else allowed[0]
+        move = s.get("move") if s.get("move") in moves else moves[0]
+        if chosen and move == chosen[-1]:  # the rule it was given, kept even if the answer broke it
+            move = next(m for m in moves if m != move)
+        text = re.sub(r"\s+", " ", str(s.get("shot") or "")).strip()[:240] or "slow push in on the product"
+        plan.append(Scene(text, crop))
+        chosen.append(move)
+    return plan, chosen
 
 
 def prompt_for(scene: Scene, style: str) -> str:

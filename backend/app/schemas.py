@@ -202,6 +202,7 @@ class UgcAd(BaseModel):
     caption: str = ""
     voice: bool = False
     source: str = ""  # AI scenes: local (3D camera on this computer) | ai (AI video model)
+    director: str = ""  # "nemotron" when Nemotron chose the shots
     created_at: datetime = Field(default_factory=now_utc)
 
 

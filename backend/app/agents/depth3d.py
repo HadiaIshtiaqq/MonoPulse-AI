@@ -186,7 +186,7 @@ def moves_for(n: int, seed: int) -> list[str]:
 
 
 def make_ad(kit: BrandKit, photo: str, plan: list, lines: list[str], voice: str, out: Path, poster: Path, caption: str,
-            seed: int, end: tuple[str, str, str] = ("", "", ""), style: str = "") -> float:
+            seed: int, end: tuple[str, str, str] = ("", "", ""), style: str = "", moves: list[str] | None = None) -> float:
     """A whole AI scenes ad filmed on this computer: a 3D shot per line (up to four), then the same
     edit as AI video shots: voice or music, captions, logo, end card."""
     from . import ugc_video
@@ -197,7 +197,7 @@ def make_ad(kit: BrandKit, photo: str, plan: list, lines: list[str], voice: str,
         lengths = [min(4.5, max(2.2, len(line.split()) / 2.6 + 0.8)) for line in lines]
     clips: list[str] = []
     try:
-        for i, (scene, move) in enumerate(zip(plan, moves_for(len(plan), seed))):
+        for i, (scene, move) in enumerate(zip(plan, moves or moves_for(len(plan), seed))):
             clip = out.with_name(f"{out.stem}_3d{i}.mp4")
             make_clip(photo, scene.crop, move, max(lengths[i::len(plan)]) + 0.7, clip, seed + i)
             clips.append(str(clip))

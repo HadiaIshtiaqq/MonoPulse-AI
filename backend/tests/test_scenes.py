@@ -275,3 +275,33 @@ def test_the_camera_moves_stay_inside_the_photo():
         for k in (0.0, 0.5, 1.0):
             zoom, side, up = depth3d.camera(move, k)
             assert 1.0 <= zoom <= 1.08 and abs(side) <= 0.031 and abs(up) <= 0.026, (move, k)
+
+
+def test_nemotron_directs_the_shots_and_its_answer_is_kept_in_bounds(monkeypatch):
+    import asyncio
+
+    from app.agents import depth3d
+    from app.llm import router
+
+    monkeypatch.setattr(type(router), "enabled", property(lambda self: True))
+    seen = {}
+
+    async def fake_json(purpose, system, user, **kw):
+        seen.update(purpose=purpose, system=system, user=user)
+        return {"shots": [{"crop": "full", "move": "orbit_left", "shot": "a hand slowly traces the embroidery"},
+                          {"crop": "detail", "move": "orbit_left", "shot": "slow push in on the stitching"},
+                          {"crop": "lower", "move": "teleport", "shot": ""}]}
+
+    monkeypatch.setattr(router, "complete_json", fake_json)
+    plan, moves = asyncio.run(scenes.direct(_fashion(), KURTA, ["one", "two", "three"], "faceless", depth3d.MOVES))
+    assert seen["purpose"] == "ugc_director" and "Never show a face" in seen["system"] and "Black Cambric Kurta" in seen["user"]
+    assert plan[0].prompt == "a hand slowly traces the embroidery"
+    assert [s.crop for s in plan] == ["detail", "detail", "lower"]  # faceless: no "full" crop, whatever it said
+    assert moves[0] == "orbit_left" and moves[1] != "orbit_left" and moves[2] in depth3d.MOVES
+    assert plan[2].prompt  # an empty description gets a sensible one
+
+    async def too_few(*a, **kw):
+        return {"shots": [{"crop": "full", "move": "rise", "shot": "x"}]}
+
+    monkeypatch.setattr(router, "complete_json", too_few)
+    assert asyncio.run(scenes.direct(_fashion(), KURTA, ["one", "two"], "worn", depth3d.MOVES)) is None

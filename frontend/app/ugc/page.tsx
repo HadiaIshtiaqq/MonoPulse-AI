@@ -488,6 +488,11 @@ function AdCard({ ad, campaign, onDelete }: { ad: UgcAd; campaign: Campaign; onD
           {ad.engine === "avatar" ? ` · HeyGen presenter${ad.avatar ? ` (${ad.avatar})` : ""}` : ad.engine === "presenter" ? ` · presenter ${ad.avatar}`
             : ad.engine === "person" ? " · real person" : ad.engine === "scenes" ? ` · ${ad.source === "ai" ? "AI video" : "3D camera"}${ad.look === "faceless" ? ", faceless" : ad.look === "aesthetic" ? ", aesthetic" : ""}` : ad.look ? ` · ${ad.look}${ad.voice ? ", voiced" : ""}` : ""}
         </p>
+        {ad.director === "nemotron" && (
+          <p className="inline-flex items-center gap-1 rounded-full bg-[#76B900]/10 px-2 py-0.5 text-[11px] font-medium text-[#3d6100]">
+            <Sparkles size={11} /> Shots directed by NVIDIA Nemotron
+          </p>
+        )}
         <p className="line-clamp-2 text-slate-500">{ad.script.join(" / ")}</p>
         <div className="flex gap-1.5">
           <select value={target} onChange={(e) => setTarget(e.target.value)} className="input py-1 text-xs">

@@ -913,7 +913,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
             out, poster = config.MEDIA_DIR / f"ugc_{c.id}_{token}.mp4", config.MEDIA_DIR / f"ugc_{c.id}_{token}.jpg"
             f = ugc.facts(c.brand, product)
             end = (f["name"], f["price"], ugc.END_CTA.get(req.language, ugc.END_CTA["en"]))
-            look = caption = ""
+            look = caption = director = ""
             script = lines
             if req.engine == "avatar":
                 job["step"] = "HeyGen is filming your presenter (a few minutes)"
@@ -933,6 +933,13 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                 own = [scenes.Scene(s.prompt.strip()[:300], s.crop if s.crop in ("full", "detail", "lower") else "full")
                        for s in req.scenes if s.prompt.strip()][:n]
                 plan = own + scenes.plan(c.brand, product, n, look, int(token, 16))[len(own):]
+                moves = None
+                if not own:  # Nemotron directs the shots, unless they were written on the page
+                    job["step"] = "Nemotron is directing the shots"
+                    directed = await scenes.direct(c.brand, product, lines[:n], look, depth3d.MOVES)
+                    if directed:
+                        plan, moves = directed
+                        director = "nemotron"
                 caption = "soft" if aesthetic else req.caption if req.caption in ugc_video.CAPTIONS else random.choice(["outline", "box", "pop", "karaoke"])
                 seed = int(token, 16) % 997
                 voice = req.voice_key or _voice_for(lines, "female")
@@ -942,7 +949,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                     job["step"] = f"Filming {len(plan)} 3D shots on this computer (a minute or two)"
                     async with reels.render_slots():
                         seconds = await reels.render.run_in_worker(depth3d.make_ad, c.brand, path, plan, lines, voice, out, poster,
-                                                                   caption, seed, end, look)
+                                                                   caption, seed, end, look, moves)
                 else:  # AI video on Hugging Face's free GPUs
                     clips: list[str] = []
                     try:
@@ -986,7 +993,7 @@ async def make_ugc(campaign_id: str, req: UgcMakeRequest) -> dict:
                        video_url=f"/media/{out.name}", poster_url=f"/media/{poster.name}" if poster.exists() else "",
                        seconds=seconds, avatar=req.avatar_name if req.engine == "avatar" else
                        (avatar.BY_KEY.get(req.character) or avatar.CHARACTERS[0]).name if req.engine == "presenter" else "",
-                       look=look, caption=caption, source=(req.source if req.source == "ai" else "local") if req.engine == "scenes" else "", voice=(req.voice and req.engine == "builtin") or req.engine == "presenter" or (req.engine == "scenes" and not aesthetic))
+                       look=look, caption=caption, source=(req.source if req.source == "ai" else "local") if req.engine == "scenes" else "", director=director, voice=(req.voice and req.engine == "builtin") or req.engine == "presenter" or (req.engine == "scenes" and not aesthetic))
             c.ugc_ads.append(ad)
             store.save(c)
             job.update(status="done", result=ad.model_dump(mode="json"))

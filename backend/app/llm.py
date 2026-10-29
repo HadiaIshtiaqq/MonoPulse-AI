@@ -39,6 +39,7 @@ PURPOSE_TIER: dict[str, ModelTier] = {
     "humanize": ModelTier.ULTRA,
     "rewrite": ModelTier.ULTRA,
     "reel_script": ModelTier.ULTRA,
+    "ugc_director": ModelTier.ULTRA,
     "brand_voice": ModelTier.ULTRA,
     "research_plan": ModelTier.ULTRA,
     "research_report": ModelTier.ULTRA,
