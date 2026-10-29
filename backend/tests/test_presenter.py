@@ -95,3 +95,13 @@ def test_a_presenter_ad_end_to_end(client, monkeypatch):  # noqa: F811
     assert j["status"] == "done", j
     assert j["result"]["avatar"] == "Ali" and j["result"]["voice"] and j["result"]["engine"] == "presenter"
     assert client.get(j["result"]["video_url"]).content[4:8] == b"ftyp"
+
+
+def test_the_presenter_waves_first_points_at_the_product_and_varies_its_moves():
+    lines = ["POV: you just found the Seeded Sourdough", "Just $9", "Baked fresh every morning", "Made in Austin", "Link in bio"]
+    moves = avatar.gestures(lines, ["Seeded Sourdough", "$9"], seed=4)
+    assert moves[0] == "wave" and moves[1] == "point"
+    assert all(a != b for a, b in zip(moves, moves[1:]))  # never the same move twice in a row
+    rest, point = avatar._pose("rest", 0, 0), avatar._pose("point", 0, 0)
+    halfway = avatar._mix(rest, point, 0.5)
+    assert rest.r1 < halfway.r1 < point.r1 and point.gaze[1] < 0  # blends smoothly; looks up at the product

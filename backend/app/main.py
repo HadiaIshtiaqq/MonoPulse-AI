@@ -906,7 +906,7 @@ async def presenter_preview(key: str):
     ch = avatar.BY_KEY.get(key)
     if not ch:
         raise HTTPException(404, "Unknown presenter.")
-    path = config.MEDIA_DIR / f"presenter_{key}.png"
+    path = config.MEDIA_DIR / f"presenter_v2_{key}.png"  # v2: the cute style
     if not path.exists():
         await asyncio.to_thread(lambda: avatar.preview(ch).save(path))
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})

@@ -81,10 +81,12 @@ function Studio() {
   async function make() {
     setJob({ step: "Starting" });
     try {
+      // "No presenter": the same voice and captions over a product video, without a character.
+      const noPresenter = engine === "presenter" && character === "none";
       const ad = await api.makeUgc(cid, {
-        product, format, lines: lines.filter((l) => l.trim()), engine, avatar_id: avatar?.id, avatar_name: avatar?.name,
-        look, caption: captionStyle, voice: engine === "builtin" && voice, footage: footage?.id,
-        voice_key: voiceKey || undefined, character: engine === "presenter" ? character : undefined, language,
+        product, format, lines: lines.filter((l) => l.trim()), engine: noPresenter ? "builtin" : engine, avatar_id: avatar?.id,
+        avatar_name: avatar?.name, look, caption: captionStyle, voice: (engine === "builtin" && voice) || noPresenter, footage: footage?.id,
+        voice_key: voiceKey || undefined, character: engine === "presenter" && !noPresenter ? character : undefined, language,
       }, (step) => setJob({ step }));
       setInfo((i) => (i ? { ...i, ads: [ad, ...i.ads] } : i));
       toast(engine === "avatar" || engine === "presenter" ? "Your presenter ad is ready" : engine === "person" ? "Your video is edited and captioned" : "Your UGC ad is ready", "success");
@@ -201,7 +203,12 @@ function Studio() {
               {engine === "presenter" && (
                 <div className="mt-4 space-y-3">
                   <p className="text-xs font-medium text-slate-600">Choose a presenter</p>
-                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                  <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                    <button onClick={() => setCharacter("none")} title="No presenter: your product, a voice and captions"
+                      className={`flex flex-col overflow-hidden rounded-xl border-2 bg-white ${character === "none" ? "border-brand" : "border-slate-200 hover:border-slate-300"}`}>
+                      <span className="grid aspect-square w-full place-items-center text-slate-400"><Film size={28} /></span>
+                      <p className="py-1 text-center text-[11px] font-medium">No presenter</p>
+                    </button>
                     {info.presenters.map((p) => (
                       <button key={p.key} onClick={() => setCharacter(p.key)} title={p.name}
                         className={`overflow-hidden rounded-xl border-2 bg-[#EEECFA] ${character === p.key ? "border-brand" : "border-transparent hover:border-slate-200"}`}>
@@ -213,7 +220,11 @@ function Studio() {
                   </div>
                   <VoicePicker voices={info.voices} value={voiceKey} onChange={(k) => { setVoiceKey(k); setVoicePicked(true); }} language={language} />
                   <Chips label="Captions" value={captionStyle} onChange={setCaptionStyle} options={[{ key: "", label: "Surprise me" }, ...info.captions]} />
-                  <p className="text-xs text-slate-500">The presenter is an illustrated, fictional character: lips follow the voice, eyes blink, and the shirt wears your brand colour and logo.</p>
+                  <p className="text-xs text-slate-500">
+                    {character === "none"
+                      ? "No character: your product filmed phone-style with a new look each time, the voice reading the script, and captions."
+                      : "The presenter is an illustrated, fictional character: it waves, points at your product when it's mentioned, talks with its hands, and its lips follow the voice. It wears your brand colour and logo."}
+                  </p>
                 </div>
               )}
               {engine === "builtin" && (
