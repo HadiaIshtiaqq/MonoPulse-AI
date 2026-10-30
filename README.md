@@ -22,6 +22,11 @@
 
 </div>
 
+> **Status at submission:** MonoPlus is built to run on NVIDIA Nemotron through Nebius Token Factory, but it has not completed
+> a live call. Nebius billing is not available in Pakistan, where I live, and Nebius support confirmed that access can't be
+> enabled manually. The demo uses rule-based fallbacks for writing and shot direction, so its output is not Nemotron output.
+> This README describes the system as designed.
+
 ## The problem
 
 A small clothing shop, bakery or restaurant is expected to post every day on Instagram, Facebook, LinkedIn and X, in
