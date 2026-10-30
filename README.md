@@ -49,7 +49,7 @@ The owner's only job is to approve.
 ## Demo
 
 <!-- Add the public YouTube link (3 minutes or less) here before submitting. -->
-**Demo video:** *(link)* · **Live demo:** [tops-impression-distribution-stevens.trycloudflare.com](https://tops-impression-distribution-stevens.trycloudflare.com) (the access key is in the Devpost testing instructions)
+**Demo video:** [Watch on YouTube](https://youtu.be/tT6m5ZRUis4) · **Live demo:** [tops-impression-distribution-stevens.trycloudflare.com](https://tops-impression-distribution-stevens.trycloudflare.com) (the access key is in the Devpost testing instructions)
 
 ### A 60-second tour
 
