@@ -21,6 +21,10 @@ if (-not $hasKey) {
 
 $tunnel = Get-Command cloudflared -ErrorAction SilentlyContinue
 if (-not $tunnel) {
+    # The standalone program, if it was downloaded instead of installed.
+    $tunnel = Get-Command (Join-Path $env:LOCALAPPDATA "cloudflared-portable\cloudflared.exe") -ErrorAction SilentlyContinue
+}
+if (-not $tunnel) {
     Write-Host "Install Cloudflare's tunnel tool first (free):  winget install --id Cloudflare.cloudflared"
     Write-Host "Then open a new PowerShell window and run this again."
     exit 1

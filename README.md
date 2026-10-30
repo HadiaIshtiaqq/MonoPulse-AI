@@ -81,6 +81,10 @@ following the track brief: **Nemotron 3 Ultra** for serious reasoning, **Nemotro
 | Brand profile from page text, hashtags and SEO, classification | Nano | Fast structured JSON |
 | Roman Urdu written in Urdu letters for the voice | Nano | Quick, exact transliteration |
 
+Where Token Factory helps the build: its OpenAI-compatible API means one client and one router serve every agent, and
+moving between Nemotron models is a settings change rather than a code change. Token Factory is the Nebius service
+used; there is no separate Nebius hosting yet.
+
 What makes it work in practice:
 
 - **Model auto-selection**: the router lists the models the key can use and picks the newest text Nemotron for each tier
