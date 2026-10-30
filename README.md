@@ -22,10 +22,10 @@
 
 </div>
 
-> **Status at submission:** MonoPlus is built to run on NVIDIA Nemotron through Nebius Token Factory, but it has not completed
-> a live call. Nebius billing is not available in Pakistan, where I live, and Nebius support confirmed that access can't be
-> enabled manually. The demo uses rule-based fallbacks for writing and shot direction, so its output is not Nemotron output.
-> This README describes the system as designed.
+> **Status at submission:** MonoPlus completed its first live NVIDIA Nemotron calls on Nebius Token Factory on 30 October 2026,
+> through its own router: `nvidia/Nemotron-3-Ultra-550b-a55b` for the Ultra tier and `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`
+> for the Nano tier. Access came late, so the demo video may show rule-based fallback output. Nebius billing is not available
+> in Pakistan, so credits can't be added from here.
 
 ## The problem
 
