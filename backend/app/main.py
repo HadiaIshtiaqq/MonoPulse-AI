@@ -96,8 +96,9 @@ install_log_redaction()  # before anything logs: keys never reach a log line
 app = FastAPI(title="MonoPlus", version="0.4.0", lifespan=lifespan)
 app.include_router(mcp_server.router)  # /mcp authenticates itself (Bearer token), see mcp_server._authorized
 
-OPEN_PATHS = {"/api/health", "/api/access", "/api/access/login", "/api/access/logout"}
+OPEN_PATHS = {"/api/health", "/api/access", "/api/access/login", "/api/access/logout", "/api/access/demo"}
 ACCESS_COOKIE = "monoplus_access"
+DEMO_COOKIE = "monoplus_demo"
 # Calls that act on your social accounts or this computer's browser: allowed from this computer, or with the access key.
 ACCOUNT_PATHS = re.compile(r"^/api/(connections(/.*)?|browser(/.*)?|posts/[^/]+/(browser-post|publish|mark-published)|publishing(/.*)?|maintenance/.*)$")
 LOCAL_CLIENTS = {"127.0.0.1", "::1", "localhost", "testclient"}
@@ -149,6 +150,15 @@ def _authorised(request: Request) -> bool:
                                             and hmac.compare_digest(cookie.encode(), _session_token().encode()))
 
 
+def _demo_session_token() -> str:
+    return hmac.new(config.DEMO_TOKEN.encode(), b"monoplus-demo-v1", hashlib.sha256).hexdigest()
+
+
+def _is_demo(request: Request) -> bool:
+    cookie = request.cookies.get(DEMO_COOKIE) or ""
+    return bool(config.DEMO_TOKEN) and bool(cookie) and hmac.compare_digest(cookie.encode(), _demo_session_token().encode())
+
+
 @app.middleware("http")
 async def require_access_key(request: Request, call_next):
     """With MONOPLUS_ACCESS_KEY set, every API call must carry it. /media stays public because
@@ -156,7 +166,11 @@ async def require_access_key(request: Request, call_next):
     path = request.url.path
     if config.ACCESS_KEY and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS":
         if not _authorised(request):
-            return JSONResponse({"detail": "Access key required."}, status_code=401)
+            # The demo link can use the app, but not delete anything or act on the owner's accounts.
+            if not _is_demo(request):
+                return JSONResponse({"detail": "Access key required."}, status_code=401)
+            if request.method == "DELETE" or ACCOUNT_PATHS.match(path):
+                return JSONResponse({"detail": "The demo link can't do this."}, status_code=403)
     if not config.ACCESS_KEY and path.startswith("/api/") and path not in OPEN_PATHS and request.method != "OPTIONS" \
             and not _is_local(request):
         # No key set: someone else on the network (or the internet) can't read your campaigns or use your keys.
@@ -217,7 +231,7 @@ def root() -> RedirectResponse:
 @app.get("/api/access")
 async def access(request: Request) -> dict:
     """Tells the UI whether a key is needed and whether the one it holds is right."""
-    return {"required": bool(config.ACCESS_KEY), "ok": not config.ACCESS_KEY or _authorised(request)}
+    return {"required": bool(config.ACCESS_KEY), "ok": not config.ACCESS_KEY or _authorised(request) or _is_demo(request)}
 
 
 class AccessLogin(BaseModel):
@@ -237,10 +251,21 @@ def access_login(req: AccessLogin, request: Request) -> JSONResponse:
     return resp
 
 
+@app.get("/api/access/demo")
+def access_demo(t: str = "") -> RedirectResponse:
+    """The demo link: signs the visitor in with limited rights and takes the token out of the address."""
+    if not config.DEMO_TOKEN or not hmac.compare_digest(t.encode(), config.DEMO_TOKEN.encode()):
+        raise HTTPException(404, "This demo link isn't active.")
+    resp = RedirectResponse("/campaigns", status_code=303)
+    resp.set_cookie(DEMO_COOKIE, _demo_session_token(), httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    return resp
+
+
 @app.post("/api/access/logout")
 def access_logout() -> JSONResponse:
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(ACCESS_COOKIE)
+    resp.delete_cookie(DEMO_COOKIE)
     return resp
 
 

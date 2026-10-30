@@ -62,6 +62,26 @@ def test_access_key_lives_in_an_httponly_cookie(monkeypatch):
         assert client.get("/api/campaigns").status_code == 401
 
 
+def test_the_demo_link_signs_in_with_limited_rights(monkeypatch):
+    monkeypatch.setattr(config, "ACCESS_KEY", "s3cret")
+    with TestClient(app, follow_redirects=False) as client:
+        assert client.get("/api/access/demo", params={"t": "anything"}).status_code == 404  # no token set: off
+        monkeypatch.setattr(config, "DEMO_TOKEN", "demo-token")
+        assert client.get("/api/access/demo", params={"t": "wrong"}).status_code == 404
+        assert client.get("/api/campaigns").status_code == 401
+        resp = client.get("/api/access/demo", params={"t": "demo-token"})
+        assert resp.status_code == 303 and resp.headers["location"] == "/campaigns"
+        assert "demo-token" not in resp.headers["set-cookie"] and "httponly" in resp.headers["set-cookie"].lower()
+        assert client.get("/api/access").json()["ok"] is True
+        assert client.get("/api/campaigns").status_code == 200
+        assert client.delete("/api/campaigns/abc").status_code == 403
+        forwarded = {"x-forwarded-for": "203.0.113.9"}
+        assert client.get("/api/connections", headers=forwarded).status_code == 403
+        assert client.post("/api/posts/abc/publish", headers=forwarded).status_code == 403
+        monkeypatch.setattr(config, "DEMO_TOKEN", "")  # the line removed: the link and its visitors are out
+        assert client.get("/api/campaigns").status_code == 401
+
+
 def test_old_profile_moves_out_of_the_project(tmp_path, monkeypatch):
     from app.social import browser
 

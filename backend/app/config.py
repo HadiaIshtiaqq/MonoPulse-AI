@@ -41,6 +41,9 @@ ALLOW_PRIVATE_URLS = _env("ALLOW_PRIVATE_URLS", "0") == "1"
 # When set, every /api call must send this key (X-Access-Key header or ?key=). Strongly
 # recommended once social accounts are connected, or anyone who can reach the API can post.
 ACCESS_KEY = _env("MONOPLUS_ACCESS_KEY")
+# Optional: a link that signs visitors in without typing a key (/api/access/demo?t=...), for judges. It can use
+# the app but not delete anything or touch your accounts. Remove this line to switch the link off.
+DEMO_TOKEN = _env("MONOPLUS_DEMO_TOKEN")
 # Bumped whenever post designs change, so campaigns drawn by an older version can offer a redraw.
 DESIGN_VERSION = 7
 # Your social sign-ins (MonoPlus's browser profile) live outside the project folder, so they're never
