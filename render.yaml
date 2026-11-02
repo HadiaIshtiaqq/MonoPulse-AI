@@ -8,7 +8,6 @@ services:
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.8"
@@ -20,6 +19,10 @@ services:
         value: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
       - key: MONOPLUS_REEL_RENDERS
         value: "1"
+      - key: MONOPLUS_RENDER_WORKERS
+        value: "1"
+      - key: MONOPLUS_MAX_CAMPAIGN_DAYS
+        value: "7"
       - key: NEBIUS_API_KEY
         sync: false
       - key: TAVILY_API_KEY

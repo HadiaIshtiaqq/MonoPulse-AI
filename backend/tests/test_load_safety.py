@@ -13,6 +13,39 @@ from app.main import REEL_JOBS, app
 from test_features import _campaign_with_posts, client, offline  # noqa: F401 - fixtures
 
 
+def test_post_images_are_drawn_a_few_at_a_time(monkeypatch):
+    from app.agents import renderer
+    monkeypatch.setattr(config, "RENDER_WORKERS", 2)
+    now = peak = 0
+
+    def draw(kit, post):
+        nonlocal now, peak
+        now += 1
+        peak = max(peak, now)
+        time.sleep(0.01)
+        now -= 1
+
+    monkeypatch.setattr(renderer, "render_post", draw)
+    asyncio.run(renderer.render_posts(None, list(range(8))))
+    assert peak <= 2
+
+
+def test_campaign_length_is_capped_on_a_small_server(monkeypatch):
+    from app.schemas import CreateCampaignRequest
+    monkeypatch.setattr(config, "MAX_CAMPAIGN_DAYS", 7)
+
+    async def nothing(*args):
+        return None
+
+    monkeypatch.setattr(pipeline, "_in_turn", nothing)
+
+    async def go():
+        campaign, _ = pipeline.start(CreateCampaignRequest(input="example.com", days=30))
+        return campaign.days
+
+    assert asyncio.run(go()) == 7
+
+
 def test_a_reel_renders_in_a_worker_process(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "REEL_PROCESSES", True)
     kit = _campaign_with_posts(days=1).brand

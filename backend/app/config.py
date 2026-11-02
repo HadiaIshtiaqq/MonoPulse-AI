@@ -60,6 +60,8 @@ CAMPAIGN_QUEUE = int(_env("MONOPLUS_CAMPAIGN_QUEUE", "8") or 8)
 TRUST_PROXY = _env("MONOPLUS_TRUST_PROXY", "0") in ("1", "true", "yes")  # behind a proxy: read the client from X-Forwarded-For
 RATE_LIMITS = _env("MONOPLUS_RATE_LIMITS", "1") not in ("0", "false", "no", "off")  # per-client limits on expensive calls
 REEL_RENDERS = max(1, int(_env("MONOPLUS_REEL_RENDERS", "2") or 2))  # reels rendered at the same time
+RENDER_WORKERS = max(1, int(_env("MONOPLUS_RENDER_WORKERS", "8") or 8))  # post images drawn at the same time; 1 on a very small server
+MAX_CAMPAIGN_DAYS = max(1, int(_env("MONOPLUS_MAX_CAMPAIGN_DAYS", "31") or 31))  # lower it on a small server: each day is an image per platform
 
 # --- Direct publishing (official APIs). A platform is "connected" when its values are set. ---
 # Meta: one long-lived Page access token covers the Facebook Page and the Instagram

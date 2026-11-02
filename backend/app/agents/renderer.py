@@ -735,4 +735,10 @@ def render_to_file(kit: BrandKit, post: SocialPost) -> str:
 
 
 async def render_posts(kit: BrandKit, posts: list[SocialPost]) -> None:
-    await asyncio.gather(*(asyncio.to_thread(render_post, kit, p) for p in posts))
+    slots = asyncio.Semaphore(config.RENDER_WORKERS)
+
+    async def one(post: SocialPost) -> None:
+        async with slots:
+            await asyncio.to_thread(render_post, kit, post)
+
+    await asyncio.gather(*(one(p) for p in posts))

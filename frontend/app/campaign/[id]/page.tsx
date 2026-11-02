@@ -62,17 +62,29 @@ function CampaignPage() {
     }
     let alive = true;
     const tick = setInterval(() => setElapsed((Date.now() - t0.current) / 1000), 100);
+    let failures = 0;
     const poll = async () => {
       try {
         const j = await api.job(jobId);
         if (!alive) return;
+        failures = 0;
         setJob(j);
         if (j.status !== "running") {
           if (j.elapsed?.total) setElapsed(j.elapsed.total);
           load();
           return;
         }
-      } catch {}
+      } catch {
+        // Gone after a server restart: say so, instead of a timer that never ends.
+        if (++failures % 5 === 0) {
+          api.campaign(id).catch((e) => {
+            if (alive && e.message === "campaign not found") {
+              setCampaign(null);
+              setError("The server restarted and this campaign was lost. Please start it again.");
+            }
+          });
+        }
+      }
       if (alive) setTimeout(poll, 700);
     };
     poll();

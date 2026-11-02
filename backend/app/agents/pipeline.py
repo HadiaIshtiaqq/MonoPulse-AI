@@ -49,7 +49,7 @@ def start(req) -> tuple[Campaign, Job]:
         raise Busy("Lots of campaigns are being made right now. Please try again in a few minutes.")
     platforms = list(dict.fromkeys(req.platforms)) or list(renderer.SIZES)
     source = clean_input(req.input)
-    campaign = Campaign(source_input=source, start_date=req.start_date or date.today(), days=req.days, platforms=platforms,
+    campaign = Campaign(source_input=source, start_date=req.start_date or date.today(), days=min(req.days, config.MAX_CAMPAIGN_DAYS), platforms=platforms,
                         research_ids=list(dict.fromkeys(req.research_ids)), posts_per_day=req.posts_per_day)
     job = new_job(campaign.id)
     store.campaigns[campaign.id] = campaign
