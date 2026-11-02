@@ -1,0 +1,34 @@
+# The MonoPlus API on Render's free plan. Keys are typed into Render's dashboard, never written here.
+# Social account tokens are left out on purpose: a public demo must not be able to post as the owner.
+services:
+  - type: web
+    name: monoplus-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: NEBIUS_BASE_URL
+        value: https://api.tokenfactory.nebius.com/v1/
+      - key: MODEL_ULTRA
+        value: nvidia/Nemotron-3-Ultra-550b-a55b
+      - key: MODEL_NANO
+        value: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
+      - key: MONOPLUS_REEL_RENDERS
+        value: "1"
+      - key: NEBIUS_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: LANG_CHAIN
+        sync: false
+      - key: MONOPLUS_ACCESS_KEY
+        sync: false
+      - key: MONOPLUS_DEMO_TOKEN
+        sync: false
